@@ -113,27 +113,59 @@ class AccountManager:
             self._log(f"Error saving accounts: {e}", logging.ERROR)
             return False
 
-    def add_account(self, account: Account) -> None:
+    def add_account(self, account: Account, save: bool = True) -> None:
         """
         Add an account to the manager.
 
         Args:
             account: Account to add.
+            save: Whether to save to disk immediately.
         """
         self.accounts[account.debugger_address] = account
+        self._log(f"Added account: {account.debugger_address}")
+        if save:
+            self.save_accounts()
 
-    def remove_account(self, debugger_address: str) -> bool:
+    def update_account(self, account: Account, save: bool = True) -> bool:
+        """
+        Update an existing account.
+
+        Args:
+            account: Account with updated values.
+            save: Whether to save to disk immediately.
+
+        Returns:
+            True if updated, False if not found.
+        """
+        if account.debugger_address not in self.accounts:
+            self._log(
+                f"Account not found for update: {account.debugger_address}",
+                logging.WARNING
+            )
+            return False
+
+        self.accounts[account.debugger_address] = account
+        self._log(f"Updated account: {account.debugger_address}")
+        if save:
+            self.save_accounts()
+        return True
+
+    def remove_account(self, debugger_address: str, save: bool = True) -> bool:
         """
         Remove an account from the manager.
 
         Args:
             debugger_address: Address of account to remove.
+            save: Whether to save to disk immediately.
 
         Returns:
             True if removed, False if not found.
         """
         if debugger_address in self.accounts:
             del self.accounts[debugger_address]
+            self._log(f"Removed account: {debugger_address}")
+            if save:
+                self.save_accounts()
             return True
         return False
 

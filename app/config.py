@@ -3,13 +3,19 @@ Configuration Management Module.
 
 Uses Pydantic BaseSettings to load configuration from environment variables
 and .env files, with sensible defaults for development.
+Supports user overrides via user_settings.json.
 """
 
+import json
+import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# User settings file path
+USER_SETTINGS_FILE = Path("user_settings.json")
 
 
 class AppSettings(BaseSettings):
@@ -45,7 +51,7 @@ class AppSettings(BaseSettings):
     # ========== Batch Processing Settings ==========
     batch_size: int = Field(default=5, ge=1, le=20, description="Accounts per batch")
     max_clicks: int = Field(default=50, ge=1, le=200, description="Max clicks per account per run")
-    max_scrolls: int = Field(default=999, ge=1, description="Max scroll iterations")
+    max_scrolls: int = Field(default=50, ge=1, description="Max scroll iterations")
     max_retries: int = Field(default=3, ge=1, le=10, description="Max retries on failure")
 
     # ========== Daily Limits & Anti-Ban ==========
@@ -69,6 +75,42 @@ class AppSettings(BaseSettings):
         default=["Sunday"],
         description="Days to pause (Sunday, Monday, etc.)"
     )
+
+    # ========== Auto Loop Settings ==========
+    auto_loop_enabled: bool = Field(default=False, description="Enable auto loop")
+    auto_loop_interval_minutes: int = Field(
+        default=60, ge=5, le=1440,
+        description="Minutes between loop runs (5-1440)"
+    )
+    auto_loop_max_runs: int = Field(
+        default=0, ge=0,
+        description="Max loop runs (0 = unlimited)"
+    )
+
+    # ========== Sequential Processing Settings ==========
+    concurrent_browsers: int = Field(
+        default=2, ge=1, le=10,
+        description="Number of browsers to run simultaneously"
+    )
+    close_browser_after_account: bool = Field(
+        default=True,
+        description="Close browser after each account completes"
+    )
+    rest_between_accounts: int = Field(
+        default=30, ge=10, le=300,
+        description="Seconds to rest between account batches"
+    )
+
+    # ========== Anti-Detection Settings ==========
+    human_typing_enabled: bool = Field(default=True, description="Enable human-like typing")
+    random_mouse_movements: bool = Field(default=True, description="Add random mouse movements")
+    action_delay_min: float = Field(default=2.0, ge=0.5, description="Min delay between actions")
+    action_delay_max: float = Field(default=5.0, ge=1.0, description="Max delay between actions")
+    scroll_variation: bool = Field(default=True, description="Vary scroll amounts")
+    random_breaks_enabled: bool = Field(default=True, description="Take random breaks")
+    break_chance_percent: int = Field(default=10, ge=0, le=50, description="Chance of random break (%)")
+    break_duration_min: int = Field(default=30, ge=10, description="Min break duration (seconds)")
+    break_duration_max: int = Field(default=120, ge=30, description="Max break duration (seconds)")
 
     # ========== Filtering Settings ==========
     skip_admins: bool = Field(default=True, description="Skip group admins/moderators")
@@ -143,6 +185,109 @@ class AppSettings(BaseSettings):
         """Create necessary directories if they don't exist."""
         self.profile_dir.mkdir(parents=True, exist_ok=True)
 
+    def save_to_file(self, file_path: Path = None) -> bool:
+        """
+        Save current settings to a JSON file.
 
-# Global settings instance
-settings = AppSettings()
+        Args:
+            file_path: Path to save settings to. Defaults to USER_SETTINGS_FILE.
+
+        Returns:
+            True if saved successfully, False otherwise.
+        """
+        file_path = file_path or USER_SETTINGS_FILE
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Get all settings as dict, converting Path objects to strings
+            data = {}
+            for field_name in self.model_fields:
+                value = getattr(self, field_name)
+                if isinstance(value, Path):
+                    data[field_name] = str(value)
+                else:
+                    data[field_name] = value
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Settings saved to {file_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving settings: {e}")
+            return False
+
+    def update_from_dict(self, data: Dict[str, Any]) -> None:
+        """
+        Update settings from a dictionary.
+
+        Args:
+            data: Dictionary of setting names and values.
+        """
+        for key, value in data.items():
+            if hasattr(self, key):
+                # Convert string paths back to Path objects
+                field_info = self.model_fields.get(key)
+                if field_info and field_info.annotation == Path:
+                    value = Path(value)
+                setattr(self, key, value)
+
+    def to_ui_dict(self) -> Dict[str, Any]:
+        """
+        Get settings as a dictionary suitable for UI display.
+
+        Returns:
+            Dictionary with setting values (Paths converted to strings).
+        """
+        data = {}
+        for field_name in self.model_fields:
+            value = getattr(self, field_name)
+            if isinstance(value, Path):
+                data[field_name] = str(value)
+            else:
+                data[field_name] = value
+        return data
+
+
+def load_user_settings() -> Dict[str, Any]:
+    """
+    Load user settings from JSON file.
+
+    Returns:
+        Dictionary of user settings, empty if file doesn't exist.
+    """
+    if not USER_SETTINGS_FILE.exists():
+        return {}
+
+    try:
+        with open(USER_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Error loading user settings: {e}")
+        return {}
+
+
+def create_settings() -> AppSettings:
+    """
+    Create AppSettings instance with user overrides applied.
+
+    Returns:
+        AppSettings instance with user settings applied.
+    """
+    # Create base settings from env
+    base_settings = AppSettings()
+
+    # Load and apply user overrides
+    user_overrides = load_user_settings()
+    if user_overrides:
+        base_settings.update_from_dict(user_overrides)
+        logging.getLogger(__name__).info(
+            f"Applied {len(user_overrides)} user setting overrides"
+        )
+
+    return base_settings
+
+
+# Global settings instance (with user overrides)
+settings = create_settings()

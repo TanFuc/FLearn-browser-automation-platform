@@ -9,6 +9,9 @@ requests>=2.31.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 
+# UI
+ttkbootstrap>=1.10.1
+
 # Type checking (optional, for development)
 # mypy>=1.7.0
 # types-requests>=2.31.0

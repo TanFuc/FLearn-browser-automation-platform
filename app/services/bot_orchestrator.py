@@ -158,9 +158,14 @@ class BotOrchestrator:
         if config is None or config.action_type == ActionType.INVITE:
             daily_limit = settings.daily_max_invites
             if settings.warmup_enabled:
+                original_limit = daily_limit
                 daily_limit = db.get_warmup_limit(account.debugger_address, daily_limit)
+                if daily_limit != original_limit:
+                    self._log(f"Warmup constrained daily limit to {daily_limit} (Base: {original_limit})")
 
             daily_remaining = db.get_daily_remaining(account.debugger_address, daily_limit)
+            self._log(f"Daily remaining for {account.debugger_address}: {daily_remaining}/{daily_limit}")
+            
             if daily_remaining <= 0:
                 self._log(f"Account {account.debugger_address} reached daily limit")
                 account.set_error("Daily limit reached")
@@ -169,9 +174,12 @@ class BotOrchestrator:
         # Get WebDriver
         driver = self.browser_manager.get_driver(account.port)
         if not driver:
+            self._log(f"Failed to connect WebDriver for {account.debugger_address}", logging.ERROR)
             account.set_error("Failed to connect to Chrome")
             result = TaskResult(account=account, error="WebDriver connection failed")
             return result
+
+        self._log(f"Processing {account.debugger_address}...")
 
         # Create automation instance
         automation = FacebookAutomation(
@@ -211,6 +219,113 @@ class BotOrchestrator:
 
         return result
 
+    def _take_random_break(self) -> bool:
+        """
+        Possibly take a random break for anti-detection.
+
+        Returns:
+            True if break was taken.
+        """
+        if not settings.random_breaks_enabled:
+            return False
+
+        if random.randint(1, 100) <= settings.break_chance_percent:
+            break_time = random.randint(
+                settings.break_duration_min,
+                settings.break_duration_max
+            )
+            self._log(f"Taking random break for {break_time}s (anti-detection)")
+            self._emit_status(f"Break ({break_time}s)")
+
+            for _ in range(break_time):
+                if self._stop_flag.is_set():
+                    return True
+                time.sleep(1)
+            return True
+        return False
+
+    def _process_sequential_group(
+        self,
+        group_num: int,
+        accounts: List[Account],
+        account_loggers: Dict[str, Callable[[str], None]] = None
+    ) -> List[TaskResult]:
+        """
+        Process a small group of accounts sequentially with proper browser management.
+
+        Opens browsers, processes accounts in parallel within the group,
+        then closes all browsers before returning.
+
+        Args:
+            group_num: Group number for logging.
+            accounts: Accounts in this group (typically 2).
+            account_loggers: Optional per-account log callbacks.
+
+        Returns:
+            List of TaskResults.
+        """
+        account_loggers = account_loggers or {}
+        results = []
+
+        self._log(f"--- Group {group_num}: Processing {len(accounts)} accounts ---")
+
+        # Refresh proxies for accounts that need them
+        for account in accounts:
+            if not account.proxy or account.status == AccountStatus.PROXY_DEAD:
+                self.account_manager.refresh_proxy(account)
+
+        # Start Chrome instances for this group only
+        started = self.browser_manager.start_accounts(accounts)
+        if started == 0:
+            self._log(f"Failed to start Chrome for group {group_num}", logging.ERROR)
+            for account in accounts:
+                results.append(TaskResult(account=account, error="Chrome start failed"))
+            return results
+
+        self._log(f"Started {started} browsers for group {group_num}")
+
+        # Process accounts in parallel within this small group
+        futures: Dict[Future, Account] = {}
+
+        try:
+            self._log(f"Starting ThreadPoolExecutor for {len(accounts)} accounts...")
+            with ThreadPoolExecutor(max_workers=len(accounts)) as executor:
+                for account in accounts:
+                    if self._stop_flag.is_set():
+                        break
+
+                    self._log(f"Submitting task for {account.debugger_address}")
+                    logger_callback = account_loggers.get(account.debugger_address)
+                    future = executor.submit(
+                        self._process_account,
+                        account,
+                        logger_callback
+                    )
+                    futures[future] = account
+
+                # Collect results
+                for future in futures:
+                    if self._stop_flag.is_set():
+                        break
+
+                    try:
+                        self._log(f"Waiting for result from {futures[future].debugger_address}...")
+                        result = future.result(timeout=600)  # 10 min timeout per account
+                        self._log(f"Result for {futures[future].debugger_address}: success={result.success}, invites={result.invites_sent}, error={result.error}")
+                        results.append(result)
+                    except Exception as e:
+                        account = futures[future]
+                        self._log(f"Error processing {account.debugger_address}: {e}", logging.ERROR)
+                        results.append(TaskResult(account=account, error=str(e)))
+
+        finally:
+            # ALWAYS close browsers after this group finishes
+            if settings.close_browser_after_account:
+                self._log(f"Closing browsers for group {group_num}")
+                self.browser_manager.stop_accounts(accounts)
+
+        return results
+
     def _process_batch(
         self,
         batch_num: int,
@@ -218,7 +333,10 @@ class BotOrchestrator:
         account_loggers: Dict[str, Callable[[str], None]] = None
     ) -> BatchResult:
         """
-        Process a batch of accounts.
+        Process a batch of accounts using sequential group processing.
+
+        Processes accounts in small groups (concurrent_browsers at a time),
+        closing browsers between groups to manage resources.
 
         Args:
             batch_num: Batch number.
@@ -245,56 +363,53 @@ class BotOrchestrator:
             except Exception:
                 pass
 
-        # Refresh proxies for accounts that need them
-        for account in accounts:
-            if not account.proxy or account.status == AccountStatus.PROXY_DEAD:
-                self.account_manager.refresh_proxy(account)
+        # Split accounts into small groups based on concurrent_browsers setting
+        concurrent = settings.concurrent_browsers
+        groups = [
+            accounts[i:i + concurrent]
+            for i in range(0, len(accounts), concurrent)
+        ]
 
-        # Start Chrome instances
-        started = self.browser_manager.start_accounts(accounts)
-        if started == 0:
-            self._log("Failed to start any Chrome instances", logging.ERROR)
-            batch_result.failed = len(accounts)
-            return batch_result
+        self._log(f"Processing in {len(groups)} groups of {concurrent} browsers each")
 
-        # Process accounts in parallel
-        futures: Dict[Future, Account] = {}
+        group_num = 0
+        for group in groups:
+            if self._stop_flag.is_set():
+                self._log("Stop requested, ending batch")
+                break
 
-        with ThreadPoolExecutor(max_workers=len(accounts)) as executor:
-            for account in accounts:
-                if self._stop_flag.is_set():
-                    break
+            group_num += 1
 
-                logger_callback = account_loggers.get(account.debugger_address)
-                future = executor.submit(
-                    self._process_account,
-                    account,
-                    logger_callback
-                )
-                futures[future] = account
+            # Process this group
+            group_results = self._process_sequential_group(
+                group_num, group, account_loggers
+            )
 
             # Collect results
-            for future in futures:
-                if self._stop_flag.is_set():
-                    break
-
-                try:
-                    result = future.result(timeout=300)  # 5 min timeout
-                    batch_result.results.append(result)
-
-                    if result.success:
-                        batch_result.successful += 1
-                        batch_result.total_invites += result.invites_sent
-                    else:
-                        batch_result.failed += 1
-
-                except Exception as e:
-                    account = futures[future]
-                    self._log(f"Task error for {account.debugger_address}: {e}", logging.ERROR)
+            for result in group_results:
+                batch_result.results.append(result)
+                if result.success:
+                    batch_result.successful += 1
+                    batch_result.total_invites += result.invites_sent
+                else:
                     batch_result.failed += 1
 
-        # Stop Chrome instances
-        self.browser_manager.stop_accounts(accounts)
+            # Rest between groups (except last)
+            if group_num < len(groups) and not self._stop_flag.is_set():
+                # Maybe take a random break
+                if not self._take_random_break():
+                    # Normal rest between account groups
+                    rest_time = random.randint(
+                        settings.rest_between_accounts,
+                        settings.rest_between_accounts + 30
+                    )
+                    self._log(f"Resting {rest_time}s before next group...")
+                    self._emit_status(f"Resting ({rest_time}s)")
+
+                    for _ in range(rest_time):
+                        if self._stop_flag.is_set():
+                            break
+                        time.sleep(1)
 
         batch_result.duration = time.time() - start_time
         self._log(
@@ -489,11 +604,128 @@ class BotOrchestrator:
         thread.start()
         return thread
 
+    def run_loop(
+        self,
+        accounts: List[Account] = None,
+        batch_size: int = None,
+        account_loggers: Dict[str, Callable[[str], None]] = None,
+        on_loop_complete: Optional[Callable[[int, List[BatchResult]], None]] = None
+    ) -> None:
+        """
+        Run the bot in a loop at configured intervals.
+
+        Runs until stopped or max_runs reached. Respects scheduler settings.
+
+        Args:
+            accounts: Accounts to process (default: all from manager).
+            batch_size: Accounts per batch.
+            account_loggers: Optional per-account log callbacks.
+            on_loop_complete: Callback after each loop iteration (run_number, results).
+        """
+        if not settings.auto_loop_enabled:
+            self._log("Auto loop is disabled in settings")
+            return
+
+        run_count = 0
+        max_runs = settings.auto_loop_max_runs
+        interval_minutes = settings.auto_loop_interval_minutes
+
+        self._log(f"=== Starting Auto Loop ===")
+        self._log(f"Interval: {interval_minutes} minutes")
+        self._log(f"Max runs: {'Unlimited' if max_runs == 0 else max_runs}")
+        self._emit_status("Auto Loop Active")
+
+        while not self._stop_flag.is_set():
+            # Check if max runs reached
+            if max_runs > 0 and run_count >= max_runs:
+                self._log(f"Reached max runs ({max_runs}), stopping loop")
+                break
+
+            run_count += 1
+            self._log(f"\n{'='*50}")
+            self._log(f"=== Auto Loop Run #{run_count} ===")
+            self._log(f"{'='*50}")
+
+            # Execute the run
+            results = self.run(
+                accounts=accounts,
+                batch_size=batch_size,
+                account_loggers=account_loggers,
+                wait_for_schedule=True
+            )
+
+            # Callback for loop completion
+            if on_loop_complete:
+                try:
+                    on_loop_complete(run_count, results)
+                except Exception:
+                    pass
+
+            # Check if we should continue
+            if self._stop_flag.is_set():
+                self._log("Loop stopped by user")
+                break
+
+            if max_runs > 0 and run_count >= max_runs:
+                self._log(f"Completed all {max_runs} scheduled runs")
+                break
+
+            # Wait for next interval
+            next_run_time = interval_minutes * 60
+            self._log(f"\nNext run in {interval_minutes} minutes...")
+            self._emit_status(f"Next run in {interval_minutes}m")
+
+            # Interruptible wait
+            wait_start = time.time()
+            while time.time() - wait_start < next_run_time:
+                if self._stop_flag.is_set():
+                    self._log("Loop interrupted during wait")
+                    return
+
+                # Update countdown every minute
+                remaining = next_run_time - (time.time() - wait_start)
+                remaining_mins = int(remaining / 60)
+                if remaining_mins > 0 and int(remaining) % 60 == 0:
+                    self._emit_status(f"Next run in {remaining_mins}m")
+
+                time.sleep(1)
+
+        self._log("=== Auto Loop Ended ===")
+        self._emit_status("Loop Complete")
+
+    def run_loop_async(
+        self,
+        accounts: List[Account] = None,
+        batch_size: int = None,
+        account_loggers: Dict[str, Callable[[str], None]] = None,
+        on_loop_complete: Optional[Callable[[int, List[BatchResult]], None]] = None
+    ) -> threading.Thread:
+        """
+        Run the auto-loop in a background thread.
+
+        Args:
+            accounts: Accounts to process.
+            batch_size: Accounts per batch.
+            account_loggers: Optional per-account log callbacks.
+            on_loop_complete: Callback after each loop iteration.
+
+        Returns:
+            The background thread.
+        """
+        thread = threading.Thread(
+            target=self.run_loop,
+            args=(accounts, batch_size, account_loggers, on_loop_complete),
+            daemon=True
+        )
+        thread.start()
+        return thread
+
     def stop(self) -> None:
         """Request the orchestrator to stop."""
         self._log("Stop requested...")
         self._stop_flag.set()
         self._emit_status("Stopping")
+        scheduler.stop()
 
     def shutdown(self) -> None:
         """Stop and cleanup all resources."""

@@ -275,7 +275,13 @@ class BrowserManager:
                 f"127.0.0.1:{port}"
             )
 
-            service = Service(str(settings.chromedriver_path))
+            service = None
+            if settings.chromedriver_path and Path(settings.chromedriver_path).exists():
+                service = Service(str(settings.chromedriver_path))
+            else:
+                # Let Selenium Manager handle driver
+                service = Service()
+            
             driver = webdriver.Chrome(service=service, options=options)
             self.drivers[port] = driver
 

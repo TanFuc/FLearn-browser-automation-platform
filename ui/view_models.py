@@ -212,7 +212,8 @@ class MainViewModel:
     def add_account(
         self,
         debugger_address: str,
-        group_url: Optional[str] = None
+        group_url: Optional[str] = None,
+        proxy: Optional["Proxy"] = None
     ) -> Account:
         """
         Add a new account.
@@ -220,13 +221,16 @@ class MainViewModel:
         Args:
             debugger_address: Chrome debugger address.
             group_url: Optional Facebook group URL.
+            proxy: Optional proxy for the account.
 
         Returns:
             Created account.
         """
+        from app.models import Proxy
         account = Account(
             debugger_address=debugger_address,
-            group_url=group_url
+            group_url=group_url,
+            proxy=proxy
         )
         self.account_manager.add_account(account)
         return account
@@ -241,7 +245,22 @@ class MainViewModel:
         Returns:
             True if removed.
         """
+        # Remove account logger if exists
+        if debugger_address in self._on_account_log:
+            del self._on_account_log[debugger_address]
         return self.account_manager.remove_account(debugger_address)
+
+    def update_account(self, account: Account) -> bool:
+        """
+        Update an existing account.
+
+        Args:
+            account: Account with updated values.
+
+        Returns:
+            True if updated.
+        """
+        return self.account_manager.update_account(account)
 
     def update_account_url(self, debugger_address: str, group_url: str) -> bool:
         """
@@ -257,6 +276,7 @@ class MainViewModel:
         account = self.account_manager.get_account(debugger_address)
         if account:
             account.group_url = group_url
+            self.account_manager.save_accounts()
             return True
         return False
 
@@ -515,3 +535,119 @@ class MainViewModel:
         )
 
         return True
+
+    def open_browser_for_account(self, account: Account) -> None:
+        """
+        Open Chrome browser for a specific account to check login.
+
+        Args:
+            account: The account to open browser for.
+        """
+        def _open():
+            try:
+                self._handle_log(f"Opening browser for {account.debugger_address}...")
+
+                # Start Chrome (headless=False to see UI)
+                success = self.browser_manager.start_chrome(
+                    port=account.port,
+                    proxy=account.proxy,
+                    headless=False
+                )
+
+                if success:
+                    # Get driver and navigate to Facebook
+                    driver = self.browser_manager.get_driver(account.port)
+                    if driver:
+                        driver.get("https://facebook.com")
+                        self._handle_log(f"Browser opened for {account.debugger_address}")
+                    else:
+                        self._handle_log(f"Failed to connect WebDriver for {account.debugger_address}")
+                else:
+                    self._handle_log(f"Failed to start Chrome for {account.debugger_address}")
+
+            except Exception as e:
+                self._handle_log(f"Error opening browser for {account.debugger_address}: {e}")
+
+        # Run in a separate thread to not block UI
+        threading.Thread(target=_open, daemon=True).start()
+
+    # ========== Auto Loop Methods ==========
+
+    def start_auto_loop(self, task_config: TaskConfig = None) -> bool:
+        """
+        Start the auto-loop with configured intervals.
+
+        Args:
+            task_config: Task configuration (uses current settings if not provided).
+
+        Returns:
+            True if started successfully.
+        """
+        if self.is_running:
+            self._handle_log("Already running!")
+            return False
+
+        if not settings.auto_loop_enabled:
+            self._handle_log("Auto loop is disabled. Enable it in settings first.")
+            return False
+
+        accounts = self.account_manager.get_all_accounts()
+        if not accounts:
+            self._handle_log("No accounts loaded!")
+            return False
+
+        # Use provided config or build from current settings
+        config = task_config or self.get_task_config()
+
+        self.is_running = True
+        self._handle_status_change(f"Auto Loop: {config.action_label}")
+
+        # Set task config on orchestrator
+        self.orchestrator.set_task_config(config)
+
+        # Run auto loop in background thread
+        def on_loop_complete(run_num, results):
+            total_invites = sum(r.total_invites for r in results)
+            self._handle_log(f"Loop #{run_num} complete: {total_invites} invites")
+
+        self._run_thread = self.orchestrator.run_loop_async(
+            accounts=accounts,
+            account_loggers=self._on_account_log,
+            on_loop_complete=on_loop_complete
+        )
+
+        self._handle_log(
+            f"Auto loop started: every {settings.auto_loop_interval_minutes} minutes, "
+            f"max {settings.auto_loop_max_runs if settings.auto_loop_max_runs > 0 else 'unlimited'} runs"
+        )
+        return True
+
+    def get_auto_loop_enabled(self) -> bool:
+        """Get auto loop enabled state."""
+        return settings.auto_loop_enabled
+
+    def set_auto_loop_enabled(self, enabled: bool) -> None:
+        """Set auto loop enabled state."""
+        settings.auto_loop_enabled = enabled
+        status = "enabled" if enabled else "disabled"
+        self._handle_log(f"Auto loop {status}")
+
+    def get_auto_loop_interval(self) -> int:
+        """Get auto loop interval in minutes."""
+        return settings.auto_loop_interval_minutes
+
+    def set_auto_loop_interval(self, minutes: int) -> None:
+        """Set auto loop interval in minutes."""
+        if 5 <= minutes <= 1440:
+            settings.auto_loop_interval_minutes = minutes
+            self._handle_log(f"Auto loop interval set to {minutes} minutes")
+
+    def get_concurrent_browsers(self) -> int:
+        """Get number of concurrent browsers."""
+        return settings.concurrent_browsers
+
+    def set_concurrent_browsers(self, count: int) -> None:
+        """Set number of concurrent browsers."""
+        if 1 <= count <= 10:
+            settings.concurrent_browsers = count
+            self._handle_log(f"Concurrent browsers set to {count}")

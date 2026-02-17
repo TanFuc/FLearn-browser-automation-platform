@@ -107,9 +107,27 @@ class FacebookAutomation:
         "Continue", "Confirm", "Done", "Xong"
     ]
 
-    CHECKPOINT_PATTERNS = [
-        "checkpoint", "confirm your identity", "xác minh",
-        "unusual activity", "hoạt động bất thường"
+    # Checkpoint URL patterns - these indicate actual checkpoint pages
+    CHECKPOINT_URL_PATTERNS = [
+        "/checkpoint/",
+        "/login/checkpoint",
+        "/security/checkpoint",
+        "/recover/initiate",
+        "/checkpoint?",
+    ]
+
+    # Checkpoint page title/heading patterns - more specific than body text
+    CHECKPOINT_TITLE_PATTERNS = [
+        "confirm your identity",
+        "xác minh danh tính",
+        "we need to verify",
+        "chúng tôi cần xác minh",
+        "suspicious activity",
+        "hoạt động đáng ngờ",
+        "account has been locked",
+        "tài khoản đã bị khóa",
+        "security check",
+        "kiểm tra bảo mật",
     ]
 
     # Admin/Moderator badge patterns
@@ -281,17 +299,66 @@ class FacebookAutomation:
         """
         Check if account requires checkpoint verification.
 
+        Uses multiple detection methods:
+        1. URL-based detection (most reliable)
+        2. Page title/heading detection
+        3. Checkpoint-specific UI element detection
+
         Returns:
             True if checkpoint detected, False otherwise.
         """
         try:
-            page_source = self.driver.page_source.lower()
-            for pattern in self.CHECKPOINT_PATTERNS:
-                if pattern.lower() in page_source:
-                    self._log("Checkpoint detected!", logging.WARNING)
+            # Method 1: Check URL for checkpoint patterns (most reliable)
+            current_url = self.driver.current_url.lower()
+            for pattern in self.CHECKPOINT_URL_PATTERNS:
+                if pattern in current_url:
+                    self._log(f"Checkpoint detected (URL): {current_url}", logging.WARNING)
                     return True
+
+            # Method 2: Check page title
+            try:
+                page_title = self.driver.title.lower()
+                for pattern in self.CHECKPOINT_TITLE_PATTERNS:
+                    if pattern in page_title:
+                        self._log(f"Checkpoint detected (title): {page_title}", logging.WARNING)
+                        return True
+            except Exception:
+                pass
+
+            # Method 3: Look for specific checkpoint UI elements
+            try:
+                # Look for checkpoint-specific containers
+                checkpoint_selectors = [
+                    '[data-testid="checkpoint"]',
+                    '[id*="checkpoint"]',
+                    'form[action*="checkpoint"]',
+                    '[class*="checkpoint"]',
+                    '[data-pagelet="FxAccountRecoveryRootView"]',
+                ]
+                for selector in checkpoint_selectors:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        self._log(f"Checkpoint detected (element: {selector})", logging.WARNING)
+                        return True
+            except Exception:
+                pass
+
+            # Method 4: Check for specific heading text in H1/H2 elements only
+            try:
+                headings = self.driver.find_elements(By.CSS_SELECTOR, "h1, h2, [role='heading']")
+                for heading in headings:
+                    heading_text = heading.text.lower()
+                    for pattern in self.CHECKPOINT_TITLE_PATTERNS:
+                        if pattern in heading_text:
+                            self._log(f"Checkpoint detected (heading): {heading_text[:50]}", logging.WARNING)
+                            return True
+            except Exception:
+                pass
+
             return False
-        except Exception:
+
+        except Exception as e:
+            self.logger.debug(f"Error in checkpoint detection: {e}")
             return False
 
     @retry_on_stale()
@@ -427,18 +494,23 @@ class FacebookAutomation:
         Returns:
             Tuple of (scrolls_done, invites_sent).
         """
-        max_scrolls = max_scrolls or settings.max_scrolls
+        # Use reasonable defaults - cap max_scrolls to prevent endless scrolling
+        max_scrolls = min(max_scrolls or settings.max_scrolls, 100)
         max_clicks = max_clicks or settings.max_clicks
 
         # Apply daily limit if provided
         if daily_remaining is not None:
+            if daily_remaining < max_clicks:
+                self._log(f"Daily remaining ({daily_remaining}) is less than configured max invites ({max_clicks}). Using {daily_remaining}.")
             max_clicks = min(max_clicks, daily_remaining)
 
         scrolls_done = 0
         self.invites_sent = 0
         self.skipped_count = 0
+        empty_scroll_count = 0  # Track consecutive scrolls with no buttons found
+        max_empty_scrolls = 10  # Stop after this many consecutive empty scrolls
 
-        self._log(f"Starting scroll & invite (max {max_clicks} invites)")
+        self._log(f"Starting scroll & invite (max {max_clicks} invites, max {max_scrolls} scrolls)")
 
         for scroll_num in range(max_scrolls):
             if self.invites_sent >= max_clicks:
@@ -448,6 +520,15 @@ class FacebookAutomation:
             # Find and click add friend buttons
             buttons = self._find_add_friend_buttons()
 
+            if not buttons:
+                empty_scroll_count += 1
+                if empty_scroll_count >= max_empty_scrolls:
+                    self._log(f"No Add Friend buttons found for {max_empty_scrolls} consecutive scrolls. Stopping.")
+                    break
+            else:
+                empty_scroll_count = 0  # Reset counter when buttons found
+
+            clicked_this_scroll = 0
             for button in buttons:
                 if self.invites_sent >= max_clicks:
                     break
@@ -461,6 +542,7 @@ class FacebookAutomation:
 
                 if self._click_button(button):
                     self.invites_sent += 1
+                    clicked_this_scroll += 1
                     self._log(f"✓ Invite #{self.invites_sent} sent")
 
                     # Handle any popup
@@ -468,6 +550,13 @@ class FacebookAutomation:
 
                     # Random delay between clicks
                     self._random_delay()
+
+            # If we found buttons but couldn't click any, count as empty scroll
+            if buttons and clicked_this_scroll == 0:
+                empty_scroll_count += 1
+                if empty_scroll_count >= max_empty_scrolls:
+                    self._log(f"No clickable buttons for {max_empty_scrolls} consecutive scrolls. Stopping.")
+                    break
 
             # Scroll down
             self.scroll_page()
@@ -482,7 +571,7 @@ class FacebookAutomation:
 
             # Log progress periodically
             if scroll_num % 5 == 0 and scroll_num > 0:
-                self._log(f"Scrolls: {scrolls_done}, Invites: {self.invites_sent}, Skipped: {self.skipped_count}")
+                self._log(f"Progress: Scrolls={scrolls_done}, Invites={self.invites_sent}, Skipped={self.skipped_count}, EmptyScrolls={empty_scroll_count}")
 
         self._log(f"Done! Scrolls: {scrolls_done}, Invites: {self.invites_sent}, Skipped: {self.skipped_count}")
         return scrolls_done, self.invites_sent
@@ -1072,13 +1161,16 @@ class FacebookAutomation:
 
             # Dispatch based on action type
             if task_config.action_type == ActionType.INVITE:
-                # Use existing invite logic
-                if not task_config.target_url:
+                # Use existing invite logic - try task_config URL first, then fall back to account URL
+                target_url = task_config.target_url or account.group_url
+                if not target_url:
+                    self._log("No group URL configured", logging.ERROR)
                     account.set_error("No group URL configured")
                     result.error = "No group URL"
                     return result
 
-                if not self.navigate_to_group(task_config.target_url):
+                self._log(f"Navigating to group: {target_url}")
+                if not self.navigate_to_group(target_url):
                     account.set_error("Navigation failed")
                     result.error = "Navigation failed"
                     return result

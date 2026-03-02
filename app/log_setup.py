@@ -169,9 +169,9 @@ class LogManager:
         # Add UI handler if callback provided
         if ui_callback:
             ui_handler = UILogHandler(ui_callback)
-            ui_handler.setLevel(logging.INFO)
+            ui_handler.setLevel(logging.DEBUG)  # Changed from INFO to DEBUG to capture all messages
             ui_formatter = logging.Formatter(
-                "[%(asctime)s] %(message)s",
+                "[%(asctime)s] [%(levelname)s] %(message)s",  # Added levelname for clarity
                 datefmt="%H:%M:%S"
             )
             ui_handler.setFormatter(ui_formatter)

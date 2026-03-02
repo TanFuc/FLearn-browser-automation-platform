@@ -218,6 +218,66 @@ class TelegramNotifier:
 
         self.send_async(message)
 
+    def notify_login_required(self, account_address: str) -> None:
+        """
+        Send notification when an account needs manual login (no credentials stored).
+
+        Args:
+            account_address: Account that needs login.
+        """
+        if not settings.notify_on_login:
+            return
+
+        message = (
+            f"🔒 <b>Login Required</b>\n\n"
+            f"Account: <code>{account_address}</code>\n"
+            f"Status: Session expired, no credentials stored.\n"
+            f"🕐 Time: {datetime.now().strftime('%H:%M:%S')}\n\n"
+            f"Action: Please add FB credentials in the app settings."
+        )
+
+        self.send_async(message)
+
+    def notify_login_success(self, account_address: str) -> None:
+        """
+        Send notification when auto-login succeeds.
+
+        Args:
+            account_address: Account that was logged in.
+        """
+        if not settings.notify_on_login:
+            return
+
+        message = (
+            f"✅ <b>Auto-Login Successful</b>\n\n"
+            f"Account: <code>{account_address}</code>\n"
+            f"🕐 Time: {datetime.now().strftime('%H:%M:%S')}\n\n"
+            f"The bot has successfully re-logged into Facebook."
+        )
+
+        self.send_async(message)
+
+    def notify_login_failed(self, account_address: str, reason: str) -> None:
+        """
+        Send notification when auto-login fails.
+
+        Args:
+            account_address: Account that failed to login.
+            reason: Reason for failure.
+        """
+        if not settings.notify_on_login:
+            return
+
+        message = (
+            f"❌ <b>Auto-Login Failed</b>\n\n"
+            f"Account: <code>{account_address}</code>\n"
+            f"Reason: {reason}\n"
+            f"🕐 Time: {datetime.now().strftime('%H:%M:%S')}\n\n"
+            f"Action: Please check credentials or login manually."
+        )
+
+        self.send_async(message)
+
     def notify_error(self, error: str, context: str = None) -> None:
         """
         Send notification for critical errors.

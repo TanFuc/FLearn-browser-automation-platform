@@ -96,10 +96,17 @@ class FacebookAutomation:
         skipped_count: Count of skipped members (filtered).
     """
 
-    # Button text patterns to look for
+    # Button text patterns to look for (SPECIFIC patterns only - no generic "Add" or "Thêm")
     ADD_FRIEND_PATTERNS = [
-        "Add friend", "Thêm bạn", "Add Friend",
-        "Kết bạn", "Add", "Thêm"
+        "Add friend", "Add Friend", "Thêm bạn bè", "Thêm bạn",
+        "Kết bạn", "Add as friend", "Thêm làm bạn"
+    ]
+
+    # Members page URL patterns
+    MEMBERS_PAGE_PATTERNS = [
+        "/members",
+        "/people",
+        "?filter=members",
     ]
 
     POPUP_CONFIRM_PATTERNS = [
@@ -114,6 +121,58 @@ class FacebookAutomation:
         "/security/checkpoint",
         "/recover/initiate",
         "/checkpoint?",
+    ]
+
+    # Login/Logged-out URL patterns - indicates session expired
+    LOGIN_URL_PATTERNS = [
+        "facebook.com/login",
+        "facebook.com/r.php",
+        "facebook.com/?sk=lf",
+        "/login.php",
+        "/login/?",
+    ]
+
+    # Login success indicators - URL patterns after successful login
+    LOGIN_SUCCESS_INDICATORS = [
+        "facebook.com/",
+        "facebook.com/home",
+        "facebook.com/?",
+    ]
+
+    # Login failure text patterns (page body text)
+    LOGIN_FAILURE_INDICATORS = [
+        "incorrect password",
+        "wrong password",
+        "password you entered is incorrect",
+        "account not found",
+        "email you entered isn't connected",
+        "please re-enter your password",
+        # Vietnamese
+        "mật khẩu không đúng",
+        "sai mật khẩu",
+        "tài khoản không tồn tại",
+        "email bạn nhập không kết nối",
+        "vui lòng nhập lại mật khẩu",
+    ]
+
+    # Two-factor authentication indicators
+    TWO_FA_INDICATORS = [
+        "two-factor",
+        "two factor",
+        "2fa",
+        "enter the code",
+        "authentication code",
+        "security code",
+        "code generator",
+        "login code",
+        "approve from another device",
+        # Vietnamese
+        "xác minh hai yếu tố",
+        "nhập mã",
+        "mã xác thực",
+        "mã bảo mật",
+        "mã đăng nhập",
+        "phê duyệt từ thiết bị khác",
     ]
 
     # Checkpoint page title/heading patterns - more specific than body text
@@ -361,6 +420,174 @@ class FacebookAutomation:
             self.logger.debug(f"Error in checkpoint detection: {e}")
             return False
 
+    def check_logged_out(self) -> bool:
+        """
+        Check if account has been logged out (session expired).
+
+        Uses URL-based detection to identify login pages.
+
+        Returns:
+            True if logged out, False if still logged in.
+        """
+        try:
+            current_url = self.driver.current_url.lower()
+
+            # Check for login URL patterns
+            for pattern in self.LOGIN_URL_PATTERNS:
+                if pattern in current_url:
+                    self._log(
+                        f"[WARNING] Session expired - redirected to login page: {current_url}",
+                        logging.WARNING
+                    )
+                    return True
+
+            # Additional check: Look for login form elements
+            try:
+                login_form = self.driver.find_elements(By.CSS_SELECTOR, 'form[action*="login"]')
+                email_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="email"]')
+                pass_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="pass"]')
+
+                if login_form or (email_field and pass_field):
+                    # Double-check we're on a login page
+                    if "facebook.com" in current_url and "home" not in current_url:
+                        self._log(
+                            f"[WARNING] Login form detected - session may have expired",
+                            logging.WARNING
+                        )
+                        return True
+            except Exception:
+                pass
+
+            return False
+
+        except Exception as e:
+            self.logger.debug(f"Error checking logged out status: {e}")
+            return False
+
+    def perform_login(self, email: str, password: str, timeout: int = 30) -> str:
+        """
+        Perform Facebook login with email and password.
+
+        Args:
+            email: Facebook email or phone number.
+            password: Plaintext Facebook password.
+            timeout: Maximum seconds to wait for login result.
+
+        Returns:
+            "success"    - Login successful
+            "2fa"        - Two-factor authentication required
+            "wrong_pass" - Wrong email/password
+            "timeout"    - Timeout, result uncertain
+            "error"      - Unknown error occurred
+        """
+        self._log("Attempting auto-login to Facebook...")
+
+        try:
+            # Step 1: Navigate to login page
+            self.driver.get("https://www.facebook.com/login")
+            time.sleep(random.uniform(2.0, 3.5))
+
+            # Step 2: Find and fill email field
+            email_field = self._wait_for_element(
+                '//input[@id="email" or @name="email"]',
+                timeout=10,
+                clickable=True
+            )
+            if not email_field:
+                self._log("Email field not found on login page", logging.WARNING)
+                return "error"
+
+            email_field.clear()
+            self._type_with_delay(email_field, email)
+            time.sleep(random.uniform(0.5, 1.2))
+
+            # Step 3: Find and fill password field
+            pass_field = self._wait_for_element(
+                '//input[@id="pass" or @name="pass"]',
+                timeout=5,
+                clickable=True
+            )
+            if not pass_field:
+                self._log("Password field not found", logging.WARNING)
+                return "error"
+
+            pass_field.clear()
+            self._type_with_delay(pass_field, password)
+            time.sleep(random.uniform(0.8, 1.5))
+
+            # Step 4: Click login button
+            login_btn = self._wait_for_element(
+                '//button[@name="login" or @data-testid="royal_login_button" or @id="loginbutton"]'
+                ' | //input[@value="Log In" or @value="Đăng nhập"]',
+                timeout=5
+            )
+            if not login_btn:
+                self._log("Login button not found", logging.WARNING)
+                return "error"
+
+            login_btn.click()
+            self._log("Clicked login button, waiting for result...")
+
+            # Step 5: Wait and check result
+            time.sleep(random.uniform(3.0, 5.0))
+
+            current_url = self.driver.current_url.lower()
+            page_text = ""
+            try:
+                page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+            except Exception:
+                pass
+
+            # Check for 2FA requirement
+            for indicator in self.TWO_FA_INDICATORS:
+                if indicator.lower() in page_text or indicator.lower() in current_url:
+                    self._log("2FA/Checkpoint required after login", logging.WARNING)
+                    return "2fa"
+
+            # Check for wrong password
+            for indicator in self.LOGIN_FAILURE_INDICATORS:
+                if indicator.lower() in page_text:
+                    self._log("Login failed: wrong credentials", logging.ERROR)
+                    return "wrong_pass"
+
+            # Check if still on login page (login failed)
+            if "facebook.com/login" in current_url or "/login.php" in current_url:
+                self._log("Still on login page after submit", logging.WARNING)
+                return "wrong_pass"
+
+            # Check for checkpoint
+            if self.check_checkpoint():
+                self._log("Checkpoint detected after login", logging.WARNING)
+                return "2fa"
+
+            # Check success: redirected away from login page
+            if "facebook.com" in current_url and "login" not in current_url:
+                self._log("Login successful!")
+                return "success"
+
+            self._log("Unknown login result state", logging.WARNING)
+            return "timeout"
+
+        except Exception as e:
+            self._log(f"Exception during login: {e}", logging.ERROR)
+            return "error"
+
+    def _is_on_members_page(self) -> bool:
+        """
+        Check if the current page is a Facebook group members page.
+
+        Returns:
+            True if on members page, False otherwise.
+        """
+        try:
+            current_url = self.driver.current_url.lower()
+            for pattern in self.MEMBERS_PAGE_PATTERNS:
+                if pattern in current_url:
+                    return True
+            return False
+        except Exception:
+            return False
+
     @retry_on_stale()
     def _find_add_friend_buttons(self) -> List[WebElement]:
         """
@@ -371,39 +598,78 @@ class FacebookAutomation:
         """
         buttons = []
         try:
-            # Find by aria-label containing add friend patterns
-            for pattern in self.ADD_FRIEND_PATTERNS[:3]:  # Main patterns
-                xpath = f'//div[@aria-label="{pattern}"]'
+            # Method 1: Find by exact aria-label (most reliable)
+            for pattern in self.ADD_FRIEND_PATTERNS:
+                xpath = f'//div[@aria-label="{pattern}" and @role="button"]'
                 elements = self.driver.find_elements(By.XPATH, xpath)
                 buttons.extend(elements)
 
-            # Also find by text content
+            # Method 2: Find by text content with exact match (avoid partial matches)
             for pattern in self.ADD_FRIEND_PATTERNS:
-                xpath = f'//span[contains(text(), "{pattern}")]/ancestor::div[@role="button"]'
+                # Use exact text match, not contains
+                xpath = f'//span[text()="{pattern}"]/ancestor::div[@role="button"]'
                 elements = self.driver.find_elements(By.XPATH, xpath)
                 buttons.extend(elements)
+
+            # Method 3: Facebook-specific selector for member list add friend buttons
+            # These are typically in the member cards with specific structure
+            specific_xpath = (
+                '//div[contains(@class, "x1yztbdb")]//div[@role="button"]'
+                '[.//span[contains(text(), "Add") and contains(text(), "riend")] or '
+                './/span[contains(text(), "Thêm") and contains(text(), "bạn")] or '
+                './/span[contains(text(), "Kết bạn")]]'
+            )
+            elements = self.driver.find_elements(By.XPATH, specific_xpath)
+            buttons.extend(elements)
 
         except Exception as e:
             self.logger.debug(f"Error finding buttons: {e}")
 
-        # Remove duplicates
+        # Remove duplicates and filter visible buttons only
         seen = set()
         unique_buttons = []
         for btn in buttons:
             try:
                 btn_id = btn.id
                 if btn_id not in seen:
-                    seen.add(btn_id)
-                    unique_buttons.append(btn)
+                    # Only include buttons that are displayed
+                    if btn.is_displayed():
+                        seen.add(btn_id)
+                        unique_buttons.append(btn)
             except Exception:
                 pass
 
         return unique_buttons
 
+    def _get_button_text(self, button: WebElement) -> str:
+        """
+        Get the text content of a button for logging.
+
+        Args:
+            button: Button element.
+
+        Returns:
+            Button text or empty string.
+        """
+        try:
+            # Try to get aria-label first
+            aria_label = button.get_attribute("aria-label")
+            if aria_label:
+                return aria_label
+
+            # Try to get text content
+            text = button.text.strip()
+            if text:
+                return text[:50]  # Limit length
+
+            return "[unknown button]"
+        except Exception:
+            return "[error getting text]"
+
     @with_error_handling
     def _click_button(self, button: WebElement) -> bool:
         """
-        Click a button element safely.
+        Click a button element safely with verification.
 
         Args:
             button: Button element to click.
@@ -412,6 +678,20 @@ class FacebookAutomation:
             True if click successful, False otherwise.
         """
         try:
+            # Get button text for logging
+            btn_text = self._get_button_text(button)
+
+            # Verify it's likely an "Add Friend" button before clicking
+            btn_text_lower = btn_text.lower()
+            is_add_friend = any(
+                pattern.lower() in btn_text_lower
+                for pattern in ["add friend", "thêm bạn", "kết bạn", "add as friend"]
+            )
+
+            if not is_add_friend:
+                self.logger.debug(f"Skipping non-Add-Friend button: {btn_text}")
+                return False
+
             # Scroll button into view
             self.driver.execute_script(
                 "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
@@ -419,8 +699,14 @@ class FacebookAutomation:
             )
             time.sleep(0.3)
 
+            # Check if button is still visible and enabled
+            if not button.is_displayed():
+                self.logger.debug(f"Button not displayed: {btn_text}")
+                return False
+
             # Try regular click
             button.click()
+            self.logger.debug(f"Clicked button: {btn_text}")
             return True
 
         except ElementClickInterceptedException:
@@ -431,7 +717,12 @@ class FacebookAutomation:
             except Exception:
                 return False
 
-        except Exception:
+        except StaleElementReferenceException:
+            self.logger.debug("Button became stale before click")
+            return False
+
+        except Exception as e:
+            self.logger.debug(f"Click failed: {e}")
             return False
 
     def _handle_popup(self) -> bool:
@@ -503,6 +794,21 @@ class FacebookAutomation:
             if daily_remaining < max_clicks:
                 self._log(f"Daily remaining ({daily_remaining}) is less than configured max invites ({max_clicks}). Using {daily_remaining}.")
             max_clicks = min(max_clicks, daily_remaining)
+
+        # Dry run mode - only check connections, don't actually click
+        if settings.dry_run:
+            self._log("[DRY RUN] Mode enabled - checking page without clicking")
+            buttons = self._find_add_friend_buttons()
+            self._log(f"[DRY RUN] Found {len(buttons)} Add Friend buttons on current view")
+
+            # Verify checkpoint and logged-out status
+            if self.check_checkpoint():
+                self._log("[DRY RUN] WARNING: Checkpoint detected!")
+            if self.check_logged_out():
+                self._log("[DRY RUN] WARNING: Session appears to be logged out!")
+
+            self._log("[DRY RUN] Page check complete - no buttons clicked")
+            return 1, 0  # Return 1 scroll, 0 invites
 
         scrolls_done = 0
         self.invites_sent = 0

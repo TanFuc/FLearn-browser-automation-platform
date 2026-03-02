@@ -7,7 +7,7 @@ and TaskStatus with proper validation and serialization.
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -21,6 +21,7 @@ class AccountStatus(str, Enum):
     CHECKPOINT = "Checkpoint"
     ERROR = "error"
     PROXY_DEAD = "proxy_dead"
+    LOGGED_OUT = "logged_out"
 
 
 class ActionType(str, Enum):
@@ -151,21 +152,33 @@ class Account(BaseModel):
 
     Attributes:
         debugger_address: Chrome remote debugging address (host:port).
-        group_url: Facebook group URL to invite from.
+        group_url: Facebook group URL to invite from (legacy single URL).
+        group_urls: List of group URLs for multi-group support.
         proxy: Optional proxy server assigned to this account.
         status: Current account status.
         last_run: Timestamp of last automation run.
         invites_sent: Number of invites sent in last run.
         error_message: Last error message if any.
+        label: Human-readable account label/name.
+        notes: User notes about this account.
     """
 
     debugger_address: str = Field(..., description="Chrome debugger address (host:port)")
-    group_url: Optional[str] = Field(default=None, description="Facebook group URL")
+    group_url: Optional[str] = Field(default=None, description="Facebook group URL (legacy)")
+    group_urls: List[str] = Field(default_factory=list, description="Multiple group URLs")
     proxy: Optional[Proxy] = Field(default=None, description="Assigned proxy")
     status: AccountStatus = Field(default=AccountStatus.IDLE, description="Account status")
     last_run: Optional[datetime] = Field(default=None, description="Last run timestamp")
     invites_sent: int = Field(default=0, ge=0, description="Invites sent in last run")
     error_message: Optional[str] = Field(default=None, description="Last error message")
+    label: Optional[str] = Field(default=None, description="Human-readable account label")
+    notes: Optional[str] = Field(default=None, description="User notes about this account")
+
+    # Auto-login credentials (password is encrypted with Fernet)
+    fb_email: Optional[str] = Field(default=None, description="Facebook email/phone for auto-login")
+    fb_password_enc: Optional[str] = Field(default=None, description="Encrypted Facebook password")
+    login_attempts: int = Field(default=0, ge=0, description="Login attempts in current session")
+    last_login_at: Optional[datetime] = Field(default=None, description="Last successful login timestamp")
 
     @property
     def port(self) -> int:
@@ -206,6 +219,28 @@ class Account(BaseModel):
         self.status = AccountStatus.PROXY_DEAD
         self.last_run = datetime.now()
 
+    def set_logged_out(self) -> None:
+        """Mark account as logged out (session expired)."""
+        self.status = AccountStatus.LOGGED_OUT
+        self.last_run = datetime.now()
+
+    def set_login_failed(self, message: str) -> None:
+        """Mark account as login failed."""
+        self.status = AccountStatus.ERROR
+        self.error_message = f"Login failed: {message}"
+        self.last_run = datetime.now()
+
+    def set_login_success(self) -> None:
+        """Mark successful login, reset attempts counter."""
+        self.login_attempts = 0
+        self.last_login_at = datetime.now()
+        self.error_message = None
+
+    @property
+    def has_credentials(self) -> bool:
+        """Check if account has stored login credentials."""
+        return bool(self.fb_email and self.fb_password_enc)
+
     def assign_proxy(self, proxy: Proxy) -> None:
         """Assign a proxy to this account."""
         self.proxy = proxy
@@ -214,14 +249,51 @@ class Account(BaseModel):
         """Remove proxy assignment."""
         self.proxy = None
 
+    def get_effective_group_urls(self) -> List[str]:
+        """
+        Get list of group URLs to process.
+
+        Returns group_urls if set, otherwise falls back to single group_url.
+
+        Returns:
+            List of group URLs.
+        """
+        if self.group_urls:
+            return self.group_urls
+        if self.group_url:
+            return [self.group_url]
+        return []
+
+    @property
+    def display_name(self) -> str:
+        """Get display name (label or debugger address)."""
+        return self.label or self.debugger_address
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return {
+        data = {
             "debugger_address": self.debugger_address,
             "group_url": self.group_url,
             "proxy": self.proxy.address if self.proxy else None,
             "status": self.status.value
         }
+        # Only include optional fields if they have values
+        if self.group_urls:
+            data["group_urls"] = self.group_urls
+        if self.label:
+            data["label"] = self.label
+        if self.notes:
+            data["notes"] = self.notes
+        # Auto-login credentials (password is already encrypted)
+        if self.fb_email:
+            data["fb_email"] = self.fb_email
+        if self.fb_password_enc:
+            data["fb_password_enc"] = self.fb_password_enc
+        if self.login_attempts > 0:
+            data["login_attempts"] = self.login_attempts
+        if self.last_login_at:
+            data["last_login_at"] = self.last_login_at.isoformat()
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "Account":
@@ -240,11 +312,27 @@ class Account(BaseModel):
             except ValueError:
                 pass
 
+        # Parse last_login_at if present
+        last_login_at = None
+        if data.get("last_login_at"):
+            try:
+                last_login_at = datetime.fromisoformat(data["last_login_at"])
+            except (ValueError, TypeError):
+                pass
+
         return cls(
             debugger_address=data["debugger_address"],
             group_url=data.get("group_url"),
+            group_urls=data.get("group_urls", []),
             proxy=proxy,
-            status=status
+            status=status,
+            label=data.get("label"),
+            notes=data.get("notes"),
+            # Auto-login fields
+            fb_email=data.get("fb_email"),
+            fb_password_enc=data.get("fb_password_enc"),
+            login_attempts=data.get("login_attempts", 0),
+            last_login_at=last_login_at
         )
 
 

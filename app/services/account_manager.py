@@ -329,6 +329,61 @@ class AccountManager:
             account.status = AccountStatus.IDLE
             account.error_message = None
 
+    def reset_error_accounts(self) -> int:
+        """
+        Reset all ERROR status accounts to IDLE for retry.
+
+        Returns:
+            Number of accounts reset.
+        """
+        count = 0
+        for account in self.accounts.values():
+            if account.status == AccountStatus.ERROR:
+                account.status = AccountStatus.IDLE
+                account.error_message = None
+                count += 1
+        if count > 0:
+            self.save_accounts()
+            self._log(f"Reset {count} ERROR accounts to IDLE")
+        return count
+
+    def reset_checkpoint_accounts(self) -> int:
+        """
+        Reset all CHECKPOINT status accounts to IDLE for retry.
+
+        Returns:
+            Number of accounts reset.
+        """
+        count = 0
+        for account in self.accounts.values():
+            if account.status == AccountStatus.CHECKPOINT:
+                account.status = AccountStatus.IDLE
+                account.error_message = None
+                count += 1
+        if count > 0:
+            self.save_accounts()
+            self._log(f"Reset {count} CHECKPOINT accounts to IDLE")
+        return count
+
+    def reset_account_by_address(self, debugger_address: str) -> bool:
+        """
+        Reset a specific account to IDLE status.
+
+        Args:
+            debugger_address: Address of account to reset.
+
+        Returns:
+            True if reset, False if not found.
+        """
+        account = self.accounts.get(debugger_address)
+        if account:
+            account.status = AccountStatus.IDLE
+            account.error_message = None
+            self.save_accounts()
+            self._log(f"Reset account {debugger_address} to IDLE")
+            return True
+        return False
+
     def get_statistics(self) -> Dict[str, int]:
         """
         Get account statistics by status.

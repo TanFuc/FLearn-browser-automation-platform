@@ -173,7 +173,7 @@ class MainWindow:
         
         # Initialize the main window with theme
         self.root = ttk.Window(themename=styles.THEME_NAME)
-        self.root.title("FB Auto Invite v2.0")
+        self.root.title("FB Auto Invite v3.0")
         self.root.geometry("1100x750")
         self.root.minsize(900, 600)
 
@@ -238,6 +238,12 @@ class MainWindow:
         )
         self.start_btn.pack(pady=5)
         ToolTip(self.start_btn, text="Start the automation task")
+
+        self.pause_btn = ttk.Button(
+            control_grp, text="PAUSE", bootstyle=WARNING, command=self._on_pause, state=DISABLED, width=15
+        )
+        self.pause_btn.pack(pady=5)
+        ToolTip(self.pause_btn, text="Pause the current run")
 
         self.stop_btn = ttk.Button(
             control_grp, text="STOP", bootstyle=DANGER, command=self._on_stop, state=DISABLED, width=15
@@ -313,6 +319,13 @@ class MainWindow:
         ttk.Button(acc_grp, text="Add Account", bootstyle=OUTLINE, command=self._on_add_account).pack(fill=X, pady=2)
         ttk.Button(acc_grp, text="Import/Load", bootstyle=OUTLINE, command=self._on_load_accounts).pack(fill=X, pady=2)
         ttk.Button(acc_grp, text="Save Accounts", bootstyle=OUTLINE, command=self._on_save_accounts).pack(fill=X, pady=2)
+
+        # Separator
+        ttk.Separator(acc_grp).pack(fill=X, pady=5)
+
+        # Health & Status
+        ttk.Button(acc_grp, text="Health Check", bootstyle="outline-info", command=self._on_health_check).pack(fill=X, pady=2)
+        ttk.Button(acc_grp, text="Reset Errors", bootstyle="outline-warning", command=self._on_reset_errors).pack(fill=X, pady=2)
 
         # Settings
         ttk.Separator(sidebar).pack(fill=X, pady=10)
@@ -412,6 +425,19 @@ class MainWindow:
         ttk.Button(tools, text="Refresh List", command=self._refresh_account_list, bootstyle=OUTLINE).pack(side=LEFT)
         ttk.Button(tools, text="Check Proxies", command=self._on_build_proxies, bootstyle=OUTLINE).pack(side=LEFT, padx=5)
 
+        # Separator
+        ttk.Separator(tools, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=10, pady=3)
+
+        # Test Login button
+        self.test_login_btn = ttk.Button(
+            tools,
+            text="Test Login",
+            bootstyle="outline-info",
+            command=self._on_test_login
+        )
+        self.test_login_btn.pack(side=LEFT)
+        ToolTip(self.test_login_btn, text="Open Chrome and test auto-login for the selected account")
+
         # Table
         cols = ("address", "status", "proxy", "invites")
         self.acc_tree = ttk.Treeview(frame, columns=cols, show="headings")
@@ -424,8 +450,189 @@ class MainWindow:
         self.acc_tree.column("status", width=100)
         self.acc_tree.column("proxy", width=150)
         self.acc_tree.column("invites", width=80)
-        
+
         self.acc_tree.pack(fill=BOTH, expand=True, padx=5, pady=5)
+
+        # Create context menu for accounts
+        self._create_account_context_menu()
+
+        # Bind right-click to show context menu
+        self.acc_tree.bind("<Button-3>", self._show_account_context_menu)
+
+    def _create_account_context_menu(self):
+        """Create right-click context menu for account tree."""
+        import tkinter as tk
+        self.account_menu = tk.Menu(self.acc_tree, tearoff=0)
+
+        # Test Login at the top
+        self.account_menu.add_command(
+            label="Test Login (Open Chrome)",
+            command=self._on_test_login
+        )
+        self.account_menu.add_separator()
+
+        self.account_menu.add_command(label="Set FB Credentials...", command=self._on_set_credentials)
+        self.account_menu.add_command(label="Clear Credentials", command=self._on_clear_credentials)
+        self.account_menu.add_separator()
+        self.account_menu.add_command(label="Reset Status to IDLE", command=self._on_reset_status)
+        self.account_menu.add_separator()
+        self.account_menu.add_command(label="Edit Account...", command=self._on_edit_account)
+        self.account_menu.add_command(label="Remove Account", command=self._on_remove_account)
+
+    def _show_account_context_menu(self, event):
+        """Show context menu on right-click."""
+        # Select the item under cursor
+        item = self.acc_tree.identify_row(event.y)
+        if item:
+            self.acc_tree.selection_set(item)
+            self.account_menu.post(event.x_root, event.y_root)
+
+    def _get_selected_account(self):
+        """Get the currently selected account."""
+        selection = self.acc_tree.selection()
+        if not selection:
+            return None
+
+        item = selection[0]
+        values = self.acc_tree.item(item, "values")
+        if not values:
+            return None
+
+        address = values[0]
+        accounts = self.view_model.get_accounts()
+        for acc in accounts:
+            if acc.debugger_address == address:
+                return acc
+        return None
+
+    def _on_set_credentials(self):
+        """Open credentials dialog for selected account."""
+        from ui.dialogs import FBCredentialsDialog
+
+        account = self._get_selected_account()
+        if not account:
+            self._log_message("No account selected")
+            return
+
+        dialog = FBCredentialsDialog(self.root, account)
+        self.root.wait_window(dialog.top)
+
+        if dialog.result_code == FBCredentialsDialog.RESULT_SAVED:
+            email, password = dialog.get_credentials()
+            if self.view_model.set_account_credentials(account, email, password):
+                self._refresh_account_list()
+        elif dialog.result_code == FBCredentialsDialog.RESULT_CLEARED:
+            self.view_model.clear_account_credentials(account)
+            self._refresh_account_list()
+
+    def _on_clear_credentials(self):
+        """Clear credentials for selected account."""
+        from ui.dialogs import ask_yesno
+
+        account = self._get_selected_account()
+        if not account:
+            self._log_message("No account selected")
+            return
+
+        if not account.has_credentials:
+            self._log_message("Account has no stored credentials")
+            return
+
+        if ask_yesno("Clear Credentials",
+                     f"Clear stored credentials for {account.display_name}?",
+                     parent=self.root):
+            self.view_model.clear_account_credentials(account)
+            self._refresh_account_list()
+
+    def _on_reset_status(self):
+        """Reset selected account status to IDLE."""
+        account = self._get_selected_account()
+        if not account:
+            self._log_message("No account selected")
+            return
+
+        from app.models import AccountStatus
+        account.status = AccountStatus.IDLE
+        account.error_message = None
+        account.login_attempts = 0
+        self.view_model.save_accounts()
+        self._refresh_account_list()
+        self._log_message(f"Status reset to IDLE for {account.display_name}")
+
+    def _on_edit_account(self):
+        """Edit selected account."""
+        from ui.dialogs import AccountDialog
+
+        account = self._get_selected_account()
+        if not account:
+            self._log_message("No account selected")
+            return
+
+        dialog = AccountDialog(self.root, account=account)
+        self.root.wait_window(dialog.top)
+
+        if dialog.result:
+            self.view_model.save_accounts()
+            self._refresh_account_list()
+            self._log_message(f"Account updated: {account.display_name}")
+
+    def _on_remove_account(self):
+        """Remove selected account."""
+        from ui.dialogs import ask_yesno
+
+        account = self._get_selected_account()
+        if not account:
+            self._log_message("No account selected")
+            return
+
+        if ask_yesno("Remove Account",
+                     f"Remove account {account.display_name}?",
+                     parent=self.root):
+            self.view_model.remove_account(account.debugger_address)
+            self._refresh_account_list()
+
+    def _on_test_login(self):
+        """
+        Handler for 'Test Login' button.
+
+        Flow:
+        1. Get selected account from Treeview
+        2. Validate (no account selected? already running?)
+        3. Disable Test Login button during test
+        4. Call view_model.test_login_for_account() with callback
+        5. Callback shows TestLoginResultDialog (thread-safe via message_queue)
+        """
+        account = self._get_selected_account()
+
+        if not account:
+            Messagebox.show_warning(
+                "Please select an account from the list first.",
+                "No Account Selected"
+            )
+            return
+
+        # Disable button to prevent double-click
+        if hasattr(self, 'test_login_btn'):
+            self.test_login_btn.configure(
+                state=DISABLED,
+                text="Testing..."
+            )
+
+        self._log_message(f"[TEST LOGIN] Starting test for: {account.display_name}")
+
+        def on_result(status: str, message: str):
+            """
+            Callback called from background thread.
+            Put result in message_queue for UI thread processing.
+            """
+            self.view_model.message_queue.put(("test_login_done", {
+                "account": account,
+                "status": status,
+                "message": message
+            }))
+
+        # Run test login in background thread (non-blocking)
+        self.view_model.test_login_for_account(account, on_result=on_result)
 
     def _create_logs_tab(self):
         frame = ttk.Frame(self.notebook)
@@ -443,7 +650,7 @@ class MainWindow:
         self.status_lbl = ttk.Label(status, text="Ready", bootstyle="inverse-light", padding=5)
         self.status_lbl.pack(side=LEFT)
 
-        ver = ttk.Label(status, text="v2.0.0", bootstyle="inverse-light", padding=5)
+        ver = ttk.Label(status, text="v3.0.0", bootstyle="inverse-light", padding=5)
         ver.pack(side=RIGHT)
 
     # -------------------------------------------------------------------------
@@ -481,14 +688,64 @@ class MainWindow:
         
         if self.view_model.start_run():
             self.start_btn.configure(state=DISABLED)
+            self.pause_btn.configure(state=NORMAL)
             self.stop_btn.configure(state=NORMAL)
         else:
             Messagebox.show_error("Could not start run. Check logs.", "Start Failed")
 
+    def _on_pause(self):
+        """Handle pause/resume button click."""
+        if self.view_model.is_paused():
+            # Resume
+            self.view_model.resume_run()
+            self.pause_btn.configure(text="PAUSE", bootstyle=WARNING)
+            self._log_message("Bot resumed")
+        else:
+            # Pause
+            self.view_model.pause_run()
+            self.pause_btn.configure(text="RESUME", bootstyle=SUCCESS)
+            self._log_message("Bot paused")
+
     def _on_stop(self):
         self.view_model.stop_run()
         self.start_btn.configure(state=NORMAL)
+        self.pause_btn.configure(state=DISABLED, text="PAUSE", bootstyle=WARNING)
         self.stop_btn.configure(state=DISABLED)
+
+    def _on_health_check(self):
+        """Run health check on all accounts."""
+        import threading
+
+        def run_check():
+            try:
+                result = self.view_model.check_account_health(quick=True)
+                summary = result.get("summary", {})
+                self.message_queue.put(("log",
+                    f"Health Check: {summary.get('healthy', 0)}/{summary.get('total', 0)} accounts healthy"
+                ))
+
+                # Show details for failed accounts
+                for addr, status in result.get("results", {}).items():
+                    if not status.ok:
+                        self.message_queue.put(("log", f"  - {addr}: {status.issue}"))
+
+            except Exception as e:
+                self.message_queue.put(("log", f"Health check error: {e}"))
+
+        # Run in background thread
+        thread = threading.Thread(target=run_check, daemon=True)
+        thread.start()
+        self._log_message("Starting health check...")
+
+    def _on_reset_errors(self):
+        """Reset all ERROR status accounts to IDLE."""
+        count = self.view_model.reset_error_accounts()
+        self._refresh_account_list()
+        self._refresh_monitor_grid()
+        if count > 0:
+            Messagebox.show_info("Reset Complete", f"Reset {count} error accounts to IDLE status.")
+        else:
+            Messagebox.show_info("No Errors", "No error accounts to reset.")
 
     def _log_message(self, message: str):
         # ScrolledText from ttkbootstrap uses .text for the underlying Text widget
@@ -714,14 +971,69 @@ class MainWindow:
                         self.start_btn.configure(state=NORMAL)
                         self._log_message("Auto Loop completed all iterations")
                         Messagebox.show_info("Loop Complete", "Auto loop has finished all runs.")
+                    elif msg_type == "test_login_done":
+                        # Test login result received
+                        self._handle_test_login_done(data)
                 except:
                     break
         except:
             pass
         self.root.after(100, self._process_messages)
 
+    def _handle_test_login_done(self, data: dict):
+        """
+        Handle test login result on UI thread.
+
+        Args:
+            data: dict with keys: account, status, message
+        """
+        from ui.dialogs import TestLoginResultDialog
+
+        account = data["account"]
+        status = data["status"]
+        message = data["message"]
+
+        # Re-enable Test Login button
+        if hasattr(self, 'test_login_btn'):
+            self.test_login_btn.configure(
+                state=NORMAL,
+                text="Test Login"
+            )
+
+        # Update log
+        self._log_message(f"[TEST LOGIN] Result for {account.display_name}: {status}")
+
+        # Show result dialog (on UI thread - SAFE)
+        def _on_set_credentials():
+            """Callback when user wants to update credentials."""
+            self._on_set_credentials()
+
+        def _on_set_checkpoint():
+            """Callback when user wants to mark as checkpoint."""
+            from app.models import AccountStatus
+            account.status = AccountStatus.CHECKPOINT
+            self.view_model.save_accounts()
+            self._refresh_account_list()
+            self._log_message(f"Marked {account.display_name} as CHECKPOINT")
+
+        TestLoginResultDialog.show(
+            parent=self.root,
+            account=account,
+            status=status,
+            message=message,
+            on_set_credentials=_on_set_credentials if status in ("wrong_pass", "no_credentials") else None,
+            on_set_checkpoint=_on_set_checkpoint if status == "2fa" else None
+        )
+
+        # Refresh account list to update status if changed
+        self._refresh_account_list()
+
     def _on_close(self):
-        self._on_stop()
+        """Handle window close - properly shutdown all services."""
+        try:
+            self.view_model.shutdown()
+        except Exception:
+            pass
         self.root.destroy()
 
     def run(self):

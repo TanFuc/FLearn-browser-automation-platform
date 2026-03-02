@@ -72,6 +72,7 @@ class BrowserManager:
         self.logger = logger or logging.getLogger(__name__)
         self.processes: Dict[int, subprocess.Popen] = {}
         self.drivers: Dict[int, WebDriver] = {}
+        self._shutting_down = False
 
         # Register cleanup on exit
         atexit.register(self.shutdown_all)
@@ -154,9 +155,15 @@ class BrowserManager:
         if headless is None:
             headless = settings.headless
 
+        # Get Chrome binary path (auto-detect if not specified)
+        chrome_binary = settings.get_chrome_binary_path()
+        if not chrome_binary or not chrome_binary.exists():
+            self.logger.error("Chrome binary not found! Please set CHROME_BINARY_PATH in .env or settings.")
+            return False
+
         # Build Chrome command
         cmd = [
-            str(settings.chrome_binary_path),
+            str(chrome_binary),
             f"--remote-debugging-port={port}",
             f"--user-data-dir={profile_path}",
             "--no-first-run",
@@ -261,6 +268,9 @@ class BrowserManager:
         Returns:
             WebDriver instance or None if connection failed.
         """
+        if self._shutting_down:
+            return None
+
         if port in self.drivers:
             return self.drivers[port]
 
@@ -343,6 +353,7 @@ class BrowserManager:
 
     def shutdown_all(self) -> None:
         """Stop all Chrome instances and cleanup."""
+        self._shutting_down = True
         self.logger.info("Shutting down all Chrome instances...")
 
         # Close all WebDriver connections

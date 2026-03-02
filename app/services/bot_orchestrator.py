@@ -8,6 +8,7 @@ Integrates scheduler, database tracking, and notifications.
 
 import logging
 import random
+import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -57,7 +58,9 @@ class BotOrchestrator:
         self.logger = logger or logging.getLogger(__name__)
 
         self.is_running = False
+        self.is_paused = False
         self._stop_flag = threading.Event()
+        self._pause_flag = threading.Event()
         self._lock = threading.Lock()
         self._executor: Optional[ThreadPoolExecutor] = None
 
@@ -124,6 +127,147 @@ class BotOrchestrator:
             except Exception:
                 pass
 
+    def _is_chrome_running(self, port: int, host: str = "127.0.0.1") -> bool:
+        """
+        Check if Chrome is running and listening on the specified port.
+
+        Args:
+            port: The debugging port to check.
+            host: The host address (default: 127.0.0.1).
+
+        Returns:
+            True if Chrome is running on the port, False otherwise.
+        """
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(2)
+                return s.connect_ex((host, port)) == 0
+        except Exception:
+            return False
+
+    def _wait_if_paused(self) -> bool:
+        """
+        Block until unpaused or stopped.
+
+        Returns:
+            True if should continue, False if stopped.
+        """
+        while self._pause_flag.is_set():
+            if self._stop_flag.is_set():
+                return False
+            time.sleep(0.5)
+        return not self._stop_flag.is_set()
+
+    def _attempt_auto_login(
+        self,
+        account: Account,
+        driver,
+        automation: "FacebookAutomation"
+    ) -> bool:
+        """
+        Attempt automatic login for an account with expired session.
+
+        Args:
+            account: Account that needs re-login.
+            driver: WebDriver instance.
+            automation: FacebookAutomation instance.
+
+        Returns:
+            True if login successful, False otherwise.
+        """
+        from utils.crypto import decrypt_password, has_credentials
+        from datetime import datetime
+
+        # Check if account has stored credentials
+        if not has_credentials(account):
+            self._log(
+                f"[AUTO-LOGIN] No credentials stored for {account.debugger_address}. "
+                f"Please add FB email/password in account settings.",
+                logging.WARNING
+            )
+            account.set_logged_out()
+            notifier.notify_login_required(account.debugger_address)
+            return False
+
+        # Check if max retries reached
+        if account.login_attempts >= settings.max_login_retries:
+            self._log(
+                f"[AUTO-LOGIN] Max login retries ({settings.max_login_retries}) "
+                f"reached for {account.debugger_address}",
+                logging.ERROR
+            )
+            account.set_login_failed("Max retries exceeded")
+            return False
+
+        # Increment attempt counter
+        account.login_attempts += 1
+        self._log(
+            f"[AUTO-LOGIN] Attempting login for {account.debugger_address} "
+            f"(attempt {account.login_attempts}/{settings.max_login_retries})...",
+            logging.INFO
+        )
+
+        # Decrypt credentials
+        try:
+            email = account.fb_email
+            password = decrypt_password(account.fb_password_enc)
+        except Exception as e:
+            self._log(f"[AUTO-LOGIN] Failed to decrypt credentials: {e}", logging.ERROR)
+            account.set_error("Credential decryption failed")
+            return False
+
+        # Perform login
+        login_result = automation.perform_login(email, password)
+
+        if login_result == "success":
+            self._log(
+                f"[AUTO-LOGIN] Login successful for {account.debugger_address}! "
+                f"Waiting {settings.login_success_wait}s before continuing...",
+                logging.INFO
+            )
+            account.set_login_success()
+
+            # Send Telegram notification
+            if settings.notify_on_login:
+                notifier.notify_login_success(account.debugger_address)
+
+            # Wait to avoid suspicious activity
+            for _ in range(settings.login_success_wait):
+                if self._stop_flag.is_set():
+                    return False
+                time.sleep(1)
+
+            return True
+
+        elif login_result == "2fa":
+            self._log(
+                f"[AUTO-LOGIN] 2FA/Checkpoint required for {account.debugger_address}. "
+                f"Manual action needed.",
+                logging.WARNING
+            )
+            account.set_checkpoint()
+            notifier.notify_checkpoint(account.debugger_address)
+            return False
+
+        elif login_result == "wrong_pass":
+            self._log(
+                f"[AUTO-LOGIN] Wrong credentials for {account.debugger_address}. "
+                f"Please update the password.",
+                logging.ERROR
+            )
+            account.set_login_failed("Wrong email/password")
+            notifier.notify_login_failed(account.debugger_address, "Wrong credentials")
+            return False
+
+        else:  # "timeout" or "error"
+            self._log(
+                f"[AUTO-LOGIN] Login result uncertain ({login_result}) for "
+                f"{account.debugger_address}. Will retry next run.",
+                logging.WARNING
+            )
+            account.set_error(f"Auto-login failed: {login_result}")
+            return False
+
     def _process_account(
         self,
         account: Account,
@@ -159,9 +303,15 @@ class BotOrchestrator:
             daily_limit = settings.daily_max_invites
             if settings.warmup_enabled:
                 original_limit = daily_limit
-                daily_limit = db.get_warmup_limit(account.debugger_address, daily_limit)
-                if daily_limit != original_limit:
-                    self._log(f"Warmup constrained daily limit to {daily_limit} (Base: {original_limit})")
+                warmup_limit = db.get_warmup_limit(account.debugger_address, daily_limit)
+                warmup_level = db.get_warmup_level(account.debugger_address) if hasattr(db, 'get_warmup_level') else "?"
+                if warmup_limit != original_limit:
+                    self._log(
+                        f"[WARMUP] Level {warmup_level}/10: Limit constrained "
+                        f"{original_limit} -> {warmup_limit} for {account.debugger_address}",
+                        logging.WARNING
+                    )
+                    daily_limit = warmup_limit
 
             daily_remaining = db.get_daily_remaining(account.debugger_address, daily_limit)
             self._log(f"Daily remaining for {account.debugger_address}: {daily_remaining}/{daily_limit}")
@@ -171,11 +321,19 @@ class BotOrchestrator:
                 account.set_error("Daily limit reached")
                 return TaskResult(account=account, error="Daily limit reached")
 
+        # Pre-check: Is Chrome running on this port?
+        if not self._is_chrome_running(account.port):
+            error_msg = f"Chrome NOT running on port {account.port}. Please start Chrome with remote debugging on this port first."
+            self._log(f"[ERROR] {error_msg}", logging.ERROR)
+            account.set_error(f"Chrome not running on port {account.port}")
+            return TaskResult(account=account, error=f"Chrome not running on port {account.port}")
+
         # Get WebDriver
         driver = self.browser_manager.get_driver(account.port)
         if not driver:
-            self._log(f"Failed to connect WebDriver for {account.debugger_address}", logging.ERROR)
-            account.set_error("Failed to connect to Chrome")
+            error_msg = f"Failed to connect WebDriver for {account.debugger_address}. Chrome may be running but WebDriver cannot attach."
+            self._log(f"[ERROR] {error_msg}", logging.ERROR)
+            account.set_error("Failed to connect WebDriver")
             result = TaskResult(account=account, error="WebDriver connection failed")
             return result
 
@@ -187,6 +345,31 @@ class BotOrchestrator:
             logger=self.logger,
             on_log=account_logger
         )
+
+        # Check for logged out state and attempt auto-login if enabled
+        try:
+            driver.get("https://www.facebook.com/")
+            time.sleep(2)  # Quick load check
+        except Exception:
+            pass
+
+        if automation.check_logged_out() and settings.auto_login_enabled:
+            self._log(f"[WARN] {account.debugger_address} is logged out. Attempting auto-login...")
+            login_ok = self._attempt_auto_login(account, driver, automation)
+            if not login_ok:
+                result = TaskResult(account=account, error=account.error_message or "Auto-login failed")
+                if self._on_account_complete:
+                    try:
+                        self._on_account_complete(account, result)
+                    except Exception:
+                        pass
+                return result
+            # Login OK - recreate automation instance to clear any cached state
+            automation = FacebookAutomation(
+                driver=driver,
+                logger=self.logger,
+                on_log=account_logger
+            )
 
         # Process based on task configuration
         if config:
@@ -378,6 +561,11 @@ class BotOrchestrator:
                 self._log("Stop requested, ending batch")
                 break
 
+            # Check for pause
+            if not self._wait_if_paused():
+                self._log("Stop requested while paused, ending batch")
+                break
+
             group_num += 1
 
             # Process this group
@@ -409,6 +597,10 @@ class BotOrchestrator:
                     for _ in range(rest_time):
                         if self._stop_flag.is_set():
                             break
+                        # Check for pause during rest
+                        if self._pause_flag.is_set():
+                            if not self._wait_if_paused():
+                                break
                         time.sleep(1)
 
         batch_result.duration = time.time() - start_time
@@ -451,7 +643,9 @@ class BotOrchestrator:
         batch_size: int = None,
         account_loggers: Dict[str, Callable[[str], None]] = None,
         wait_for_schedule: bool = True,
-        task_config: Optional[TaskConfig] = None
+        task_config: Optional[TaskConfig] = None,
+        skip_error_accounts: bool = True,
+        retry_checkpoint: bool = False
     ) -> List[BatchResult]:
         """
         Run the bot across all accounts in batches.
@@ -462,6 +656,8 @@ class BotOrchestrator:
             account_loggers: Optional per-account log callbacks.
             wait_for_schedule: Whether to wait for scheduler window.
             task_config: Optional task configuration for all accounts.
+            skip_error_accounts: Skip accounts with ERROR status (default: True).
+            retry_checkpoint: Also retry accounts with CHECKPOINT status (default: False).
 
         Returns:
             List of BatchResults.
@@ -473,6 +669,7 @@ class BotOrchestrator:
         with self._lock:
             self.is_running = True
             self._stop_flag.clear()
+            self._pause_flag.clear()
 
         # Set task config if provided
         if task_config:
@@ -502,9 +699,42 @@ class BotOrchestrator:
         account_loggers = account_loggers or {}
         all_results: List[BatchResult] = []
 
+        # Filter accounts by status before running
+        original_count = len(accounts)
+        runnable_statuses = [AccountStatus.IDLE, AccountStatus.OK, AccountStatus.PROXY_DEAD]
+
+        # Add ERROR status if not skipping
+        if not skip_error_accounts:
+            runnable_statuses.append(AccountStatus.ERROR)
+
+        # Add CHECKPOINT status if retry_checkpoint is True
+        if retry_checkpoint:
+            runnable_statuses.append(AccountStatus.CHECKPOINT)
+
+        runnable_accounts = [a for a in accounts if a.status in runnable_statuses]
+        skipped = original_count - len(runnable_accounts)
+
+        if skipped > 0:
+            skipped_error = len([a for a in accounts if a.status == AccountStatus.ERROR])
+            skipped_checkpoint = len([a for a in accounts if a.status == AccountStatus.CHECKPOINT])
+            self._log(
+                f"Skipping {skipped} accounts: {skipped_error} ERROR, {skipped_checkpoint} CHECKPOINT. "
+                f"Use 'Reset Status' to retry.",
+                logging.WARNING
+            )
+
+        if not runnable_accounts:
+            self._log("No runnable accounts found! All accounts are in ERROR/CHECKPOINT status.", logging.WARNING)
+            self._emit_status("No accounts to run")
+            with self._lock:
+                self.is_running = False
+            return []
+
+        accounts = runnable_accounts
+
         # Log with task info
         task_label = self.task_config.action_label if self.task_config else "Invite Friends"
-        self._log(f"Starting [{task_label}] with {len(accounts)} accounts, batch size {batch_size}")
+        self._log(f"Starting [{task_label}] with {len(accounts)} accounts (skipped {skipped}), batch size {batch_size}")
         self._emit_status(f"Starting: {task_label}")
 
         try:
@@ -724,8 +954,25 @@ class BotOrchestrator:
         """Request the orchestrator to stop."""
         self._log("Stop requested...")
         self._stop_flag.set()
+        self._pause_flag.clear()  # Clear pause when stopping
         self._emit_status("Stopping")
         scheduler.stop()
+
+    def pause(self) -> None:
+        """Pause the orchestrator between accounts."""
+        if self.is_running and not self.is_paused:
+            self._pause_flag.set()
+            self.is_paused = True
+            self._emit_status("Paused")
+            self._log("[PAUSE] Bot paused. Click Resume to continue.")
+
+    def resume(self) -> None:
+        """Resume from pause."""
+        if self.is_paused:
+            self._pause_flag.clear()
+            self.is_paused = False
+            self._emit_status("Resuming")
+            self._log("[RESUME] Bot resumed.")
 
     def shutdown(self) -> None:
         """Stop and cleanup all resources."""

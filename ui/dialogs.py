@@ -917,3 +917,380 @@ class SettingsDialog:
                     var.set(str(default_value))
                 else:
                     var.set(default_value)
+
+
+class FBCredentialsDialog:
+    """
+    Modal dialog for entering Facebook login credentials.
+
+    Credentials are stored encrypted using Fernet encryption.
+    Password is masked by default with option to show.
+    """
+
+    # Return codes
+    RESULT_CANCELLED = 0
+    RESULT_SAVED = 1
+    RESULT_CLEARED = 2
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        account: Account,
+        title: str = "Facebook Credentials"
+    ) -> None:
+        """
+        Initialize FBCredentialsDialog.
+
+        Args:
+            parent: Parent widget.
+            account: Account to set credentials for.
+            title: Dialog title.
+        """
+        self.result_code = self.RESULT_CANCELLED
+        self.account = account
+        self.email: Optional[str] = None
+        self.password: Optional[str] = None
+
+        # Create dialog window
+        self.top = tk.Toplevel(parent)
+        self.top.title(f"{title} - {account.display_name}")
+        self.top.geometry("450x280")
+        self.top.transient(parent)
+        self.top.grab_set()
+        self.top.resizable(False, False)
+
+        # Center on parent
+        self.top.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - 450) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - 280) // 2
+        self.top.geometry(f"+{x}+{y}")
+
+        self._create_widgets()
+
+        # Focus on email entry
+        self.email_entry.focus_set()
+
+        # Bind keys
+        self.top.bind("<Return>", lambda e: self._on_save())
+        self.top.bind("<Escape>", lambda e: self.top.destroy())
+
+    def _create_widgets(self) -> None:
+        """Create dialog widgets."""
+        # Main frame with padding
+        main_frame = ttk.Frame(self.top, padding=15)
+        main_frame.pack(fill="both", expand=True)
+
+        # Configure grid
+        main_frame.columnconfigure(1, weight=1)
+
+        # Warning label
+        row = 0
+        warn_frame = ttk.Frame(main_frame)
+        warn_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+
+        warn_label = ttk.Label(
+            warn_frame,
+            text="Credentials are stored encrypted on your local machine only.",
+            foreground="orange",
+            font=("", 9, "italic")
+        )
+        warn_label.pack(anchor="w")
+
+        # Email / Phone
+        row += 1
+        ttk.Label(main_frame, text="Facebook Email/Phone:").grid(
+            row=row, column=0, sticky="e", padx=(0, 10), pady=8
+        )
+
+        self.email_var = tk.StringVar(value=self.account.fb_email or "")
+        self.email_entry = ttk.Entry(main_frame, textvariable=self.email_var, width=35)
+        self.email_entry.grid(row=row, column=1, sticky="ew", pady=8)
+
+        # Password
+        row += 1
+        ttk.Label(main_frame, text="Facebook Password:").grid(
+            row=row, column=0, sticky="e", padx=(0, 10), pady=8
+        )
+
+        pass_frame = ttk.Frame(main_frame)
+        pass_frame.grid(row=row, column=1, sticky="ew", pady=8)
+        pass_frame.columnconfigure(0, weight=1)
+
+        self.password_var = tk.StringVar()
+        self.pass_entry = ttk.Entry(pass_frame, textvariable=self.password_var, show="*", width=30)
+        self.pass_entry.grid(row=0, column=0, sticky="ew")
+
+        # Show password checkbox
+        row += 1
+        self.show_pass_var = tk.BooleanVar(value=False)
+        show_cb = ttk.Checkbutton(
+            main_frame,
+            text="Show password",
+            variable=self.show_pass_var,
+            command=self._toggle_password_visibility
+        )
+        show_cb.grid(row=row, column=1, sticky="w", pady=(0, 5))
+
+        # Info label if credentials exist
+        if self.account.fb_password_enc:
+            row += 1
+            info_label = ttk.Label(
+                main_frame,
+                text="Credentials already saved. Leave password empty to keep existing.",
+                foreground="gray",
+                font=("", 9)
+            )
+            info_label.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+
+        # Separator
+        row += 1
+        ttk.Separator(main_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=15
+        )
+
+        # Buttons
+        row += 1
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.grid(row=row, column=0, columnspan=2, sticky="ew")
+
+        # Clear button (left)
+        ttk.Button(
+            btn_frame,
+            text="Clear Credentials",
+            command=self._on_clear,
+            width=15,
+            bootstyle="danger-outline" if HAS_BOOTSTRAP else None
+        ).pack(side="left")
+
+        # Cancel and Save (right)
+        ttk.Button(
+            btn_frame,
+            text="Cancel",
+            command=self.top.destroy,
+            width=10
+        ).pack(side="right", padx=(5, 0))
+
+        ttk.Button(
+            btn_frame,
+            text="Save",
+            command=self._on_save,
+            width=10,
+            bootstyle="success" if HAS_BOOTSTRAP else None
+        ).pack(side="right")
+
+    def _toggle_password_visibility(self) -> None:
+        """Toggle password field visibility."""
+        if self.show_pass_var.get():
+            self.pass_entry.configure(show="")
+        else:
+            self.pass_entry.configure(show="*")
+
+    def _on_save(self) -> None:
+        """Handle Save button click."""
+        email = self.email_var.get().strip()
+        password = self.password_var.get()
+
+        # Validate email
+        if not email:
+            show_error("Error", "Email/Phone is required", parent=self.top)
+            self.email_entry.focus_set()
+            return
+
+        # If no new password and no existing, require password
+        if not password and not self.account.fb_password_enc:
+            show_error("Error", "Password is required", parent=self.top)
+            self.pass_entry.focus_set()
+            return
+
+        self.email = email
+        self.password = password if password else None  # None means keep existing
+        self.result_code = self.RESULT_SAVED
+        self.top.destroy()
+
+    def _on_clear(self) -> None:
+        """Handle Clear Credentials button click."""
+        if not ask_yesno(
+            "Clear Credentials",
+            "Are you sure you want to remove stored credentials for this account?",
+            parent=self.top
+        ):
+            return
+
+        self.email = None
+        self.password = None
+        self.result_code = self.RESULT_CLEARED
+        self.top.destroy()
+
+    def get_credentials(self) -> tuple:
+        """
+        Get the entered credentials.
+
+        Returns:
+            Tuple of (email, password) or (None, None) if cancelled/cleared.
+        """
+        return self.email, self.password
+
+
+class TestLoginResultDialog:
+    """
+    Dialog to display test login results.
+
+    Uses Toplevel (ttkbootstrap style):
+    - Success -> green, "Close" button
+    - 2FA -> yellow, "Close" + "Mark as Checkpoint" button
+    - Wrong password -> red, "Close" + "Update Credentials" button
+    - Timeout / Error -> gray, "Close" button
+    """
+
+    # Status -> (title, bootstyle_color, icon)
+    STATUS_CONFIG = {
+        "success":        ("Login Successful",   "success",   ""),
+        "2fa":            ("2FA / Checkpoint",   "warning",   ""),
+        "wrong_pass":     ("Login Failed",       "danger",    ""),
+        "timeout":        ("Login Timeout",      "secondary", ""),
+        "error":          ("Login Error",        "danger",    ""),
+        "no_credentials": ("No Credentials",     "warning",   ""),
+        "chrome_failed":  ("Chrome Error",       "danger",    ""),
+    }
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        account: Account,
+        status: str,
+        message: str,
+        on_set_credentials: Optional[callable] = None,
+        on_set_checkpoint: Optional[callable] = None
+    ) -> None:
+        """
+        Initialize TestLoginResultDialog.
+
+        Args:
+            parent: Parent tkinter window.
+            account: The account that was tested.
+            status: One of the STATUS_CONFIG keys.
+            message: Detailed message to display.
+            on_set_credentials: Callback if user wants to update credentials.
+            on_set_checkpoint: Callback if user wants to mark as checkpoint.
+        """
+        self.account = account
+        self.result = None
+
+        config = self.STATUS_CONFIG.get(status, ("Unknown", "secondary", "?"))
+        title, color, icon = config
+
+        # Create Toplevel window
+        self.top = tk.Toplevel(parent)
+        self.top.title(f"Test Login - {account.display_name}")
+        self.top.geometry("480x300")
+        self.top.resizable(False, False)
+        self.top.grab_set()  # Modal
+        self.top.focus_set()
+
+        # Center on parent
+        self.top.transient(parent)
+
+        # Update window position
+        self.top.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - 480) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - 300) // 2
+        self.top.geometry(f"+{x}+{y}")
+
+        # ---- Header ----
+        header = ttk.Frame(self.top, bootstyle=color, padding=15)
+        header.pack(fill=X)
+
+        ttk.Label(
+            header,
+            text=f"{icon}  {title}",
+            font=("Helvetica", 14, "bold"),
+            bootstyle=f"inverse-{color}"
+        ).pack(side=LEFT)
+
+        ttk.Label(
+            header,
+            text=f"Account: {account.display_name}",
+            font=("Helvetica", 9),
+            bootstyle=f"inverse-{color}"
+        ).pack(side=RIGHT)
+
+        # ---- Message Body ----
+        body = ttk.Frame(self.top, padding=15)
+        body.pack(fill=BOTH, expand=True)
+
+        msg_lbl = ttk.Label(
+            body,
+            text=message,
+            wraplength=430,
+            justify=LEFT,
+            font=("Helvetica", 10)
+        )
+        msg_lbl.pack(anchor=NW)
+
+        # ---- Footer Buttons ----
+        footer = ttk.Frame(self.top, padding=(15, 5, 15, 15))
+        footer.pack(fill=X)
+
+        # Always: Close button
+        ttk.Button(
+            footer,
+            text="Close",
+            bootstyle="outline-secondary",
+            command=self.top.destroy,
+            width=12
+        ).pack(side=RIGHT, padx=5)
+
+        # Conditional: "Update Credentials" for wrong_pass / no_credentials
+        if status in ("wrong_pass", "no_credentials") and on_set_credentials:
+            ttk.Button(
+                footer,
+                text="Update Credentials",
+                bootstyle="outline-warning",
+                command=lambda: (self.top.destroy(), on_set_credentials()),
+                width=18
+            ).pack(side=RIGHT, padx=5)
+
+        # Conditional: "Mark as Checkpoint" for 2fa
+        if status == "2fa" and on_set_checkpoint:
+            ttk.Button(
+                footer,
+                text="Mark as Checkpoint",
+                bootstyle="outline-warning",
+                command=lambda: (self.top.destroy(), on_set_checkpoint()),
+                width=18
+            ).pack(side=RIGHT, padx=5)
+
+        # Bind Escape key
+        self.top.bind("<Escape>", lambda e: self.top.destroy())
+
+    @classmethod
+    def show(
+        cls,
+        parent: tk.Widget,
+        account: Account,
+        status: str,
+        message: str,
+        on_set_credentials: Optional[callable] = None,
+        on_set_checkpoint: Optional[callable] = None
+    ):
+        """
+        Convenience classmethod to show dialog.
+
+        Args:
+            parent: Parent widget.
+            account: Account that was tested.
+            status: Result status code.
+            message: Message to display.
+            on_set_credentials: Callback for updating credentials.
+            on_set_checkpoint: Callback for marking as checkpoint.
+
+        Returns:
+            Dialog result (if any).
+        """
+        dialog = cls(
+            parent, account, status, message,
+            on_set_credentials=on_set_credentials,
+            on_set_checkpoint=on_set_checkpoint
+        )
+        parent.wait_window(dialog.top)
+        return dialog.result

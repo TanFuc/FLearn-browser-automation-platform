@@ -31,17 +31,17 @@ class AppSettings(BaseSettings):
     )
 
     # ========== Chrome/Browser Settings ==========
-    chromedriver_path: Path = Field(
-        default=Path(r"C:\Tools\ChromeDriver142\chromedriver.exe"),
-        description="Path to ChromeDriver executable"
+    chromedriver_path: Optional[Path] = Field(
+        default=None,
+        description="Path to ChromeDriver executable (auto-detect if None)"
     )
-    chrome_binary_path: Path = Field(
-        default=Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-        description="Path to Chrome browser executable"
+    chrome_binary_path: Optional[Path] = Field(
+        default=None,
+        description="Path to Chrome browser executable (auto-detect if None)"
     )
     profile_dir: Path = Field(
-        default=Path(r"C:\ChromeProfiles"),
-        description="Base directory for Chrome profiles"
+        default_factory=lambda: Path.home() / "ChromeProfiles",
+        description="Base directory for Chrome profiles (defaults to user home)"
     )
     headless: bool = Field(default=False, description="Run Chrome in headless mode")
     user_agent_rotate: bool = Field(default=True, description="Enable User-Agent rotation")
@@ -154,20 +154,80 @@ class AppSettings(BaseSettings):
 
     # ========== Debug Mode ==========
     debug_mode: bool = Field(default=False, description="Enable debug logging")
+    dry_run: bool = Field(default=False, description="Dry run mode - check connections without clicking")
+
+    # ========== Auto-Retry Settings ==========
+    auto_retry_errors: bool = Field(default=True, description="Auto retry failed accounts")
+    max_retry_per_run: int = Field(default=2, ge=1, le=5, description="Max retries per account per run")
+    retry_error_types: List[str] = Field(
+        default=["WebDriver connection failed", "Chrome not running"],
+        description="Error types that allow auto retry"
+    )
+
+    # ========== Auto Login Settings ==========
+    auto_login_enabled: bool = Field(default=True, description="Auto re-login when session expires")
+    max_login_retries: int = Field(default=2, ge=1, le=5, description="Max login attempts per session")
+    login_success_wait: int = Field(default=30, ge=10, le=120, description="Seconds to wait after successful login")
+    notify_on_login: bool = Field(default=True, description="Send Telegram notification on login events")
 
     @field_validator("chromedriver_path", "chrome_binary_path", mode="before")
     @classmethod
-    def validate_executable_paths(cls, v: str | Path) -> Path:
+    def validate_executable_paths(cls, v: str | Path | None) -> Optional[Path]:
         """Validate that executable paths are valid."""
+        if v is None or v == "" or v == "None":
+            return None
         path = Path(v) if isinstance(v, str) else v
         return path
 
     @field_validator("profile_dir", mode="before")
     @classmethod
-    def validate_directory_path(cls, v: str | Path) -> Path:
+    def validate_directory_path(cls, v: str | Path | None) -> Path:
         """Validate and create directory if needed."""
+        if v is None or v == "" or v == "None":
+            return Path.home() / "ChromeProfiles"
         path = Path(v) if isinstance(v, str) else v
         return path
+
+    def get_chrome_binary_path(self) -> Optional[Path]:
+        """
+        Get Chrome binary path, with auto-detection for common locations.
+
+        Returns:
+            Path to Chrome binary or None if not found.
+        """
+        if self.chrome_binary_path and self.chrome_binary_path.exists():
+            return self.chrome_binary_path
+
+        # Common Chrome locations for Windows
+        common_paths = [
+            Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+            Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe",
+        ]
+
+        for path in common_paths:
+            if path.exists():
+                return path
+
+        return None
+
+    def load_keywords_blacklist(self) -> List[str]:
+        """
+        Load blacklist keywords from file if exists.
+
+        Returns:
+            List of blacklist keywords (from file or settings).
+        """
+        blacklist_file = Path("blacklist_keywords.txt")
+        if blacklist_file.exists():
+            try:
+                with open(blacklist_file, "r", encoding="utf-8") as f:
+                    keywords = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+                    if keywords:
+                        return keywords
+            except Exception:
+                pass
+        return self.keywords_blacklist
 
     def get_profile_path(self, port: int) -> Path:
         """
@@ -225,12 +285,26 @@ class AppSettings(BaseSettings):
         Args:
             data: Dictionary of setting names and values.
         """
+        from typing import get_args, get_origin
+
         for key, value in data.items():
             if hasattr(self, key):
                 # Convert string paths back to Path objects
                 field_info = self.model_fields.get(key)
-                if field_info and field_info.annotation == Path:
-                    value = Path(value)
+                if field_info:
+                    annotation = field_info.annotation
+                    # Check if type is Path or Optional[Path]
+                    is_path_type = annotation == Path
+                    if not is_path_type and get_origin(annotation) is not None:
+                        # Check if it's Optional[Path] (Union[Path, None])
+                        args = get_args(annotation)
+                        is_path_type = Path in args
+
+                    if is_path_type and value is not None and value != "" and value != "None":
+                        value = Path(value)
+                    elif is_path_type and (value == "" or value == "None"):
+                        value = None
+
                 setattr(self, key, value)
 
     def to_ui_dict(self) -> Dict[str, Any]:

@@ -203,6 +203,49 @@ class FacebookAutomation:
         "kiểm tra bảo mật",
     ]
 
+    # Disabled/Dead account indicators - account permanently or temporarily disabled
+    DISABLED_ACCOUNT_PATTERNS = [
+        # English
+        "your account has been disabled",
+        "this account has been disabled",
+        "account is disabled",
+        "your account is disabled",
+        "account has been suspended",
+        "your account has been suspended",
+        "we've disabled your account",
+        "we disabled your account",
+        "can't use facebook",
+        "you can't use facebook",
+        "account restricted",
+        "your account is restricted",
+        "try again later",
+        "temporarily blocked",
+        "you're temporarily blocked",
+        # Vietnamese
+        "tài khoản của bạn đã bị vô hiệu hóa",
+        "tài khoản này đã bị vô hiệu hóa",
+        "tài khoản đã bị vô hiệu hóa",
+        "tài khoản bị khóa",
+        "tài khoản của bạn bị khóa",
+        "tài khoản đã bị tạm ngưng",
+        "chúng tôi đã vô hiệu hóa tài khoản",
+        "không thể sử dụng facebook",
+        "bạn không thể sử dụng facebook",
+        "tài khoản bị hạn chế",
+        "thử lại sau",
+        "tạm thời bị chặn",
+        "bạn tạm thời bị chặn",
+    ]
+
+    # Disabled account URL patterns
+    DISABLED_URL_PATTERNS = [
+        "/disabled/",
+        "/help/contact/logout",
+        "/checkpoint/block",
+        "/checkpoint/liszt",
+        "/help/contact/260749603972907",  # Disabled account appeal
+    ]
+
     # Admin/Moderator badge patterns
     ADMIN_PATTERNS = [
         "Admin", "Quản trị viên", "Moderator", "Người kiểm duyệt",
@@ -378,18 +421,27 @@ class FacebookAutomation:
             # Check if we're on the members page
             if not self._is_on_members_page():
                 self._log(
-                    f"[WARNING] Navigation may have failed - not on members page!\n"
-                    f"  Expected: {members_url}\n"
-                    f"  Current: {current_url}",
+                    f"[CẢNH BÁO] Điều hướng có thể đã thất bại - không ở trang thành viên nhóm!\n"
+                    f"  Mong đợi: {members_url}\n"
+                    f"  Hiện tại: {current_url}",
                     logging.WARNING
                 )
                 # Try one more time with explicit members URL
                 if "/members" not in current_url.lower():
-                    self._log("Retrying navigation to members page...")
+                    self._log("Thử điều hướng lại vào trang thành viên...")
                     self.driver.get(members_url)
                     time.sleep(3)
                     current_url = self.driver.current_url
                     self._log(f"Current URL after retry: {current_url}")
+
+                if not self._is_on_members_page():
+                    self._log(
+                        f"[LỖI] KHÔNG ở trang thành viên nhóm! Sẽ dừng tài khoản này lại để tránh click bậy bạ.\n"
+                        f"  URL hiện tại: {current_url}\n"
+                        f"  URL bắt buộc phải có đuôi: /members hoặc /people",
+                        logging.ERROR
+                    )
+                    return False
 
             return True
 
@@ -424,6 +476,55 @@ class FacebookAutomation:
         # Append /members to the URL
         return f"{url}/members"
 
+    def check_disabled_account(self) -> bool:
+        """
+        Check if account is disabled/dead (permanently or temporarily).
+
+        Uses multiple detection methods:
+        1. URL-based detection
+        2. Page body text detection
+        3. Heading text detection
+
+        Returns:
+            True if account is disabled, False otherwise.
+        """
+        try:
+            current_url = self.driver.current_url.lower()
+
+            # Method 1: Check URL for disabled patterns
+            for pattern in self.DISABLED_URL_PATTERNS:
+                if pattern in current_url:
+                    self._log(f"DISABLED account detected (URL): {current_url}", logging.ERROR)
+                    return True
+
+            # Method 2: Check page body text
+            try:
+                body_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                for pattern in self.DISABLED_ACCOUNT_PATTERNS:
+                    if pattern in body_text:
+                        self._log(f"DISABLED account detected (text): '{pattern}'", logging.ERROR)
+                        return True
+            except Exception:
+                pass
+
+            # Method 3: Check heading elements
+            try:
+                headings = self.driver.find_elements(By.CSS_SELECTOR, "h1, h2, h3, [role='heading']")
+                for heading in headings:
+                    heading_text = heading.text.lower()
+                    for pattern in self.DISABLED_ACCOUNT_PATTERNS:
+                        if pattern in heading_text:
+                            self._log(f"DISABLED account detected (heading): {heading_text[:80]}", logging.ERROR)
+                            return True
+            except Exception:
+                pass
+
+            return False
+
+        except Exception as e:
+            self.logger.debug(f"Error in disabled account detection: {e}")
+            return False
+
     def check_checkpoint(self) -> bool:
         """
         Check if account requires checkpoint verification.
@@ -432,11 +533,16 @@ class FacebookAutomation:
         1. URL-based detection (most reliable)
         2. Page title/heading detection
         3. Checkpoint-specific UI element detection
+        4. Disabled account detection (calls check_disabled_account)
 
         Returns:
-            True if checkpoint detected, False otherwise.
+            True if checkpoint or disabled account detected, False otherwise.
         """
         try:
+            # First check for disabled account (more severe than checkpoint)
+            if self.check_disabled_account():
+                return True
+
             # Method 1: Check URL for checkpoint patterns (most reliable)
             current_url = self.driver.current_url.lower()
             for pattern in self.CHECKPOINT_URL_PATTERNS:
@@ -494,7 +600,7 @@ class FacebookAutomation:
         """
         Check if account has been logged out (session expired).
 
-        Uses URL-based detection to identify login pages.
+        Uses URL-based detection and verifies logged-in state indicators.
 
         Returns:
             True if logged out, False if still logged in.
@@ -502,7 +608,7 @@ class FacebookAutomation:
         try:
             current_url = self.driver.current_url.lower()
 
-            # Check for login URL patterns
+            # Method 1: Check for login URL patterns (most reliable)
             for pattern in self.LOGIN_URL_PATTERNS:
                 if pattern in current_url:
                     self._log(
@@ -511,20 +617,59 @@ class FacebookAutomation:
                     )
                     return True
 
-            # Additional check: Look for login form elements
+            # Method 2: Check for logged-in indicators (if present, user is logged in)
+            # Only do form-based detection if we're on facebook.com but NOT on groups/posts/profiles
             try:
-                login_form = self.driver.find_elements(By.CSS_SELECTOR, 'form[action*="login"]')
-                email_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="email"]')
-                pass_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="pass"]')
+                # Look for strong logged-in indicators first
+                logged_in_selectors = [
+                    '[aria-label="Facebook"]',  # Main Facebook logo when logged in
+                    '[aria-label="Your profile"]',
+                    '[aria-label="Trang cá nhân của bạn"]',
+                    '[data-pagelet="LeftRail"]',  # Left sidebar (only appears when logged in)
+                    '[aria-label="Account"]',
+                    '[aria-label="Tài khoản"]',
+                    'div[role="navigation"] a[href*="/me/"]',  # Profile link in nav
+                ]
+                for selector in logged_in_selectors:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements and any(e.is_displayed() for e in elements):
+                        # Found logged-in indicator - definitely logged in
+                        return False
+            except Exception:
+                pass
 
-                if login_form or (email_field and pass_field):
-                    # Double-check we're on a login page
-                    if "facebook.com" in current_url and "home" not in current_url:
-                        self._log(
-                            f"[WARNING] Login form detected - session may have expired",
-                            logging.WARNING
-                        )
-                        return True
+            # Method 3: Check for login form - but only if NOT on a valid FB page
+            try:
+                # Skip form check if on known valid pages
+                valid_page_patterns = [
+                    "/groups/",
+                    "/profile.php",
+                    "/home.php",
+                    "/me/",
+                    "/friends",
+                    "/messages",
+                    "/notifications",
+                    "/watch",
+                    "/marketplace",
+                ]
+                is_valid_page = any(p in current_url for p in valid_page_patterns)
+
+                if not is_valid_page:
+                    # Look for login form on suspicious pages
+                    email_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="email"]')
+                    pass_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="pass"]')
+                    login_button = self.driver.find_elements(By.CSS_SELECTOR, '[name="login"], [data-testid="royal_login_button"]')
+
+                    if email_field and pass_field and login_button:
+                        # Check if these are visible (actual login page, not hidden forms)
+                        email_visible = any(e.is_displayed() for e in email_field)
+                        pass_visible = any(e.is_displayed() for e in pass_field)
+                        if email_visible and pass_visible:
+                            self._log(
+                                f"[WARNING] Visible login form detected - session expired",
+                                logging.WARNING
+                            )
+                            return True
             except Exception:
                 pass
 
@@ -598,44 +743,72 @@ class FacebookAutomation:
             login_btn.click()
             self._log("Clicked login button, waiting for result...")
 
-            # Step 5: Wait and check result
+            # Step 5: Wait and check result (with retry for slow loading)
             time.sleep(random.uniform(3.0, 5.0))
 
-            current_url = self.driver.current_url.lower()
-            page_text = ""
-            try:
-                page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
-            except Exception:
-                pass
+            # Retry check a few times for slow connections
+            for check_attempt in range(3):
+                current_url = self.driver.current_url.lower()
+                page_text = ""
+                try:
+                    page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                except Exception:
+                    pass
 
-            # Check for 2FA requirement
-            for indicator in self.TWO_FA_INDICATORS:
-                if indicator.lower() in page_text or indicator.lower() in current_url:
-                    self._log("2FA/Checkpoint required after login", logging.WARNING)
+                # Check for disabled account FIRST (most severe)
+                if self.check_disabled_account():
+                    self._log("Account is DISABLED!", logging.ERROR)
+                    return "disabled"
+
+                # Check for 2FA requirement
+                for indicator in self.TWO_FA_INDICATORS:
+                    if indicator.lower() in page_text or indicator.lower() in current_url:
+                        self._log("2FA/Checkpoint required after login", logging.WARNING)
+                        return "2fa"
+
+                # Check for wrong password (explicit error messages)
+                for indicator in self.LOGIN_FAILURE_INDICATORS:
+                    if indicator.lower() in page_text:
+                        self._log("Login failed: wrong credentials", logging.ERROR)
+                        return "wrong_pass"
+
+                # Check for checkpoint
+                if self.check_checkpoint():
+                    self._log("Checkpoint detected after login", logging.WARNING)
                     return "2fa"
 
-            # Check for wrong password
-            for indicator in self.LOGIN_FAILURE_INDICATORS:
-                if indicator.lower() in page_text:
-                    self._log("Login failed: wrong credentials", logging.ERROR)
-                    return "wrong_pass"
+                # Check success: redirected away from login page
+                if "facebook.com" in current_url and "login" not in current_url:
+                    self._log("Login successful!")
+                    return "success"
 
-            # Check if still on login page (login failed)
-            if "facebook.com/login" in current_url or "/login.php" in current_url:
-                self._log("Still on login page after submit", logging.WARNING)
-                return "wrong_pass"
+                # If still on login page, check if it's loading or actually failed
+                if "facebook.com/login" in current_url or "/login.php" in current_url:
+                    # Look for specific error containers that indicate wrong credentials
+                    try:
+                        error_containers = self.driver.find_elements(
+                            By.CSS_SELECTOR,
+                            '[data-testid="login_error"], [class*="login_error"], [role="alert"]'
+                        )
+                        if error_containers and any(e.is_displayed() and e.text.strip() for e in error_containers):
+                            self._log("Login error element detected - wrong credentials", logging.ERROR)
+                            return "wrong_pass"
+                    except Exception:
+                        pass
 
-            # Check for checkpoint
-            if self.check_checkpoint():
-                self._log("Checkpoint detected after login", logging.WARNING)
-                return "2fa"
+                    # On last attempt, if still on login page, it's likely wrong credentials
+                    if check_attempt == 2:
+                        self._log("Still on login page after multiple checks - credentials may be wrong", logging.WARNING)
+                        return "wrong_pass"
 
-            # Check success: redirected away from login page
-            if "facebook.com" in current_url and "login" not in current_url:
-                self._log("Login successful!")
-                return "success"
+                    # Wait a bit more and retry
+                    self._log(f"Still on login page, waiting... (attempt {check_attempt + 1}/3)")
+                    time.sleep(2)
+                    continue
 
-            self._log("Unknown login result state", logging.WARNING)
+                break  # Exit retry loop if we got a definitive result
+
+            self._log("Unknown login result state after all checks", logging.WARNING)
             return "timeout"
 
         except Exception as e:

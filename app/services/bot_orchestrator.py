@@ -249,6 +249,17 @@ class BotOrchestrator:
             notifier.notify_checkpoint(account.debugger_address)
             return False
 
+        elif login_result == "disabled":
+            self._log(
+                f"[AUTO-LOGIN] Account {account.debugger_address} is DISABLED! "
+                f"This account cannot be used.",
+                logging.ERROR
+            )
+            account.set_checkpoint()  # Use checkpoint status for disabled accounts
+            account.error_message = "Account disabled"
+            notifier.notify_checkpoint(account.debugger_address)  # Notify as critical issue
+            return False
+
         elif login_result == "wrong_pass":
             self._log(
                 f"[AUTO-LOGIN] Wrong credentials for {account.debugger_address}. "
@@ -346,30 +357,75 @@ class BotOrchestrator:
             on_log=account_logger
         )
 
-        # Check for logged out state and attempt auto-login if enabled
+        # Check for checkpoint/disabled BEFORE checking logged out state
+        # This is important because checkpoint pages can look like login pages
         try:
-            driver.get("https://www.facebook.com/")
-            time.sleep(2)  # Quick load check
+            # We first check if the browser is already on a facebook page. If not, go to facebook.com to evaluate session.
+            current_url = driver.current_url
+            if "facebook.com" not in current_url.lower():
+                driver.get("https://www.facebook.com/")
+                time.sleep(2)
         except Exception:
             pass
 
-        if automation.check_logged_out() and settings.auto_login_enabled:
-            self._log(f"[WARN] {account.debugger_address} is logged out. Attempting auto-login...")
-            login_ok = self._attempt_auto_login(account, driver, automation)
-            if not login_ok:
-                result = TaskResult(account=account, error=account.error_message or "Auto-login failed")
+        # CRITICAL: Check checkpoint/disabled FIRST before any login attempts
+        if automation.check_checkpoint():
+            self._log(f"[CHECKPOINT] Account {account.debugger_address} requires checkpoint/disabled!", logging.WARNING)
+            account.set_checkpoint()
+            db.record_checkpoint(account.debugger_address)
+            notifier.notify_checkpoint(account.debugger_address)
+            result = TaskResult(account=account, error="Checkpoint")
+            if self._on_account_complete:
+                try:
+                    self._on_account_complete(account, result)
+                except Exception:
+                    pass
+            return result
+
+        is_logged_out = automation.check_logged_out()
+        if is_logged_out:
+            if getattr(settings, 'auto_login_enabled', False):
+                self._log(f"[WARN] {account.debugger_address} is logged out. Attempting auto-login...")
+                login_ok = self._attempt_auto_login(account, driver, automation)
+                if not login_ok:
+                    result = TaskResult(account=account, error=account.error_message or "Auto-login failed")
+                    if self._on_account_complete:
+                        try:
+                            self._on_account_complete(account, result)
+                        except Exception:
+                            pass
+                    return result
+                # Login OK - recreate automation instance and verify no checkpoint
+                automation = FacebookAutomation(
+                    driver=driver,
+                    logger=self.logger,
+                    on_log=account_logger
+                )
+                # Post-login checkpoint check (sometimes checkpoint appears AFTER login)
+                time.sleep(1)
+                if automation.check_checkpoint():
+                    self._log(f"[CHECKPOINT] Post-login checkpoint detected for {account.debugger_address}!", logging.WARNING)
+                    account.set_checkpoint()
+                    db.record_checkpoint(account.debugger_address)
+                    notifier.notify_checkpoint(account.debugger_address)
+                    result = TaskResult(account=account, error="Checkpoint after login")
+                    if self._on_account_complete:
+                        try:
+                            self._on_account_complete(account, result)
+                        except Exception:
+                            pass
+                    return result
+            else:
+                error_msg = "Account is logged out and auto-login is disabled."
+                self._log(f"[ERROR] {error_msg}", logging.ERROR)
+                account.set_error("Logged out")
+                result = TaskResult(account=account, error=error_msg)
                 if self._on_account_complete:
                     try:
                         self._on_account_complete(account, result)
                     except Exception:
                         pass
                 return result
-            # Login OK - recreate automation instance to clear any cached state
-            automation = FacebookAutomation(
-                driver=driver,
-                logger=self.logger,
-                on_log=account_logger
-            )
 
         # Process based on task configuration
         if config:
@@ -864,6 +920,9 @@ class BotOrchestrator:
         self._log(f"Interval: {interval_minutes} minutes")
         self._log(f"Max runs: {'Unlimited' if max_runs == 0 else max_runs}")
         self._emit_status("Auto Loop Active")
+
+        self._stop_flag.clear()
+        self._pause_flag.clear()
 
         while not self._stop_flag.is_set():
             # Check if max runs reached

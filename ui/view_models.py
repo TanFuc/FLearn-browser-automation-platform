@@ -57,6 +57,7 @@ class MainViewModel:
         self.current_action = ActionType.INVITE
         self.task_target_url = ""
         self.task_content = ""
+        self.task_max_count = None
 
         # UI callbacks
         self._on_log: Optional[Callable[[str], None]] = None
@@ -139,9 +140,9 @@ class MainViewModel:
     def _handle_batch_complete(self, result: BatchResult) -> None:
         """Handle batch completion."""
         self._handle_log(
-            f"Batch {result.batch_number}: "
-            f"{result.successful}/{result.total_accounts} OK, "
-            f"{result.total_invites} invites"
+            f"Lô {result.batch_number}: "
+            f"{result.successful}/{result.total_accounts} Thành công, "
+            f"{result.total_invites} lượt mời"
         )
 
     def _handle_run_complete(self, results: List[BatchResult]) -> None:
@@ -152,9 +153,9 @@ class MainViewModel:
         total_successful = sum(r.successful for r in results)
 
         self._handle_log(
-            f"Run complete! "
-            f"{total_successful} accounts successful, "
-            f"{total_invites} total invites"
+            f"Hoàn thành chạy! "
+            f"{total_successful} tài khoản thành công, "
+            f"{total_invites} lượt mời"
         )
 
         if self._on_run_complete:
@@ -225,10 +226,10 @@ class MainViewModel:
                 account.fb_password_enc = encrypt_password(password)
 
             self.account_manager.save_accounts()
-            self._handle_log(f"Credentials saved for {account.display_name}")
+            self._handle_log(f"Đã lưu mật khẩu cho {account.display_name}")
             return True
         except Exception as e:
-            self._handle_log(f"Failed to save credentials: {e}", logging.ERROR)
+            self._handle_log(f"Lỗi khi lưu mật khẩu: {e}", logging.ERROR)
             return False
 
     def clear_account_credentials(self, account: Account) -> None:
@@ -242,7 +243,7 @@ class MainViewModel:
         account.fb_password_enc = None
         account.login_attempts = 0
         self.account_manager.save_accounts()
-        self._handle_log(f"Credentials cleared for {account.display_name}")
+        self._handle_log(f"Đã xóa mật khẩu của {account.display_name}")
 
     def get_accounts(self) -> List[Account]:
         """
@@ -343,14 +344,14 @@ class MainViewModel:
         Returns:
             Number of proxies assigned.
         """
-        self._handle_log("Building proxy pool...")
-        self._handle_status_change("Building proxies")
+        self._handle_log("Đang tải danh sách proxy...")
+        self._handle_status_change("Đang tải proxy")
 
         accounts = self.account_manager.get_all_accounts()
         needed = len([a for a in accounts if not a.proxy])
 
         if needed == 0:
-            self._handle_log("All accounts have proxies")
+            self._handle_log("Tất cả tài khoản đều đã có proxy")
             return 0
 
         return self.account_manager.assign_proxies()
@@ -362,30 +363,12 @@ class MainViewModel:
         Returns:
             True if started successfully.
         """
-        if self.is_running:
-            self._handle_log("Already running!")
-            return False
-
-        accounts = self.account_manager.get_all_accounts()
-        if not accounts:
-            self._handle_log("No accounts loaded!")
-            return False
-
-        self.is_running = True
-        self._handle_status_change("Running")
-
-        # Run in background thread
-        self._run_thread = self.orchestrator.run_async(
-            accounts=accounts,
-            account_loggers=self._on_account_log
-        )
-
-        return True
+        return self.start_run_with_task()
 
     def stop_run(self) -> None:
         """Stop the current run."""
         if self.is_running:
-            self._handle_log("Stopping...")
+            self._handle_log("Đang dừng...")
             self.orchestrator.stop()
             self.is_running = False
 
@@ -393,7 +376,7 @@ class MainViewModel:
         """Shutdown all services."""
         self.stop_run()
         self.orchestrator.shutdown()
-        self._handle_log("Shutdown complete")
+        self._handle_log("Đã tắt hoàn toàn")
 
     def get_statistics(self) -> Dict[str, int]:
         """
@@ -425,8 +408,8 @@ class MainViewModel:
             enabled: Whether to enable proxy usage.
         """
         settings.use_proxy = enabled
-        status = "enabled" if enabled else "disabled"
-        self._handle_log(f"Proxy usage {status}")
+        status = "đã bật" if enabled else "đã tắt"
+        self._handle_log(f"Sử dụng Proxy: {status}")
 
     def get_batch_size(self) -> int:
         """Get current batch size."""
@@ -441,7 +424,7 @@ class MainViewModel:
         """
         if 1 <= size <= 20:
             settings.batch_size = size
-            self._handle_log(f"Batch size set to {size}")
+            self._handle_log(f"Số luồng mỗi lô: {size}")
 
     def get_max_clicks(self) -> int:
         """Get current max clicks per account."""
@@ -456,7 +439,7 @@ class MainViewModel:
         """
         if 1 <= clicks <= 200:
             settings.max_clicks = clicks
-            self._handle_log(f"Max clicks set to {clicks}")
+            self._handle_log(f"Tới hạn số thao tác: {clicks}")
 
     def get_scroll_delay(self) -> tuple:
         """Get current scroll delay range."""
@@ -473,13 +456,13 @@ class MainViewModel:
         if 0.5 <= min_delay <= max_delay:
             settings.scroll_pause_min = min_delay
             settings.scroll_pause_max = max_delay
-            self._handle_log(f"Scroll delay set to {min_delay}-{max_delay}s")
+            self._handle_log(f"Delay cuộn trang 1 khoảng: {min_delay}-{max_delay}s")
 
     def clear_all_proxies(self) -> None:
         """Clear proxies from all accounts."""
         for account in self.account_manager.get_all_accounts():
             account.clear_proxy()
-        self._handle_log("Cleared proxies from all accounts")
+        self._handle_log("Đã xoá proxy của toàn bộ tài khoản")
 
     def get_proxy_manager(self) -> ProxyManager:
         """
@@ -500,12 +483,12 @@ class MainViewModel:
             List of (ActionType, label) tuples.
         """
         return [
-            (ActionType.INVITE, "Invite Friends"),
-            (ActionType.POST_WALL, "Post to Wall"),
-            (ActionType.POST_GROUP, "Post to Group"),
-            (ActionType.SHARE, "Share Post"),
-            (ActionType.COMMENT, "Comment on Post"),
-            (ActionType.UNFOLLOW, "Unfollow Users"),
+            (ActionType.INVITE, "Gửi Lời Mời Kết Bạn"),
+            (ActionType.POST_WALL, "Đăng lên tường nhà"),
+            (ActionType.POST_GROUP, "Đăng lên Group"),
+            (ActionType.SHARE, "Chia Sẻ Bài Viết"),
+            (ActionType.COMMENT, "Bình Luận"),
+            (ActionType.UNFOLLOW, "Bỏ Theo Dõi (Sắp có)"),
         ]
 
     def get_current_action(self) -> ActionType:
@@ -515,7 +498,7 @@ class MainViewModel:
     def set_current_action(self, action: ActionType) -> None:
         """Set current action type."""
         self.current_action = action
-        self._handle_log(f"Action changed to: {action.value}")
+        self._handle_log(f"Mục tiêu thao tác đã đổi thành: {action.value}")
 
     def set_task_target_url(self, url: str) -> None:
         """Set target URL for the task."""
@@ -524,6 +507,10 @@ class MainViewModel:
     def set_task_content(self, content: str) -> None:
         """Set content for the task."""
         self.task_content = content
+
+    def set_task_max_count(self, count: int) -> None:
+        """Set max count for the task (overrides settings)."""
+        self.task_max_count = count
 
     def get_task_config(self) -> TaskConfig:
         """
@@ -536,7 +523,7 @@ class MainViewModel:
             action_type=self.current_action,
             target_url=self.task_target_url or None,
             content=self.task_content or None,
-            max_count=settings.max_clicks
+            max_count=self.task_max_count if self.task_max_count is not None else settings.max_clicks
         )
 
     def start_run_with_task(self, task_config: TaskConfig = None) -> bool:
@@ -550,12 +537,12 @@ class MainViewModel:
             True if started successfully.
         """
         if self.is_running:
-            self._handle_log("Already running!")
+            self._handle_log("Chương trình đang chạy!")
             return False
 
         accounts = self.account_manager.get_all_accounts()
         if not accounts:
-            self._handle_log("No accounts loaded!")
+            self._handle_log("Không có tài khoản nào được đánh giá!")
             return False
 
         # Use provided config or build from current settings
@@ -567,19 +554,19 @@ class MainViewModel:
             pass
         elif config.action_type in [ActionType.POST_GROUP, ActionType.COMMENT]:
             if not config.target_url or not config.content:
-                self._handle_log("Missing URL or content for this action!")
+                self._handle_log("Thiếu link url / nội dung đối với hành động này!")
                 return False
         elif config.action_type == ActionType.POST_WALL:
             if not config.content:
-                self._handle_log("Missing content for post!")
+                self._handle_log("Nội dung bài viết không được để trống!")
                 return False
         elif config.action_type in [ActionType.SHARE, ActionType.UNFOLLOW]:
             if not config.target_url:
-                self._handle_log("Missing URL for this action!")
+                self._handle_log("Link thao tác không được để trống!")
                 return False
 
         self.is_running = True
-        self._handle_status_change(f"Running: {config.action_label}")
+        self._handle_status_change(f"Đang chạy: {config.action_label}")
 
         # Set task config on orchestrator
         self.orchestrator.set_task_config(config)
@@ -601,7 +588,7 @@ class MainViewModel:
         """
         def _open():
             try:
-                self._handle_log(f"Opening browser for {account.debugger_address}...")
+                self._handle_log(f"Đang mở Chrome cho {account.debugger_address}...")
 
                 # Start Chrome (headless=False to see UI)
                 success = self.browser_manager.start_chrome(
@@ -615,14 +602,14 @@ class MainViewModel:
                     driver = self.browser_manager.get_driver(account.port)
                     if driver:
                         driver.get("https://facebook.com")
-                        self._handle_log(f"Browser opened for {account.debugger_address}")
+                        self._handle_log(f"Đã mở trình duyệt cho {account.debugger_address}")
                     else:
-                        self._handle_log(f"Failed to connect WebDriver for {account.debugger_address}")
+                        self._handle_log(f"Thất bại khi kết nối WebDriver cho {account.debugger_address}")
                 else:
-                    self._handle_log(f"Failed to start Chrome for {account.debugger_address}")
+                    self._handle_log(f"Không thể mở Chrome đối với {account.debugger_address}")
 
             except Exception as e:
-                self._handle_log(f"Error opening browser for {account.debugger_address}: {e}")
+                self._handle_log(f"Lỗi khi mở Chrome đối với {account.debugger_address}: {e}")
 
         # Run in a separate thread to not block UI
         threading.Thread(target=_open, daemon=True).start()
@@ -653,18 +640,18 @@ class MainViewModel:
         import time
 
         def _run():
-            self._handle_log(f"[TEST LOGIN] Starting for {account.display_name}...")
+            self._handle_log(f"[TEST ĐĂNG NHẬP] Bắt đầu khởi động {account.display_name}...")
 
             # Step 1: Check credentials
             if not has_credentials(account):
-                msg = "No credentials stored. Please set FB email/password first (right-click -> Set FB Credentials)."
-                self._handle_log(f"[TEST LOGIN] {msg}")
+                msg = "Chưa có thông tin đăng nhập. Vui lòng thêm Mật khẩu đăng nhập Facebook (Click chuột phải -> Lưu Mật Khẩu FB)."
+                self._handle_log(f"[TEST ĐĂNG NHẬP] {msg}")
                 if on_result:
                     on_result("no_credentials", msg)
                 return
 
             # Step 2: Start Chrome (visible - headless=False)
-            self._handle_log(f"[TEST LOGIN] Starting Chrome on port {account.port}...")
+            self._handle_log(f"[TEST ĐĂNG NHẬP] Đang mở Chrome tại port {account.port}...")
             success = self.browser_manager.start_chrome(
                 port=account.port,
                 proxy=account.proxy,
@@ -672,8 +659,8 @@ class MainViewModel:
             )
 
             if not success:
-                msg = f"Failed to start Chrome on port {account.port}. Check if Chrome is installed."
-                self._handle_log(f"[TEST LOGIN] {msg}")
+                msg = f"Mở Chrome tại port {account.port} thấy bại. Vui lòng kiểm tra lại Chrome đã tải chưa."
+                self._handle_log(f"[TEST ĐĂNG NHẬP] {msg}")
                 if on_result:
                     on_result("chrome_failed", msg)
                 return
@@ -683,8 +670,8 @@ class MainViewModel:
             driver = self.browser_manager.get_driver(account.port)
 
             if not driver:
-                msg = f"Failed to connect WebDriver to Chrome on port {account.port}."
-                self._handle_log(f"[TEST LOGIN] {msg}")
+                msg = f"Thất bại khi kết nối WebDriver với Chrome tại port {account.port}."
+                self._handle_log(f"[TEST ĐĂNG NHẬP] {msg}")
                 if on_result:
                     on_result("chrome_failed", msg)
                 return
@@ -694,18 +681,18 @@ class MainViewModel:
                 email = account.fb_email
                 password = decrypt_password(account.fb_password_enc)
             except Exception as e:
-                msg = f"Failed to decrypt credentials: {e}"
-                self._handle_log(f"[TEST LOGIN] {msg}")
+                msg = f"Lỗi giải mã mật khẩu: {e}"
+                self._handle_log(f"[TEST ĐĂNG NHẬP] {msg}")
                 if on_result:
                     on_result("error", msg)
                 return
 
             # Step 5: Perform login via FacebookAutomation
-            self._handle_log(f"[TEST LOGIN] Navigating to Facebook login page...")
+            self._handle_log(f"[TEST ĐĂNG NHẬP] Điều hướng đến trang Đăng nhập FB...")
             automation = FacebookAutomation(
                 driver=driver,
                 logger=self.logger,
-                on_log=lambda msg: self._handle_log(f"[TEST LOGIN] {msg}")
+                on_log=lambda msg: self._handle_log(f"[TEST ĐĂNG NHẬP] {msg}")
             )
 
             login_result = automation.perform_login(email, password)
@@ -714,30 +701,30 @@ class MainViewModel:
             result_messages = {
                 "success": (
                     "success",
-                    f"Login SUCCESSFUL for {account.display_name}!\n\n"
-                    f"The account is now logged in. Chrome will remain open so you can verify."
+                    f"Đăng nhập THÀNH CÔNG đối với {account.display_name}!\n\n"
+                    f"Tài khoản đang được đăng nhập. Bạn có thể kiểm tra ở cửa số màn hình vừa mở."
                 ),
                 "2fa": (
                     "2fa",
-                    f"2FA / Checkpoint Required for {account.display_name}.\n\n"
-                    f"Facebook is asking for additional verification.\n"
-                    f"Please complete it manually in the Chrome window."
+                    f"Đã phát hiện Checkpoint/2FA Required trên tài khoản {account.display_name}.\n\n"
+                    f"Facebook yêu cầu nhập thêm mã hoặc có thể do dính bất thường.\n"
+                    f"Vui lòng hoàn thành trên cửa sổ đang mở để có thể tiếp tục tự động hoá."
                 ),
                 "wrong_pass": (
                     "wrong_pass",
-                    f"Login FAILED for {account.display_name}.\n\n"
-                    f"Incorrect email or password. Please update credentials\n"
-                    f"(right-click -> Set FB Credentials)."
+                    f"Sai mật khẩu Đăng Nhập cho {account.display_name}.\n\n"
+                    f"Vui lòng cập nhật mật khẩu để thử lại\n"
+                    f"(Click chuột phải -> Lưu Mật Khẩu FB)."
                 ),
                 "timeout": (
                     "timeout",
-                    f"Login TIMEOUT for {account.display_name}.\n\n"
-                    f"Could not determine login result. Check the Chrome window manually."
+                    f"Timed Out tại {account.display_name}.\n\n"
+                    f"Vui lòng xem chi tiết trên cửa sổ tại sao chương trình không mở được."
                 ),
                 "error": (
                     "error",
-                    f"Login ERROR for {account.display_name}.\n\n"
-                    f"An unexpected error occurred. Check Chrome window and logs."
+                    f"Lỗi Đăng Nhập ở tài khoản {account.display_name}.\n\n"
+                    f"Lỗi hệ thống ngoài kiểm soát. Vui lòng xem Error Log."
                 ),
             }
 
@@ -746,7 +733,7 @@ class MainViewModel:
                 ("error", f"Unknown result: {login_result}")
             )
 
-            self._handle_log(f"[TEST LOGIN] Result: {login_result} -> {status}")
+            self._handle_log(f"[TEST ĐĂNG NHẬP] Kết quả trả về: {login_result} -> {status}")
 
             if on_result:
                 on_result(status, message)
@@ -766,23 +753,23 @@ class MainViewModel:
             True if started successfully.
         """
         if self.is_running:
-            self._handle_log("Already running!")
+            self._handle_log("Hệ thống vẫn đang chạy!")
             return False
 
         if not settings.auto_loop_enabled:
-            self._handle_log("Auto loop is disabled. Enable it in settings first.")
+            self._handle_log("Chế độ vòng lặp vô hạn đang tắt. Vui lòng bật lại ở bên trong Settings.")
             return False
 
         accounts = self.account_manager.get_all_accounts()
         if not accounts:
-            self._handle_log("No accounts loaded!")
+            self._handle_log("Chưa có bất kỳ tải khoản nào được tải lên!")
             return False
 
         # Use provided config or build from current settings
         config = task_config or self.get_task_config()
 
         self.is_running = True
-        self._handle_status_change(f"Auto Loop: {config.action_label}")
+        self._handle_status_change(f"Đang Vòng lặp tự động: {config.action_label}")
 
         # Set task config on orchestrator
         self.orchestrator.set_task_config(config)
@@ -790,7 +777,7 @@ class MainViewModel:
         # Run auto loop in background thread
         def on_loop_complete(run_num, results):
             total_invites = sum(r.total_invites for r in results)
-            self._handle_log(f"Loop #{run_num} complete: {total_invites} invites")
+            self._handle_log(f"Đã hoàn thành vòng lặp số #{run_num}: Thêm {total_invites} lượt thao tác")
 
         self._run_thread = self.orchestrator.run_loop_async(
             accounts=accounts,
@@ -799,8 +786,8 @@ class MainViewModel:
         )
 
         self._handle_log(
-            f"Auto loop started: every {settings.auto_loop_interval_minutes} minutes, "
-            f"max {settings.auto_loop_max_runs if settings.auto_loop_max_runs > 0 else 'unlimited'} runs"
+            f"Vòng lặp tự động đã bật: Lặp qua mỗi {settings.auto_loop_interval_minutes} phút, "
+            f"Tối đa tới hạn {settings.auto_loop_max_runs if settings.auto_loop_max_runs > 0 else 'unlimited'} lượt"
         )
         return True
 
@@ -811,8 +798,8 @@ class MainViewModel:
     def set_auto_loop_enabled(self, enabled: bool) -> None:
         """Set auto loop enabled state."""
         settings.auto_loop_enabled = enabled
-        status = "enabled" if enabled else "disabled"
-        self._handle_log(f"Auto loop {status}")
+        status = "đã bật" if enabled else "đã tắt"
+        self._handle_log(f"Chế độ vòng lặp: {status}")
 
     def get_auto_loop_interval(self) -> int:
         """Get auto loop interval in minutes."""
@@ -822,7 +809,7 @@ class MainViewModel:
         """Set auto loop interval in minutes."""
         if 5 <= minutes <= 1440:
             settings.auto_loop_interval_minutes = minutes
-            self._handle_log(f"Auto loop interval set to {minutes} minutes")
+            self._handle_log(f"Thời gian chờ giữa các lần lặp được cài là {minutes} phút")
 
     def get_concurrent_browsers(self) -> int:
         """Get number of concurrent browsers."""
@@ -832,7 +819,7 @@ class MainViewModel:
         """Set number of concurrent browsers."""
         if 1 <= count <= 10:
             settings.concurrent_browsers = count
-            self._handle_log(f"Concurrent browsers set to {count}")
+            self._handle_log(f"Sô lượng Chrome chạy cùng lúc: {count}")
 
     # ========== Pause/Resume Methods ==========
 
@@ -840,12 +827,12 @@ class MainViewModel:
         """Pause the current run."""
         if self.is_running:
             self.orchestrator.pause()
-            self._handle_log("Bot paused")
+            self._handle_log("Hệ thống đã tạm dừng")
 
     def resume_run(self) -> None:
         """Resume a paused run."""
         self.orchestrator.resume()
-        self._handle_log("Bot resumed")
+        self._handle_log("Hệ thống tiếp tục chạy")
 
     def is_paused(self) -> bool:
         """Check if the bot is currently paused."""
@@ -862,9 +849,9 @@ class MainViewModel:
         """
         count = self.account_manager.reset_error_accounts()
         if count > 0:
-            self._handle_log(f"Reset {count} ERROR accounts to IDLE")
+            self._handle_log(f"Đã đặt lại {count} tài khoản bị ERROR về IDLE")
         else:
-            self._handle_log("No ERROR accounts to reset")
+            self._handle_log("Không có tài khoản nào bị ERROR")
         return count
 
     def reset_checkpoint_accounts(self) -> int:
@@ -876,16 +863,16 @@ class MainViewModel:
         """
         count = self.account_manager.reset_checkpoint_accounts()
         if count > 0:
-            self._handle_log(f"Reset {count} CHECKPOINT accounts to IDLE")
+            self._handle_log(f"Đã đặt lại {count} tài khoản bị CHECKPOINT về IDLE")
         else:
-            self._handle_log("No CHECKPOINT accounts to reset")
+            self._handle_log("Không có tài khoản bị CHECKPOINT")
         return count
 
     def reset_all_account_status(self) -> None:
         """Reset all accounts to IDLE status."""
         self.account_manager.reset_all_status()
         self.account_manager.save_accounts()
-        self._handle_log("All account statuses reset to IDLE")
+        self._handle_log("Tất cả tài khoản đều đã chuyển về IDLE")
 
     # ========== Health Check Methods ==========
 
@@ -901,8 +888,8 @@ class MainViewModel:
         """
         from app.services.health_checker import AccountHealthChecker
 
-        self._handle_log("Starting health check...")
-        self._handle_status_change("Health Check")
+        self._handle_log("Bắt đầu kiểm tra hệ thống...")
+        self._handle_status_change("Kiểm tra Sức Khỏe")
 
         checker = AccountHealthChecker(
             browser_manager=self.browser_manager,
@@ -914,10 +901,10 @@ class MainViewModel:
         summary = checker.get_summary(results)
 
         self._handle_log(
-            f"Health check complete: "
-            f"{summary['healthy']}/{summary['total']} healthy, "
-            f"{summary['chrome_not_running']} Chrome not running, "
-            f"{summary['checkpoint']} checkpoint"
+            f"Đã hoàn thành kiểm tra: "
+            f"{summary['healthy']}/{summary['total']} bình thường, "
+            f"{summary['chrome_not_running']} lỗi tải Chrome, "
+            f"{summary['checkpoint']} dính checkpoint"
         )
 
         return {
@@ -940,7 +927,7 @@ class MainViewModel:
         from app.services.report_generator import report_generator
 
         report_path = report_generator.generate_run_report(results)
-        self._handle_log(f"Report generated: {report_path}")
+        self._handle_log(f"Report đã được lưu tại: {report_path}")
         return str(report_path)
 
     def get_recent_reports(self, limit: int = 10) -> List[str]:
@@ -1000,54 +987,54 @@ class MainViewModel:
             host, port_str = address.rsplit(":", 1)
             port = int(port_str)
         except ValueError:
-            return {"status": "error", "message": f"Invalid address: {address}"}
+            return {"status": "error", "message": f"Địa chỉ format sai: {address}"}
 
         # ──────────────────────────────────────────────────────────────
         #  fn: check_connection  – only check port, no Selenium needed
         # ──────────────────────────────────────────────────────────────
         if func_id == "check_connection":
-            log(f"Checking port {host}:{port}…")
+            log(f"Đang kiểm tra ở port {host}:{port}…")
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.settimeout(2)
                     result = s.connect_ex((host, port))
                 if result == 0:
-                    log(f"→ Port {port} is OPEN")
+                    log(f"→ Port {port} ĐÃ MỞ")
                     # Try Selenium connect
-                    log("Connecting Selenium WebDriver…")
+                    log("Trình điều khiển Selenium kết nối…")
                     bm = BrowserManager(logger=self.logger)
                     driver = bm.get_driver(port)
                     if driver:
                         title = driver.title
                         url = driver.current_url
-                        log(f"✓ Selenium connected! Page: {title}")
+                        log(f"✓ Selenium đã kết nối! Trang hiện hành: {title}")
                         log(f"  URL: {url}")
                         bm.close_driver(port)
                         return {"status": "success",
-                                "message": "Chrome connected via Selenium",
+                                "message": "Chrome đã kết nối thông qua Selenium",
                                 "page_title": title,
                                 "current_url": url}
                     else:
                         return {"status": "error",
-                                "message": "Port open but Selenium could not connect (check ChromeDriver)"}
+                                "message": "Port mở nhưng Selenium không thể kết nối được (Kiểm tra lại ChromeDriver)"}
                 else:
                     return {"status": "error",
-                            "message": f"Port {port} is CLOSED — Chrome not running or wrong port"}
+                            "message": f"Port {port} ĐÃ ĐÓNG — Chrome chưa chạy hoặc nhầm port"}
             except Exception as e:
                 return {"status": "error", "message": str(e)}
 
         # ──────────────────────────────────────────────────────────────
         #  All other functions need Selenium → connect first
         # ──────────────────────────────────────────────────────────────
-        log(f"Connecting to Chrome at {address}…")
+        log(f"Đang kết nối lại Chrome qua địa chỉ {address}…")
         bm = BrowserManager(logger=self.logger)
         driver = bm.get_driver(port)
 
         if not driver:
             return {"status": "error",
-                    "message": f"Cannot connect to Chrome at {address}. Is the port open?"}
+                    "message": f"Không thể kết nối với Chrome qua IP {address}. Port mở không?"}
 
-        log(f"✓ Connected to Chrome  •  page: {driver.title[:60]}")
+        log(f"✓ Đã kết nối với Chrome  •  trang web: {driver.title[:60]}")
 
         # Build automation wrapper
         def _make_auto() -> FacebookAutomation:
@@ -1057,38 +1044,38 @@ class MainViewModel:
             # ── check_login_status ──────────────────────────────────
             if func_id == "check_login_status":
                 auto = _make_auto()
-                log("Navigating to Facebook home…")
+                log("Điều hướng tới trang chủ Facebook…")
                 driver.get("https://www.facebook.com/")
                 time.sleep(3)
                 if stop_event.is_set():
-                    return {"status": "info", "message": "Stopped by user"}
+                    return {"status": "info", "message": "Đã chặn lại bởi người dùng"}
 
                 url = driver.current_url.lower()
                 if auto.check_checkpoint():
-                    return {"status": "info", "message": "Account is at CHECKPOINT",
+                    return {"status": "info", "message": "Tài khoản ở trạng thái CHECKPOINT",
                             "logged_in": False, "checkpoint": True}
                 if auto.check_logged_out():
-                    return {"status": "info", "message": "Account is LOGGED OUT",
+                    return {"status": "info", "message": "Tài khoản ĐÃ ĐĂNG XUẤT",
                             "logged_in": False}
                 if "facebook.com" in url and "login" not in url:
                     title = driver.title
                     return {"status": "success",
-                            "message": "Account is LOGGED IN",
+                            "message": "Tài khoản đang ĐĂNG NHẬP",
                             "logged_in": True,
                             "page_title": title}
-                return {"status": "info", "message": f"Uncertain status  •  URL: {url}",
+                return {"status": "info", "message": f"Trạng thái chưa rõ  •  URL: {url}",
                         "current_url": url}
 
             # ── check_checkpoint ────────────────────────────────────
             elif func_id == "check_checkpoint":
                 auto = _make_auto()
-                log(f"Checking checkpoint on current page…")
+                log(f"Đang kiểm chứng Checkpoint ở trang hiện hành…")
                 log(f"  URL: {driver.current_url}")
                 is_cp = auto.check_checkpoint()
                 is_out = auto.check_logged_out()
-                msg = ("CHECKPOINT detected!" if is_cp
-                       else "LOGGED OUT!" if is_out
-                       else "No checkpoint — looks OK")
+                msg = ("Đã phát hiện CHECKPOINT!" if is_cp
+                       else "ĐÃ ĐĂNG XUẤT!" if is_out
+                       else "Không phát hiện checkpoint — có vẻ ổn")
                 return {"status": "info" if not is_cp else "error",
                         "message": msg,
                         "checkpoint": is_cp,
@@ -1100,16 +1087,16 @@ class MainViewModel:
                 email = params.get("email", "")
                 password = params.get("password", "")
                 if not email or not password:
-                    return {"status": "error", "message": "Email and password are required"}
+                    return {"status": "error", "message": "Email và Password là bắt buộc phải nhập"}
                 auto = _make_auto()
-                log(f"Attempting login as: {email}")
+                log(f"Đang định đăng nhập với ID: {email}")
                 result_code = auto.perform_login(email, password)
                 status_map = {
-                    "success":    ("success", "Login successful!"),
-                    "2fa":        ("info",    "2FA / Checkpoint required"),
-                    "wrong_pass": ("error",   "Wrong email or password"),
-                    "timeout":    ("error",   "Login timed out"),
-                    "error":      ("error",   "Unknown error during login"),
+                    "success":    ("success", "Đăng nhập thành công!"),
+                    "2fa":        ("info",    "2FA / Checkpoint Required"),
+                    "wrong_pass": ("error",   "Sai Email hoặc password"),
+                    "timeout":    ("error",   "Bị out Login"),
+                    "error":      ("error",   "Lỗi chưa biết"),
                 }
                 st, msg = status_map.get(result_code, ("error", result_code))
                 return {"status": st, "message": msg, "login_result": result_code}
@@ -1117,59 +1104,59 @@ class MainViewModel:
             # ── navigate_url ────────────────────────────────────────
             elif func_id == "navigate_url":
                 url = params.get("url", "https://www.facebook.com")
-                log(f"Navigating to: {url}")
+                log(f"Điều hướng tới: {url}")
                 driver.get(url)
                 time.sleep(3)
                 if stop_event.is_set():
-                    return {"status": "info", "message": "Stopped"}
+                    return {"status": "info", "message": "Đã dừng"}
                 final_url = driver.current_url
                 title = driver.title
-                log(f"✓ Loaded:  {title}")
+                log(f"✓ Hoàn thành điều hướng:  {title}")
                 log(f"  URL: {final_url}")
-                return {"status": "success", "message": f"Navigated to: {final_url}",
+                return {"status": "success", "message": f"Đi đến trang: {final_url}",
                         "page_title": title, "final_url": final_url}
 
             # ── scroll_page ─────────────────────────────────────────
             elif func_id == "scroll_page":
                 count = int(params.get("count", 5))
                 auto = _make_auto()
-                log(f"Scrolling {count} times…")
+                log(f"Dự kiến cuộn trang {count} lần…")
                 for i in range(count):
                     if stop_event.is_set():
-                        log("Stopped.")
+                        log("Đã dừng hành động.")
                         break
                     auto.scroll_page()
-                    log(f"  Scroll {i+1}/{count} done")
+                    log(f"  Đã hoàn thành cuộn {i+1}/{count} lần")
                     time.sleep(1.2)
-                return {"status": "success", "message": f"Scrolled {count} times",
+                return {"status": "success", "message": f"Đã cuộn {count} lần",
                         "scrolls_done": count}
 
             # ── find_invite_buttons ─────────────────────────────────
             elif func_id == "find_invite_buttons":
                 auto = _make_auto()
-                log(f"Scanning page for Add Friend buttons…")
-                log(f"  Current URL: {driver.current_url}")
+                log(f"Đang tìm các nút mời bạn bè đang hiển thị…")
+                log(f"  URL: {driver.current_url}")
                 buttons = auto._find_add_friend_buttons()
-                log(f"  Found {len(buttons)} unique visible Add Friend buttons")
+                log(f"  Đã tìm thấy {len(buttons)} nút hiển thị Thêm Bạn Bè")
                 for i, btn in enumerate(buttons[:10]):
                     txt = auto._get_button_text(btn)
                     log(f"  [{i+1}] {txt}")
                 return {"status": "success" if buttons else "info",
-                        "message": f"Found {len(buttons)} Add Friend button(s)",
+                        "message": f"Tìm thấy {len(buttons)} nút Thêm Bạn Bè",
                         "button_count": len(buttons)}
 
             # ── navigate_group ──────────────────────────────────────
             elif func_id == "navigate_group":
                 group_url = params.get("group_url", "")
                 if not group_url:
-                    return {"status": "error", "message": "Group URL is required"}
+                    return {"status": "error", "message": "Link Group là bắt buộc"}
                 auto = _make_auto()
-                log(f"Navigating to group members page…")
+                log(f"Điều hướng tới trang thành viên Group…")
                 ok = auto.navigate_to_group(group_url)
                 final_url = driver.current_url
                 on_members = auto._is_on_members_page()
                 return {"status": "success" if ok and on_members else "error",
-                        "message": "On members page ✓" if on_members else "Navigation may have failed",
+                        "message": "Đã chuyển đến trang thành viên ✓" if on_members else "Lỗi điều hướng",
                         "on_members_page": on_members,
                         "final_url": final_url}
 
@@ -1180,19 +1167,19 @@ class MainViewModel:
                 auto = _make_auto()
 
                 if group_url:
-                    log(f"Navigating to: {group_url}")
+                    log(f"Điều hướng tới: {group_url}")
                     auto.navigate_to_group(group_url)
                     if stop_event.is_set():
-                        return {"status": "info", "message": "Stopped"}
+                        return {"status": "info", "message": "Đã dừng hành động"}
 
-                log(f"Dry-run scan (max {max_scrolls} scrolls)…")
+                log(f"Đang chạy thử giả lập (tối đa {max_scrolls} cuộn)…")
                 total_found = 0
                 for i in range(max_scrolls):
                     if stop_event.is_set():
-                        log("Stopped.")
+                        log("Đã dừng hành động.")
                         break
                     buttons = auto._find_add_friend_buttons()
-                    log(f"  Scroll {i+1}: {len(buttons)} Add Friend buttons visible")
+                    log(f"  Cuộn lần {i+1}: {len(buttons)} nút Thêm kết bạn đang hiển thị")
                     total_found = max(total_found, len(buttons))
                     auto.scroll_page()
                     time.sleep(1.5)
@@ -1202,12 +1189,12 @@ class MainViewModel:
                 is_out = auto.check_logged_out()
                 extra = ""
                 if is_cp:
-                    extra = "  ⚠️ CHECKPOINT detected!"
+                    extra = "  ⚠️ Phát hiện CHECKPOINT!"
                 elif is_out:
-                    extra = "  ⚠️ Logged out!"
-                log(f"Dry-run complete.{extra}")
+                    extra = "  ⚠️ Đã đăng xuất!"
+                log(f"Hoạt động thử đã hoàn tất.{extra}")
                 return {"status": "success",
-                        "message": f"Dry run done. Max buttons seen: {total_found}{extra}",
+                        "message": f"Chạy thử thành công. Số nút tìm thấy nhiều nhất: {total_found}{extra}",
                         "max_buttons_found": total_found,
                         "checkpoint": is_cp,
                         "logged_out": is_out}
@@ -1220,20 +1207,20 @@ class MainViewModel:
                 auto = _make_auto()
 
                 if group_url:
-                    log(f"Navigating to: {group_url}")
+                    log(f"Điều hướng tới: {group_url}")
                     ok = auto.navigate_to_group(group_url)
                     if not ok:
-                        return {"status": "error", "message": "Navigation failed"}
+                        return {"status": "error", "message": "Điều hướng thất bại"}
                     if stop_event.is_set():
-                        return {"status": "info", "message": "Stopped"}
+                        return {"status": "info", "message": "Đã dừng"}
 
-                log(f"Starting invite (max {max_clicks} invites, {max_scrolls} scrolls)…")
+                log(f"Bắt đầu mời bạn (tối đa {max_clicks} lượt, {max_scrolls} scroll)…")
                 scrolls, invites = auto.scroll_and_invite(
                     max_scrolls=max_scrolls,
                     max_clicks=max_clicks
                 )
                 return {"status": "success" if invites > 0 else "info",
-                        "message": f"Sent {invites} invite(s) in {scrolls} scrolls",
+                        "message": f"Đã mời thành công {invites} lượt trong {scrolls} lần cuộn trang",
                         "invites_sent": invites,
                         "scrolls_done": scrolls}
 
@@ -1241,51 +1228,51 @@ class MainViewModel:
             elif func_id == "post_wall":
                 content = params.get("content", "")
                 if not content:
-                    return {"status": "error", "message": "Content is required"}
+                    return {"status": "error", "message": "Nội dung không được để trống"}
                 auto = _make_auto()
-                log(f"Posting to wall: {content[:60]}…")
+                log(f"Đang đăng bài viết lên tường: {content[:60]}…")
                 ok = auto.post_to_wall(content)
                 return {"status": "success" if ok else "error",
-                        "message": "Posted to wall ✓" if ok else "Post failed"}
+                        "message": "Đăng tải thành công ✓" if ok else "Thất bại"}
 
             # ── post_group ──────────────────────────────────────────
             elif func_id == "post_group":
                 group_url = params.get("group_url", "")
                 content = params.get("content", "")
                 if not group_url or not content:
-                    return {"status": "error", "message": "Group URL and content are required"}
+                    return {"status": "error", "message": "Group URL và nội dung bài viết bắt buộc phải có"}
                 auto = _make_auto()
-                log(f"Posting to group: {group_url}")
+                log(f"Đăng tải bài vào group: {group_url}")
                 ok = auto.post_to_group(group_url, content)
                 return {"status": "success" if ok else "error",
-                        "message": "Posted to group ✓" if ok else "Post failed"}
+                        "message": "Đăng tải bài viết thành công ✓" if ok else "Lỗi đăng bài"}
 
             # ── share_post ──────────────────────────────────────────
             elif func_id == "share_post":
                 post_url = params.get("post_url", "")
                 if not post_url:
-                    return {"status": "error", "message": "Post URL is required"}
+                    return {"status": "error", "message": "Link bài viết là bắt buộc"}
                 auto = _make_auto()
-                log(f"Sharing post: {post_url}")
+                log(f"Đang chia sẻ bài viết: {post_url}")
                 ok = auto.share_post(post_url)
                 return {"status": "success" if ok else "error",
-                        "message": "Shared ✓" if ok else "Share failed"}
+                        "message": "Chia sẻ thành công ✓" if ok else "Lỗi không thể thao tác"}
 
             # ── comment_post ────────────────────────────────────────
             elif func_id == "comment_post":
                 post_url = params.get("post_url", "")
                 content = params.get("content", "")
                 if not post_url or not content:
-                    return {"status": "error", "message": "Post URL and comment text are required"}
+                    return {"status": "error", "message": "Post URL và Bình luận là cần thiết"}
                 auto = _make_auto()
-                log(f"Commenting on: {post_url}")
+                log(f"Đang viết bình luận tại: {post_url}")
                 ok = auto.comment_on_post(post_url, content)
                 return {"status": "success" if ok else "error",
-                        "message": "Commented ✓" if ok else "Comment failed"}
+                        "message": "Bình luận ✓" if ok else "Mất xác minh Bình luận"}
 
             # ── get_page_info ───────────────────────────────────────
             elif func_id == "get_page_info":
-                log("Reading page info…")
+                log("Trích xuất HTML…")
                 title = driver.title
                 url = driver.current_url
                 try:
@@ -1297,12 +1284,12 @@ class MainViewModel:
                         "return document.querySelectorAll('[role=button]').length;")
                 except Exception:
                     dom_size = link_count = btn_count = "?"
-                log(f"  Title:   {title}")
+                log(f"  Tiêu đề:   {title}")
                 log(f"  URL:     {url}")
-                log(f"  DOM elements: {dom_size}")
+                log(f"  DOM Element: {dom_size}")
                 log(f"  Links:   {link_count}")
-                log(f"  Buttons: {btn_count}")
-                return {"status": "success", "message": "Page info retrieved",
+                log(f"  Số Nút: {btn_count}")
+                return {"status": "success", "message": "Lấy thông tin trang web",
                         "title": title, "url": url,
                         "dom_elements": dom_size,
                         "links": link_count,
@@ -1311,17 +1298,17 @@ class MainViewModel:
             # ── run_js ──────────────────────────────────────────────
             elif func_id == "run_js":
                 script = params.get("script", "return document.title;")
-                log(f"Executing JS: {script[:100]}")
+                log(f"Thực thi mã JS: {script[:100]}")
                 result_val = driver.execute_script(script)
-                log(f"→ Return value: {result_val}")
-                return {"status": "success", "message": "JS executed",
+                log(f"→ Kết quả trả về: {result_val}")
+                return {"status": "success", "message": "JS đã được thực thi",
                         "return_value": str(result_val)}
 
             else:
-                return {"status": "error", "message": f"Unknown function id: {func_id}"}
+                return {"status": "error", "message": f"Id bị sai: {func_id}"}
 
         except Exception as e:
-            self.logger.error(f"Feature test error [{func_id}]: {e}", exc_info=True)
+            self.logger.error(f"Lỗi hệ thống [{func_id}]: {e}", exc_info=True)
             log(f"Exception: {e}")
             return {"status": "error", "message": str(e)}
 

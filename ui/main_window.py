@@ -437,9 +437,15 @@ class MainWindow:
         self.action_combo.grid(row=0, column=1, sticky=W, padx=5)
         self.action_combo.bind("<<ComboboxSelected>>", self._on_action_change)
 
+        ttk.Label(bar, text="Số lượng/lần:").grid(row=0, column=2, sticky=E, padx=(10, 5))
+        self.task_max_count_var = tk.StringVar(value=str(settings.max_clicks))
+        self.task_max_count_entry = ttk.Entry(bar, textvariable=self.task_max_count_var, width=7)
+        self.task_max_count_entry.grid(row=0, column=3, sticky=W, padx=5)
+        ToolTip(self.task_max_count_entry, text="Số lượng kết bạn/tương tác tối đa trên 1 tài khoản (áp dụng cho tất cả tài khoản trong lần chạy này)")
+
         # Dynamic inputs area
         self.task_input_frame = ttk.Frame(bar)
-        self.task_input_frame.grid(row=0, column=2, columnspan=3, sticky=EW, padx=5)
+        self.task_input_frame.grid(row=0, column=4, columnspan=3, sticky=EW, padx=5)
         self.task_input_frame.columnconfigure(1, weight=1)
 
         self._update_task_inputs(ActionType.INVITE)
@@ -652,6 +658,13 @@ class MainWindow:
         if hasattr(self, "task_content_text"):
             content = self.task_content_text.get("1.0", "end-1c").strip()
             self.view_model.set_task_content(content)
+            
+        try:
+            max_count = int(self.task_max_count_var.get().strip())
+            if max_count > 0:
+                self.view_model.set_task_max_count(max_count)
+        except ValueError:
+            Messagebox.show_warning("Số lượng/lần không hợp lệ (phải là số). Sẽ dùng giá trị cài đặt chung.", "Cảnh Báo")
 
         if self.view_model.start_run():
             self.start_btn.configure(state=DISABLED)
@@ -700,6 +713,13 @@ class MainWindow:
             self.view_model.set_task_content(self.task_content_text.get("1.0", "end-1c").strip())
 
         try:
+            max_count = int(self.task_max_count_var.get().strip())
+            if max_count > 0:
+                self.view_model.set_task_max_count(max_count)
+        except ValueError:
+            Messagebox.show_warning("Số lượng/lần không hợp lệ (phải là số). Sẽ dùng giá trị cài đặt chung.", "Cảnh Báo")
+
+        try:
             interval = int(self.loop_interval_var.get())
             self.view_model.set_auto_loop_interval(interval)
         except ValueError:
@@ -746,14 +766,14 @@ class MainWindow:
         count = self.view_model.reset_error_accounts()
         self._refresh_account_list()
         self._refresh_monitor_grid()
-        msg = f"Reset {count} error accounts to IDLE." if count > 0 else "No error accounts to reset."
-        Messagebox.show_info(msg, "Reset Errors")
+        msg = f"Đã đặt lại {count} tài khoản lỗi về trạng thái NGHỈ." if count > 0 else "Không có tài khoản lỗi nào cần đặt lại."
+        Messagebox.show_info(msg, "Reset Lỗi")
 
     def _on_reset_checkpoints(self):
         count = self.view_model.reset_checkpoint_accounts()
         self._refresh_account_list()
         self._refresh_monitor_grid()
-        msg = f"Reset {count} checkpoint accounts to IDLE." if count > 0 else "No checkpoint accounts to reset."
+        msg = f"Đã đặt lại {count} tài khoản checkpoint về NGHỈ." if count > 0 else "Không có tài khoản checkpoint nào cần đặt lại."
         Messagebox.show_info(msg, "Reset Checkpoints")
 
     # ─────────── Account CRUD (ViewModel-driven, no hardcoded data) ───────────
@@ -772,7 +792,7 @@ class MainWindow:
 
     def _on_add_account(self):
         """Add new account - data comes from dialog, saved via ViewModel."""
-        dialog = AccountDialog(self.root, account=None, title="Account")
+        dialog = AccountDialog(self.root, account=None, title="Thêm Tài Khoản Mới")
         self.root.wait_window(dialog.top)
         if dialog.result:
             account = dialog.result
@@ -783,61 +803,61 @@ class MainWindow:
             )
             self._refresh_account_list()
             self._refresh_monitor_grid()
-            self._log_message(f"✅ Added account: {account.debugger_address}")
+            self._log_message(f"✅ Đã thêm tài khoản: {account.debugger_address}")
 
     def _on_edit_selected(self, account: Account = None):
         """Edit selected account - reads from ViewModel, writes back via ViewModel."""
         acc = account or self._get_selected_account()
         if not acc:
-            self._log_message("⚠ No account selected")
+            self._log_message("⚠ Chưa chọn tài khoản nào")
             return
-        dialog = AccountDialog(self.root, account=acc, title="Account")
+        dialog = AccountDialog(self.root, account=acc, title="Sửa Tài Khoản")
         self.root.wait_window(dialog.top)
         if dialog.result:
             self.view_model.update_account(acc)
             self.view_model.save_accounts()
             self._refresh_account_list()
             self._refresh_monitor_grid()
-            self._log_message(f"✅ Updated: {acc.display_name}")
+            self._log_message(f"✅ Đã cập nhật: {acc.display_name}")
 
     def _on_remove_selected(self):
         """Remove selected account via ViewModel."""
         acc = self._get_selected_account()
         if not acc:
-            self._log_message("⚠ No account selected")
+            self._log_message("⚠ Chưa chọn tài khoản nào")
             return
-        if Messagebox.yesno(f"Remove account {acc.display_name}?", "Confirm Remove") == "Yes":
+        if Messagebox.yesno(f"Bạn có chắc muốn xóa tài khoản {acc.display_name}?", "Xác Nhận Xóa") == "Yes":
             self.view_model.remove_account(acc.debugger_address)
             self._refresh_account_list()
             self._refresh_monitor_grid()
-            self._log_message(f"🗑 Removed: {acc.display_name}")
+            self._log_message(f"🗑 Đã xóa: {acc.display_name}")
 
     def _on_reset_status(self):
         """Reset selected account status to IDLE via ViewModel."""
         acc = self._get_selected_account()
         if not acc:
-            self._log_message("⚠ No account selected")
+            self._log_message("⚠ Chưa chọn tài khoản nào")
             return
         acc.status = AccountStatus.IDLE
         acc.error_message = None
         acc.login_attempts = 0
         self.view_model.save_accounts()
         self._refresh_account_list()
-        self._log_message(f"🔄 Reset status to IDLE: {acc.display_name}")
+        self._log_message(f"🔄 Đã reset trạng thái về NGHỈ: {acc.display_name}")
 
     def _on_load_accounts(self):
         """Load accounts from file via ViewModel."""
         self.view_model.load_accounts()
         self._refresh_account_list()
         self._refresh_monitor_grid()
-        self._log_message("📂 Accounts loaded")
+        self._log_message("📂 Đã tải danh sách tài khoản")
 
     def _on_save_accounts(self):
         """Save accounts via ViewModel."""
         if self.view_model.save_accounts():
-            Messagebox.show_info("Accounts saved successfully.", "Saved")
+            Messagebox.show_info("Lưu tài khoản thành công.", "Đã Lưu")
         else:
-            Messagebox.show_error("Error saving accounts", "Save Failed")
+            Messagebox.show_error("Lỗi khi lưu tài khoản", "Lưu Thất Bại")
 
     def _on_open_settings(self):
         dialog = SettingsDialog(self.root)
@@ -847,13 +867,13 @@ class MainWindow:
             self.view_model.set_batch_size(settings.batch_size)
             self.view_model.set_max_clicks(settings.max_clicks)
             self.view_model.set_scroll_delay(settings.scroll_pause_min, settings.scroll_pause_max)
-            self._log_message("⚙ Settings saved and applied")
+            self._log_message("⚙ Đã lưu và áp dụng cài đặt")
 
     def _on_set_credentials(self):
         from ui.dialogs import FBCredentialsDialog
         acc = self._get_selected_account()
         if not acc:
-            self._log_message("⚠ No account selected")
+            self._log_message("⚠ Chưa chọn tài khoản nào")
             return
         dialog = FBCredentialsDialog(self.root, acc)
         self.root.wait_window(dialog.top)
@@ -869,12 +889,12 @@ class MainWindow:
         from ui.dialogs import ask_yesno
         acc = self._get_selected_account()
         if not acc:
-            self._log_message("⚠ No account selected")
+            self._log_message("⚠ Chưa chọn tài khoản nào")
             return
         if not acc.has_credentials:
-            self._log_message("⚠ Account has no stored credentials")
+            self._log_message("⚠ Tài khoản không có mật khẩu nào được lưu")
             return
-        if ask_yesno("Clear Credentials", f"Clear credentials for {acc.display_name}?", parent=self.root):
+        if ask_yesno("Xóa Mật Khẩu", f"Bạn có chắc muốn xóa mật khẩu cho {acc.display_name}?", parent=self.root):
             self.view_model.clear_account_credentials(acc)
             self._refresh_account_list()
 
@@ -895,13 +915,13 @@ class MainWindow:
         """
         acc = self._get_selected_account()
         if not acc:
-            Messagebox.show_warning("Please select an account from the list first.", "No Account Selected")
+            Messagebox.show_warning("Vui lòng chọn một tài khoản từ danh sách trước.", "Chưa Lựa Chọn Tài Khoản")
             return
 
         if hasattr(self, "test_login_btn"):
-            self.test_login_btn.configure(state=DISABLED, text="Testing…")
+            self.test_login_btn.configure(state=DISABLED, text="Đang test…")
 
-        self._log_message(f"[TEST LOGIN] Starting for: {acc.display_name}")
+        self._log_message(f"[TEST LOGIN] Đang bắt đầu cho: {acc.display_name}")
 
         def on_result(status: str, message: str):
             self.view_model.message_queue.put(("test_login_done", {
@@ -921,7 +941,7 @@ class MainWindow:
         """
         addr = self.test_addr_var.get().strip()
         if not addr or ":" not in addr:
-            Messagebox.show_warning("Please enter a valid Chrome debugger address (e.g., 127.0.0.1:9222).", "Invalid Address")
+            Messagebox.show_warning("Vui lòng nhập địa chỉ Chrome hợp lệ (vd: 127.0.0.1:9222).", "Địa Chỉ Không Hợp Lệ")
             return
 
         # Try to find existing account first; if not found, create a temporary one
@@ -931,23 +951,23 @@ class MainWindow:
             # Create a temporary in-memory account for testing (NOT added to ViewModel list)
             from app.models import Account as AccModel
             acc = AccModel(debugger_address=addr)
-            self._log_message(f"[QUICK TEST] Address {addr} not in accounts list — creating temp account for test")
+            self._log_message(f"[QUICK TEST] Địa chỉ {addr} chưa có trong danh sách — đang tạo tài khoản ảo để test")
 
         if not acc.has_credentials:
             Messagebox.show_warning(
-                f"No credentials stored for {addr}.\n\n"
-                "To test login:\n"
-                "1. Add the account to the Accounts list first\n"
-                "2. Right-click → Set FB Credentials\n"
-                "3. Then use Quick Test",
-                "No Credentials"
+                f"Không có mật khẩu nào được lưu cho {addr}.\n\n"
+                "Để test tự đăng nhập:\n"
+                "1. Thêm tài khoản vào danh sách quản lý\n"
+                "2. Chuột phải → Lưu Mật Khẩu FB\n"
+                "3. Sau đó mới dùng Quick Test",
+                "Chưa Có Mật Khẩu"
             )
             return
 
-        self.quick_test_btn.configure(state=DISABLED, text="Testing…")
+        self.quick_test_btn.configure(state=DISABLED, text="Đang test…")
         self.open_any_btn.configure(state=DISABLED)
 
-        self._log_message(f"[QUICK TEST] Starting for: {addr}")
+        self._log_message(f"[QUICK TEST] Đang kiểm tra cho: {addr}")
 
         def on_result(status: str, message: str):
             self.view_model.message_queue.put(("test_login_done", {
@@ -963,14 +983,14 @@ class MainWindow:
         """Open browser for arbitrary address in sidebar."""
         addr = self.test_addr_var.get().strip()
         if not addr or ":" not in addr:
-            Messagebox.show_warning("Please enter a valid Chrome debugger address.", "Invalid Address")
+            Messagebox.show_warning("Vui lòng nhập địa chỉ Chrome hợp lệ.", "Địa Chỉ Không Hợp Lệ")
             return
         acc = self.view_model.get_account_by_address(addr)
         if acc is None:
             from app.models import Account as AccModel
             acc = AccModel(debugger_address=addr)
         self.view_model.open_browser_for_account(acc)
-        self._log_message(f"[OPEN] Opening browser for {addr}")
+        self._log_message(f"[MỞ TRÌNH DUYỆT] Mở Chrome cho {addr}")
 
     def _on_test_feature(self):
         """
@@ -1066,12 +1086,12 @@ class MainWindow:
             self.view_model.test_login_for_account(account, on_result=on_result)
         else:
             Messagebox.show_warning(
-                f"No credentials for {account.display_name}.\nRight-click in Accounts Manager → Set FB Credentials.",
-                "No Credentials"
+                f"Chưa lưu mật khẩu cho {account.display_name}.\nChuột phải vào Quản Lý Tài Khoản → Lưu Mật Khẩu FB.",
+                "Chưa Có Mật Khẩu"
             )
 
     def _on_remove_from_card(self, account: Account):
-        if Messagebox.yesno(f"Remove {account.display_name}?", "Confirm") == "Yes":
+        if Messagebox.yesno(f"Bạn có chắc muốn xóa {account.display_name}?", "Xác Nhận") == "Yes":
             self.view_model.remove_account(account.debugger_address)
             self._refresh_account_list()
             self._refresh_monitor_grid()
@@ -1126,11 +1146,11 @@ class MainWindow:
                 elif msg_type == "run_complete":
                     self.start_btn.configure(state="normal")
                     self.stop_btn.configure(state="disabled")
-                    self.pause_btn.configure(state="disabled", text="⏸  PAUSE", bootstyle=WARNING)
+                    self.pause_btn.configure(state="disabled", text="⏸  TẠM DỪNG", bootstyle=WARNING)
                     self._refresh_account_list()
                     total = self.view_model.get_total_invites()
-                    self.invites_total_lbl.configure(text=f"Total Invites: {total}")
-                    Messagebox.show_info("The batch run has finished.", "Run Complete")
+                    self.invites_total_lbl.configure(text=f"Tổng Đã Mời: {total}")
+                    Messagebox.show_info("Chương trình đã chạy xong.", "Hoàn Thành")
 
                 elif msg_type == "loop_iteration":
                     run_num, next_run_time = data if isinstance(data, tuple) else (data, None)
@@ -1140,9 +1160,9 @@ class MainWindow:
 
                 elif msg_type == "loop_complete":
                     self._loop_running = False
-                    self.loop_btn.configure(text="▶  START LOOP", bootstyle="outline-success")
+                    self.loop_btn.configure(text="▶  BẮT ĐẦU LẶP", bootstyle="outline-success")
                     self.start_btn.configure(state="normal")
-                    Messagebox.show_info("Auto loop has finished all runs.", "Loop Complete")
+                    Messagebox.show_info("Đã hoàn thành tất cả vòng lặp tự động.", "Lặp Xong")
 
                 elif msg_type == "test_login_done":
                     self._handle_test_login_done(data)
@@ -1165,9 +1185,9 @@ class MainWindow:
 
         # Re-enable buttons
         if hasattr(self, "test_login_btn"):
-            self.test_login_btn.configure(state=NORMAL, text="🧪 Test Login")
+            self.test_login_btn.configure(state=NORMAL, text="🧪 Đăng Nhập")
         if is_quick:
-            self.quick_test_btn.configure(state=NORMAL, text="🧪 Test Login")
+            self.quick_test_btn.configure(state=NORMAL, text="🧪 Đăng Nhập")
             self.open_any_btn.configure(state=NORMAL)
 
         self._log_message(f"[TEST LOGIN] {account.display_name}: {status}")

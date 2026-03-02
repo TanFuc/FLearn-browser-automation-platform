@@ -8,6 +8,7 @@ Includes User-Agent rotation for anti-detection.
 
 import atexit
 import logging
+import os
 import random
 import shutil
 import socket
@@ -125,6 +126,26 @@ class BrowserManager:
             time.sleep(check_interval)
         return False
 
+    def _kill_zombie_on_port(self, port: int) -> None:
+        """Kills any process (like a zombie Chrome) listening on the target port."""
+        if os.name != 'nt':
+            return  # Windows only for now
+        try:
+            # Find PID listening on the port
+            cmd = f'netstat -ano | findstr LISTENING | findstr :{port}'
+            output = subprocess.check_output(cmd, shell=True).decode()
+            if output:
+                lines = output.strip().split('\n')
+                for line in lines:
+                    parts = line.strip().split()
+                    if len(parts) >= 5:
+                        pid = parts[-1]
+                        if pid.isdigit() and int(pid) > 0:
+                            self.logger.warning(f"Found zombie process {pid} on port {port}. Killing it...")
+                            subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
     def start_chrome(
         self,
         port: int,
@@ -148,6 +169,9 @@ class BrowserManager:
             self.logger.warning(f"Chrome already running on port {port}")
             return True
 
+        # Ensure no zombie process is holding the port
+        self._kill_zombie_on_port(port)
+
         profile_path = self._get_profile_path(port)
         profile_path.mkdir(parents=True, exist_ok=True)
 
@@ -170,6 +194,8 @@ class BrowserManager:
             "--no-default-browser-check",
             "--disable-extensions",
             "--disable-popup-blocking",
+            "--hide-crash-restore-bubble",
+            "--disable-session-crashed-bubble",
         ]
 
         # User-Agent rotation
@@ -294,6 +320,31 @@ class BrowserManager:
             
             driver = webdriver.Chrome(service=service, options=options)
             self.drivers[port] = driver
+
+            # Cleanup extra windows (like New Tab from crash restore) and maximize
+            try:
+                handles = driver.window_handles
+                if len(handles) > 1:
+                    current_handle = driver.current_window_handle
+                    for handle in handles:
+                        if handle != current_handle:
+                            try:
+                                driver.switch_to.window(handle)
+                                driver.close()
+                            except Exception:
+                                pass
+                    # Switch back to the attached handle
+                    try:
+                        driver.switch_to.window(current_handle)
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.logger.debug(f"Error checking window handles on port {port}: {e}")
+
+            try:
+                driver.maximize_window()
+            except Exception:
+                pass
 
             self.logger.debug(f"WebDriver connected to port {port}")
             return driver

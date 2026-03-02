@@ -80,7 +80,7 @@ class AccountDialog:
 
         # Create dialog window
         self.top = tk.Toplevel(parent)
-        self.top.title(f"{'Edit' if self.is_edit else 'Add'} {title}")
+        self.top.title(f"{'Sửa' if self.is_edit else 'Thêm'} {title}")
         self.top.geometry("500x220")
         self.top.transient(parent)
         self.top.grab_set()
@@ -112,7 +112,7 @@ class AccountDialog:
 
         # Debugger Address
         row = 0
-        ttk.Label(main_frame, text="Debugger Address:").grid(
+        ttk.Label(main_frame, text="Địa chỉ Debugger:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=8
         )
 
@@ -134,7 +134,7 @@ class AccountDialog:
 
         # Group URL
         row += 1
-        ttk.Label(main_frame, text="Group URL:").grid(
+        ttk.Label(main_frame, text="Link Group:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=8
         )
 
@@ -179,14 +179,14 @@ class AccountDialog:
 
         ttk.Button(
             btn_frame,
-            text="Cancel",
+            text="Hủy",
             command=self.top.destroy,
             width=10
         ).pack(side="right", padx=5)
 
         ttk.Button(
             btn_frame,
-            text="Save" if self.is_edit else "Add",
+            text="Lưu" if self.is_edit else "Thêm",
             command=self._on_save,
             width=10
         ).pack(side="right", padx=5)
@@ -211,14 +211,14 @@ class AccountDialog:
 
         # Validate address
         if not addr:
-            show_error("Error", "Debugger Address is required", parent=self.top)
+            show_error("Lỗi", "Yêu cầu phải có Địa chỉ Debugger", parent=self.top)
             self.addr_entry.focus_set()
             return
 
         if not self._validate_address(addr):
             show_error(
-                "Error",
-                "Invalid address format. Use host:port (e.g., 127.0.0.1:9222)",
+                "Lỗi",
+                "Định dạng địa chỉ không hợp lệ. Sử dụng host:port (vd: 127.0.0.1:9222)",
                 parent=self.top
             )
             self.addr_entry.focus_set()
@@ -227,8 +227,8 @@ class AccountDialog:
         # Validate proxy
         if not self._validate_proxy(proxy_str):
             show_error(
-                "Error",
-                "Invalid proxy format. Use ip:port (e.g., 192.168.1.1:8080)",
+                "Lỗi",
+                "Định dạng proxy không hợp lệ. Sử dụng ip:port (vd: 192.168.1.1:8080)",
                 parent=self.top
             )
             self.proxy_entry.focus_set()
@@ -240,7 +240,7 @@ class AccountDialog:
             try:
                 proxy = Proxy.from_string(proxy_str)
             except Exception:
-                show_error("Error", "Invalid proxy format", parent=self.top)
+                show_error("Lỗi", "Định dạng proxy không hợp lệ", parent=self.top)
                 self.proxy_entry.focus_set()
                 return
 
@@ -278,7 +278,7 @@ class SettingsDialog:
 
         # Create dialog window
         self.top = tk.Toplevel(parent)
-        self.top.title("Settings")
+        self.top.title("Cài Đặt Tổng Thể")
         self.top.geometry("650x650")
         self.top.transient(parent)
         self.top.grab_set()
@@ -310,21 +310,21 @@ class SettingsDialog:
 
         ttk.Button(
             btn_frame,
-            text="Cancel",
+            text="Hủy",
             command=self.top.destroy,
             width=10
         ).pack(side="right", padx=5)
 
         ttk.Button(
             btn_frame,
-            text="Save",
+            text="Lưu",
             command=self._on_save,
             width=10
         ).pack(side="right", padx=5)
 
         ttk.Button(
             btn_frame,
-            text="Reset to Defaults",
+            text="Khôi Phục Mặc Định",
             command=self._on_reset,
             width=15
         ).pack(side="left", padx=5)
@@ -344,7 +344,7 @@ class SettingsDialog:
     def _create_general_tab(self, notebook: ttk.Notebook) -> None:
         """Create General settings tab."""
         frame = ttk.Frame(notebook, padding=15)
-        notebook.add(frame, text="General")
+        notebook.add(frame, text="Chung")
 
         frame.columnconfigure(1, weight=1)
 
@@ -443,7 +443,7 @@ class SettingsDialog:
 
         # Browser Options
         row += 1
-        ttk.Label(frame, text="Browser Options:", font=("", 10, "bold")).grid(
+        ttk.Label(frame, text="Tùy Chọn Trình Duyệt:", font=("", 10, "bold")).grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(0, 5)
         )
 
@@ -454,34 +454,34 @@ class SettingsDialog:
         self.vars["headless"] = tk.BooleanVar(value=settings.headless)
         ttk.Checkbutton(
             options_frame,
-            text="Headless Mode",
+            text="Chế Độ Ẩn (Headless)",
             variable=self.vars["headless"]
         ).pack(side="left", padx=(0, 20))
 
         self.vars["user_agent_rotate"] = tk.BooleanVar(value=settings.user_agent_rotate)
         ttk.Checkbutton(
             options_frame,
-            text="Rotate User-Agent",
+            text="Đổi User-Agent tự động",
             variable=self.vars["user_agent_rotate"]
         ).pack(side="left", padx=(0, 20))
 
         self.vars["disable_images"] = tk.BooleanVar(value=settings.disable_images)
         ttk.Checkbutton(
             options_frame,
-            text="Disable Images",
+            text="Tắt Hình Ảnh",
             variable=self.vars["disable_images"]
         ).pack(side="left")
 
         # Window Size
         row += 1
-        ttk.Label(frame, text="Window Size:").grid(
+        ttk.Label(frame, text="Kích Cỡ Cửa Sổ:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=8
         )
 
         self.vars["window_size"] = tk.StringVar(value=settings.window_size)
         size_entry = ttk.Entry(frame, textvariable=self.vars["window_size"], width=15)
         size_entry.grid(row=row, column=1, sticky="w", pady=8)
-        ttk.Label(frame, text="(width,height)", foreground="gray").grid(
+        ttk.Label(frame, text="(rộng,cao)", foreground="gray").grid(
             row=row, column=1, sticky="w", padx=(120, 0)
         )
 
@@ -490,26 +490,26 @@ class SettingsDialog:
         self.vars["debug_mode"] = tk.BooleanVar(value=settings.debug_mode)
         ttk.Checkbutton(
             frame,
-            text="Enable Debug Logging",
+            text="Bật Log Debug",
             variable=self.vars["debug_mode"]
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
 
     def _create_automation_tab(self, notebook: ttk.Notebook) -> None:
         """Create Automation settings tab."""
         frame = ttk.Frame(notebook, padding=15)
-        notebook.add(frame, text="Limits & Timing")
+        notebook.add(frame, text="Giới Hạn & Thời Gian")
 
         frame.columnconfigure(1, weight=1)
 
         # === Limits Section ===
         row = 0
-        ttk.Label(frame, text="Limits:", font=("", 10, "bold")).grid(
+        ttk.Label(frame, text="Giới Hạn:", font=("", 10, "bold")).grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(0, 10)
         )
 
         # Batch Size
         row += 1
-        ttk.Label(frame, text="Batch Size:").grid(
+        ttk.Label(frame, text="Tài khoản mỗi lô:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         limits_frame1 = ttk.Frame(frame)
@@ -522,13 +522,13 @@ class SettingsDialog:
             textvariable=self.vars["batch_size"],
             width=8
         ).pack(side="left")
-        ttk.Label(limits_frame1, text="accounts per batch", foreground="gray").pack(
+        ttk.Label(limits_frame1, text="tài khoản / đợt", foreground="gray").pack(
             side="left", padx=(10, 0)
         )
 
         # Max Clicks
         row += 1
-        ttk.Label(frame, text="Max Invites:").grid(
+        ttk.Label(frame, text="Tối đa mời:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         limits_frame2 = ttk.Frame(frame)
@@ -541,13 +541,13 @@ class SettingsDialog:
             textvariable=self.vars["max_clicks"],
             width=8
         ).pack(side="left")
-        ttk.Label(limits_frame2, text="per account per run", foreground="gray").pack(
+        ttk.Label(limits_frame2, text="/ tk / lần chạy", foreground="gray").pack(
             side="left", padx=(10, 0)
         )
 
         # Daily Max Invites
         row += 1
-        ttk.Label(frame, text="Daily Limit:").grid(
+        ttk.Label(frame, text="Giới hạn 1 ngày:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         limits_frame3 = ttk.Frame(frame)
@@ -562,7 +562,7 @@ class SettingsDialog:
             textvariable=self.vars["daily_max_invites"],
             width=8
         ).pack(side="left")
-        ttk.Label(limits_frame3, text="max invites per day", foreground="gray").pack(
+        ttk.Label(limits_frame3, text="mời/ngày", foreground="gray").pack(
             side="left", padx=(10, 0)
         )
 
@@ -574,13 +574,13 @@ class SettingsDialog:
 
         # === Timing Section ===
         row += 1
-        ttk.Label(frame, text="Timing (seconds):", font=("", 10, "bold")).grid(
+        ttk.Label(frame, text="Thời Gian (giây):", font=("", 10, "bold")).grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(0, 10)
         )
 
         # Scroll Delay
         row += 1
-        ttk.Label(frame, text="Scroll Delay:").grid(
+        ttk.Label(frame, text="Delay Cuộn:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         scroll_frame = ttk.Frame(frame)
@@ -603,13 +603,13 @@ class SettingsDialog:
             textvariable=self.vars["scroll_pause_max"],
             width=6
         ).pack(side="left")
-        ttk.Label(scroll_frame, text="seconds", foreground="gray").pack(
+        ttk.Label(scroll_frame, text="giây", foreground="gray").pack(
             side="left", padx=(10, 0)
         )
 
         # Click Delay
         row += 1
-        ttk.Label(frame, text="Click Delay:").grid(
+        ttk.Label(frame, text="Delay Click:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         click_frame = ttk.Frame(frame)
@@ -628,13 +628,13 @@ class SettingsDialog:
             textvariable=self.vars["click_delay_max"],
             width=6
         ).pack(side="left")
-        ttk.Label(click_frame, text="seconds", foreground="gray").pack(
+        ttk.Label(click_frame, text="giây", foreground="gray").pack(
             side="left", padx=(10, 0)
         )
 
         # Batch Rest
         row += 1
-        ttk.Label(frame, text="Batch Rest:").grid(
+        ttk.Label(frame, text="Nghỉ Giữa Lô:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         rest_frame = ttk.Frame(frame)
@@ -653,13 +653,13 @@ class SettingsDialog:
             textvariable=self.vars["batch_rest_max"],
             width=6
         ).pack(side="left")
-        ttk.Label(rest_frame, text="seconds", foreground="gray").pack(
+        ttk.Label(rest_frame, text="giây", foreground="gray").pack(
             side="left", padx=(10, 0)
         )
 
         # Max Retries
         row += 1
-        ttk.Label(frame, text="Max Retries:").grid(
+        ttk.Label(frame, text="Thử lại tối đa:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         self.vars["max_retries"] = tk.StringVar(value=str(settings.max_retries))
@@ -682,7 +682,7 @@ class SettingsDialog:
         self.vars["use_proxy"] = tk.BooleanVar(value=settings.use_proxy)
         ttk.Checkbutton(
             frame,
-            text="Enable Proxy",
+            text="Bật Lọc / Check Proxy (Cần Proxy list)",
             variable=self.vars["use_proxy"]
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
 
@@ -693,7 +693,7 @@ class SettingsDialog:
         )
         ttk.Checkbutton(
             frame,
-            text="Fallback to Direct Connection (if proxy fails)",
+            text="Chạy trực tiếp mạng thật khi Lỗi Proxy",
             variable=self.vars["proxy_fallback_to_direct"]
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
 
@@ -705,13 +705,13 @@ class SettingsDialog:
 
         # Proxy Settings
         row += 1
-        ttk.Label(frame, text="Proxy Settings:", font=("", 10, "bold")).grid(
+        ttk.Label(frame, text="Cài Đặt Proxy:", font=("", 10, "bold")).grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(0, 10)
         )
 
         # Test Timeout
         row += 1
-        ttk.Label(frame, text="Test Timeout:").grid(
+        ttk.Label(frame, text="Timeout Check:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         timeout_frame = ttk.Frame(frame)
@@ -726,13 +726,13 @@ class SettingsDialog:
             textvariable=self.vars["proxy_test_timeout"],
             width=8
         ).pack(side="left")
-        ttk.Label(timeout_frame, text="seconds", foreground="gray").pack(
+        ttk.Label(timeout_frame, text="giây", foreground="gray").pack(
             side="left", padx=(10, 0)
         )
 
         # Max Threads
         row += 1
-        ttk.Label(frame, text="Max Test Threads:").grid(
+        ttk.Label(frame, text="Luồng Check (Max):").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         self.vars["proxy_max_threads"] = tk.StringVar(
@@ -747,7 +747,7 @@ class SettingsDialog:
 
         # Needed Count
         row += 1
-        ttk.Label(frame, text="Min Proxies Needed:").grid(
+        ttk.Label(frame, text="Lấy Proxy Sẵn Sàng (Min):").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         self.vars["proxy_needed_count"] = tk.StringVar(
@@ -762,7 +762,7 @@ class SettingsDialog:
 
         # Retry Count
         row += 1
-        ttk.Label(frame, text="Connection Retries:").grid(
+        ttk.Label(frame, text="Thử Lại Kết Nối:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         self.vars["proxy_retry_count"] = tk.StringVar(
@@ -777,7 +777,7 @@ class SettingsDialog:
 
         # Max Runtime
         row += 1
-        ttk.Label(frame, text="Max Runtime:").grid(
+        ttk.Label(frame, text="Runtime check tối đa:").grid(
             row=row, column=0, sticky="e", padx=(0, 10), pady=5
         )
         runtime_frame = ttk.Frame(frame)
@@ -791,7 +791,7 @@ class SettingsDialog:
             textvariable=self.vars["proxy_max_runtime"],
             width=8
         ).pack(side="left")
-        ttk.Label(runtime_frame, text="seconds", foreground="gray").pack(
+        ttk.Label(runtime_frame, text="giây", foreground="gray").pack(
             side="left", padx=(10, 0)
         )
 
@@ -807,7 +807,7 @@ class SettingsDialog:
 
         path = filedialog.askopenfilename(
             parent=self.top,
-            title=f"Select {title}",
+            title=f"Chọn {title}",
             filetypes=filetypes,
             initialdir=initial_dir
         )
@@ -820,7 +820,7 @@ class SettingsDialog:
 
         path = filedialog.askdirectory(
             parent=self.top,
-            title="Select Directory",
+            title="Chọn Thư Mục",
             initialdir=initial if initial else None
         )
         if path:
@@ -854,24 +854,24 @@ class SettingsDialog:
             # Validate timing values
             if result["scroll_pause_min"] > result["scroll_pause_max"]:
                 show_error(
-                    "Error",
-                    "Scroll delay min cannot be greater than max",
+                    "Lỗi",
+                    "Min không thể lớn hơn Max",
                     parent=self.top
                 )
                 return
 
             if result["click_delay_min"] > result["click_delay_max"]:
                 show_error(
-                    "Error",
-                    "Click delay min cannot be greater than max",
+                    "Lỗi",
+                    "Min không thể lớn hơn Max",
                     parent=self.top
                 )
                 return
 
             if result["batch_rest_min"] > result["batch_rest_max"]:
                 show_error(
-                    "Error",
-                    "Batch rest min cannot be greater than max",
+                    "Lỗi",
+                    "Min không thể lớn hơn Max",
                     parent=self.top
                 )
                 return
@@ -885,23 +885,23 @@ class SettingsDialog:
                 self.top.destroy()
             else:
                 show_error(
-                    "Error",
-                    "Failed to save settings to file",
+                    "Lỗi",
+                    "Không thể lưu cài đặt vào file",
                     parent=self.top
                 )
 
         except ValueError as e:
             show_error(
-                "Error",
-                f"Invalid value: {e}",
+                "Lỗi",
+                f"Giá trị không hợp lệ: {e}",
                 parent=self.top
             )
 
     def _on_reset(self) -> None:
         """Reset settings to defaults."""
         if not ask_yesno(
-            "Confirm Reset",
-            "Are you sure you want to reset all settings to defaults?",
+            "Xác Nhận Reset",
+            "Bạn có chắc chắn muốn đặt lại tất cả cài đặt về mặc định?",
             parent=self.top
         ):
             return
@@ -937,7 +937,7 @@ class FBCredentialsDialog:
         self,
         parent: tk.Widget,
         account: Account,
-        title: str = "Facebook Credentials"
+        title: str = "Tài Khoản Facebook"
     ) -> None:
         """
         Initialize FBCredentialsDialog.
@@ -991,7 +991,7 @@ class FBCredentialsDialog:
 
         warn_label = ttk.Label(
             warn_frame,
-            text="Credentials are stored encrypted on your local machine only.",
+            text="Tài khoản và mật khẩu được mã hóa và chỉ lưu trên máy cục bộ của bạn.",
             foreground="orange",
             font=("", 9, "italic")
         )
@@ -1037,7 +1037,7 @@ class FBCredentialsDialog:
             row += 1
             info_label = ttk.Label(
                 main_frame,
-                text="Credentials already saved. Leave password empty to keep existing.",
+                text="Mật khẩu đã được lưu. Bỏ trống nếu không muốn thay đổi.",
                 foreground="gray",
                 font=("", 9)
             )
@@ -1057,7 +1057,7 @@ class FBCredentialsDialog:
         # Clear button (left)
         ttk.Button(
             btn_frame,
-            text="Clear Credentials",
+            text="Xóa Mật Khẩu",
             command=self._on_clear,
             width=15,
             bootstyle="danger-outline" if HAS_BOOTSTRAP else None
@@ -1066,14 +1066,14 @@ class FBCredentialsDialog:
         # Cancel and Save (right)
         ttk.Button(
             btn_frame,
-            text="Cancel",
+            text="Hủy",
             command=self.top.destroy,
             width=10
         ).pack(side="right", padx=(5, 0))
 
         ttk.Button(
             btn_frame,
-            text="Save",
+            text="Lưu",
             command=self._on_save,
             width=10,
             bootstyle="success" if HAS_BOOTSTRAP else None
@@ -1093,13 +1093,13 @@ class FBCredentialsDialog:
 
         # Validate email
         if not email:
-            show_error("Error", "Email/Phone is required", parent=self.top)
+            show_error("Lỗi", "Yêu cầu nhập Email/SĐT", parent=self.top)
             self.email_entry.focus_set()
             return
 
         # If no new password and no existing, require password
         if not password and not self.account.fb_password_enc:
-            show_error("Error", "Password is required", parent=self.top)
+            show_error("Lỗi", "Yêu cầu nhập mật khẩu", parent=self.top)
             self.pass_entry.focus_set()
             return
 
@@ -1111,8 +1111,8 @@ class FBCredentialsDialog:
     def _on_clear(self) -> None:
         """Handle Clear Credentials button click."""
         if not ask_yesno(
-            "Clear Credentials",
-            "Are you sure you want to remove stored credentials for this account?",
+            "Xóa Mật Khẩu",
+            "Bạn có chắc chắn muốn xóa mật khẩu đã lưu của tài khoản này?",
             parent=self.top
         ):
             return
@@ -1145,13 +1145,13 @@ class TestLoginResultDialog:
 
     # Status -> (title, bootstyle_color, icon)
     STATUS_CONFIG = {
-        "success":        ("Login Successful",   "success",   ""),
-        "2fa":            ("2FA / Checkpoint",   "warning",   ""),
-        "wrong_pass":     ("Login Failed",       "danger",    ""),
-        "timeout":        ("Login Timeout",      "secondary", ""),
-        "error":          ("Login Error",        "danger",    ""),
-        "no_credentials": ("No Credentials",     "warning",   ""),
-        "chrome_failed":  ("Chrome Error",       "danger",    ""),
+        "success":        ("Đăng Nhập Thành Công",   "success",   ""),
+        "2fa":            ("Kiểm tra 2FA/Checkpoint",   "warning",   ""),
+        "wrong_pass":     ("Đăng Nhập Thất Bại",       "danger",    ""),
+        "timeout":        ("Hết Thời Gian Chờ",      "secondary", ""),
+        "error":          ("Lỗi Đăng Nhập",        "danger",    ""),
+        "no_credentials": ("Chưa Có Mật Khẩu",     "warning",   ""),
+        "chrome_failed":  ("Lỗi Chrome",       "danger",    ""),
     }
 
     def __init__(
@@ -1182,7 +1182,7 @@ class TestLoginResultDialog:
 
         # Create Toplevel window
         self.top = tk.Toplevel(parent)
-        self.top.title(f"Test Login - {account.display_name}")
+        self.top.title(f"Test Đăng Nhập - {account.display_name}")
         self.top.geometry("480x300")
         self.top.resizable(False, False)
         self.top.grab_set()  # Modal
@@ -1210,7 +1210,7 @@ class TestLoginResultDialog:
 
         ttk.Label(
             header,
-            text=f"Account: {account.display_name}",
+            text=f"Tài Khoản: {account.display_name}",
             font=("Helvetica", 9),
             bootstyle=f"inverse-{color}"
         ).pack(side=RIGHT)
@@ -1235,7 +1235,7 @@ class TestLoginResultDialog:
         # Always: Close button
         ttk.Button(
             footer,
-            text="Close",
+            text="Đóng",
             bootstyle="outline-secondary",
             command=self.top.destroy,
             width=12
@@ -1245,7 +1245,7 @@ class TestLoginResultDialog:
         if status in ("wrong_pass", "no_credentials") and on_set_credentials:
             ttk.Button(
                 footer,
-                text="Update Credentials",
+                text="Cập Nhật Mật Khẩu",
                 bootstyle="outline-warning",
                 command=lambda: (self.top.destroy(), on_set_credentials()),
                 width=18
@@ -1255,7 +1255,7 @@ class TestLoginResultDialog:
         if status == "2fa" and on_set_checkpoint:
             ttk.Button(
                 footer,
-                text="Mark as Checkpoint",
+                text="Đánh Dấu Checkpoint",
                 bootstyle="outline-warning",
                 command=lambda: (self.top.destroy(), on_set_checkpoint()),
                 width=18
@@ -1319,39 +1319,39 @@ class TestFeatureDialog:
     FUNCTIONS = [
         {
             "id": "check_connection",
-            "label": "🔌 Check Chrome Connection",
-            "description": "Verify Selenium can connect to Chrome debugger port.",
+            "label": "🔌 Kiểm tra kết nối Chrome",
+            "description": "Kiểm tra xem Selenium có thể kết nối với port debugger không.",
             "params": [],
             "needs_chrome": True,
         },
         {
             "id": "check_login_status",
-            "label": "🔑 Check Login Status",
-            "description": "Navigate to Facebook and check if the account is logged in.",
+            "label": "🔑 Kiểm tra trạng thái đăng nhập",
+            "description": "Mở Facebook và kiểm tra xem tài khoản đã đăng nhập chưa.",
             "params": [],
             "needs_chrome": True,
         },
         {
             "id": "check_checkpoint",
-            "label": "⚠️ Check Checkpoint",
-            "description": "Detect if the account is at a checkpoint/security check page.",
+            "label": "⚠️ Kiểm tra Checkpoint",
+            "description": "Kiểm tra xem tài khoản có bị dính checkpoint hoặc xác minh không.",
             "params": [],
             "needs_chrome": True,
         },
         {
             "id": "test_login",
-            "label": "🔐 Perform Auto-Login",
-            "description": "Navigate to login page and attempt auto-login with stored credentials.",
+            "label": "🔐 Tự động đăng nhập",
+            "description": "Mở trang đăng nhập và tự động điền mật khẩu / id đã lưu.",
             "params": [
-                {"key": "email",    "label": "Email / Phone", "type": "entry",    "default": ""},
-                {"key": "password", "label": "Password",      "type": "password", "default": ""},
+                {"key": "email",    "label": "Email / SĐT", "type": "entry",    "default": ""},
+                {"key": "password", "label": "Mật khẩu",      "type": "password", "default": ""},
             ],
             "needs_chrome": True,
         },
         {
             "id": "navigate_url",
-            "label": "🌐 Navigate to URL",
-            "description": "Navigate Chrome to any URL and wait for page load.",
+            "label": "🌐 Truy cập URL",
+            "description": "Điều hướng Chrome đến một URL bất kỳ và đợi trang tải xong.",
             "params": [
                 {"key": "url", "label": "URL", "type": "entry", "default": "https://www.facebook.com"},
             ],
@@ -1359,101 +1359,101 @@ class TestFeatureDialog:
         },
         {
             "id": "scroll_page",
-            "label": "📜 Scroll Page (N times)",
-            "description": "Scroll the current page N times with random pauses.",
+            "label": "📜 Cuộn Trang (N lần)",
+            "description": "Cuộn trang hiện tại N lần với các khoảng dừng ngẫu nhiên.",
             "params": [
-                {"key": "count", "label": "Scroll Count", "type": "spinbox", "default": "5", "from_": 1, "to": 50},
+                {"key": "count", "label": "Số lần cuộn", "type": "spinbox", "default": "5", "from_": 1, "to": 50},
             ],
             "needs_chrome": True,
         },
         {
             "id": "find_invite_buttons",
-            "label": "🔍 Find Add Friend Buttons",
-            "description": "Count how many 'Add Friend' buttons are visible on the current page.",
+            "label": "🔍 Tìm Nút Thêm Bạn Bè",
+            "description": "Đếm số lượng nút 'Thêm bạn bè' đang hiển thị trên trang hiện tại.",
             "params": [],
             "needs_chrome": True,
         },
         {
             "id": "navigate_group",
-            "label": "📂 Navigate to Group Members",
-            "description": "Navigate to a Facebook group members page.",
+            "label": "📂 Truy cập thành viên Group",
+            "description": "Điều hướng đến trang thành viên của một Group Facebook.",
             "params": [
-                {"key": "group_url", "label": "Group URL", "type": "entry", "default": "https://www.facebook.com/groups/"},
+                {"key": "group_url", "label": "Link Group", "type": "entry", "default": "https://www.facebook.com/groups/"},
             ],
             "needs_chrome": True,
         },
         {
             "id": "dry_run_invite",
-            "label": "🧪 Dry Run Invite (No Click)",
-            "description": "Scan members page for invite buttons WITHOUT clicking. Shows count only.",
+            "label": "🧪 Chạy thử Mời (Không Click)",
+            "description": "Quét trang thành viên để tìm nút mời NHƯNG KHÔNG CLICK. Chỉ hiển thị số lượng.",
             "params": [
-                {"key": "group_url", "label": "Group URL (optional – uses current page if empty)", "type": "entry", "default": ""},
-                {"key": "max_scrolls", "label": "Max Scrolls", "type": "spinbox", "default": "5", "from_": 1, "to": 30},
+                {"key": "group_url", "label": "Link Group (tuỳ chọn – nếu trống sẽ dùng trang hiện tại)", "type": "entry", "default": ""},
+                {"key": "max_scrolls", "label": "Cuộn tối đa", "type": "spinbox", "default": "5", "from_": 1, "to": 30},
             ],
             "needs_chrome": True,
         },
         {
             "id": "invite_members",
-            "label": "👥 Invite Members (Actual)",
-            "description": "Navigate to group & send real friend requests. Use with caution!",
+            "label": "👥 Mời Thành Viên (Chạy Thật)",
+            "description": "Điều hướng tới group và gửi lời mời kết bạn thật. Hãy cẩn thận!",
             "params": [
-                {"key": "group_url",   "label": "Group URL",     "type": "entry",   "default": ""},
-                {"key": "max_clicks",  "label": "Max Invites",   "type": "spinbox", "default": "5", "from_": 1, "to": 100},
-                {"key": "max_scrolls", "label": "Max Scrolls",   "type": "spinbox", "default": "10", "from_": 1, "to": 50},
+                {"key": "group_url",   "label": "Link Group",     "type": "entry",   "default": ""},
+                {"key": "max_clicks",  "label": "Tối đa mời",   "type": "spinbox", "default": "5", "from_": 1, "to": 100},
+                {"key": "max_scrolls", "label": "Cuộn tối đa",   "type": "spinbox", "default": "10", "from_": 1, "to": 50},
             ],
             "needs_chrome": True,
         },
         {
             "id": "post_wall",
-            "label": "📝 Post to Wall",
-            "description": "Post text content to the account's Facebook wall.",
+            "label": "📝 Đăng lên tường",
+            "description": "Đăng nội dung văn bản lên dòng thời gian của tài khoản.",
             "params": [
-                {"key": "content", "label": "Post Content", "type": "text", "default": "Hello World!"},
+                {"key": "content", "label": "Nội dung bài viết", "type": "text", "default": "Hello World!"},
             ],
             "needs_chrome": True,
         },
         {
             "id": "post_group",
-            "label": "📝 Post to Group",
-            "description": "Post text content to a Facebook group.",
+            "label": "📝 Đăng vào Group",
+            "description": "Đăng nội dung văn bản vào một Group Facebook.",
             "params": [
-                {"key": "group_url", "label": "Group URL", "type": "entry", "default": ""},
-                {"key": "content",   "label": "Post Content", "type": "text", "default": ""},
+                {"key": "group_url", "label": "Link Group", "type": "entry", "default": ""},
+                {"key": "content",   "label": "Nội dung", "type": "text", "default": ""},
             ],
             "needs_chrome": True,
         },
         {
             "id": "share_post",
-            "label": "🔗 Share a Post",
-            "description": "Share a post to the account's timeline.",
+            "label": "🔗 Chia sẻ bài viết",
+            "description": "Chia sẻ một bài viết về dòng thời gian của tài khoản.",
             "params": [
-                {"key": "post_url", "label": "Post URL", "type": "entry", "default": ""},
+                {"key": "post_url", "label": "Link bài viết", "type": "entry", "default": ""},
             ],
             "needs_chrome": True,
         },
         {
             "id": "comment_post",
-            "label": "💬 Comment on Post",
-            "description": "Leave a comment on a specific post.",
+            "label": "💬 Bình luận bài viết",
+            "description": "Để lại bình luận trên một bài viết cụ thể.",
             "params": [
-                {"key": "post_url", "label": "Post URL",  "type": "entry", "default": ""},
-                {"key": "content",  "label": "Comment",   "type": "text",  "default": ""},
+                {"key": "post_url", "label": "Link bài viết",  "type": "entry", "default": ""},
+                {"key": "content",  "label": "Bình luận",   "type": "text",  "default": ""},
             ],
             "needs_chrome": True,
         },
         {
             "id": "get_page_info",
-            "label": "📋 Get Current Page Info",
-            "description": "Get current page title, URL, and basic DOM stats.",
+            "label": "📋 Lấy thông tin trang hiện tại",
+            "description": "Lấy tiêu đề trang, URL và một số thống kê DOM cơ bản.",
             "params": [],
             "needs_chrome": True,
         },
         {
             "id": "run_js",
-            "label": "⚙️ Run JavaScript",
-            "description": "Execute arbitrary JavaScript on the current page and show return value.",
+            "label": "⚙️ Chạy JavaScript",
+            "description": "Thực thi mã JavaScript tùy ý trên trang hiện tại và hiển thị kết quả trả về.",
             "params": [
-                {"key": "script", "label": "JavaScript Code", "type": "text",
+                {"key": "script", "label": "Mã JavaScript", "type": "text",
                  "default": "return document.title;"},
             ],
             "needs_chrome": True,
@@ -1465,7 +1465,7 @@ class TestFeatureDialog:
         parent: tk.Widget,
         run_callback: callable,  # fn(address, func_id, params, log_fn, stop_event) -> dict
         accounts: list = None,   # list of Account objects for address suggestions
-        title: str = "🔬 Test Feature on Chrome"
+        title: str = "🔬 Test Tính năng trên Chrome"
     ):
         """
         Initialize TestFeatureDialog.
@@ -1514,11 +1514,11 @@ class TestFeatureDialog:
         root.rowconfigure(3, weight=0)
 
         # ── Row 0: Chrome address + connection info ──
-        addr_frame = ttk.Labelframe(root, text=" Chrome Instance ", padding=(12, 8))
+        addr_frame = ttk.Labelframe(root, text=" Cửa số Chrome ", padding=(12, 8))
         addr_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
         addr_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(addr_frame, text="Debugger Address:", font=("Helvetica", 9, "bold")).grid(
+        ttk.Label(addr_frame, text="Địa chỉ Debugger:", font=("Helvetica", 9, "bold")).grid(
             row=0, column=0, sticky="w", padx=(0, 8))
 
         # Combobox pre-populated from known accounts
@@ -1533,7 +1533,7 @@ class TestFeatureDialog:
         )
         self.addr_combo.grid(row=0, column=1, sticky="w", padx=(0, 8))
 
-        self.conn_status_var = tk.StringVar(value="⬜ Not checked")
+        self.conn_status_var = tk.StringVar(value="⬜ Chưa kiểm tra")
         conn_lbl = ttk.Label(addr_frame, textvariable=self.conn_status_var,
                              font=("Helvetica", 9))
         conn_lbl.grid(row=0, column=2, sticky="w")
@@ -1551,11 +1551,11 @@ class TestFeatureDialog:
         self.addr_combo.bind("<FocusOut>", self._on_addr_change)
 
         # ── Row 1: Function selector + params ──
-        func_frame = ttk.Labelframe(root, text=" Function to Test ", padding=(12, 8))
+        func_frame = ttk.Labelframe(root, text=" Chọn tính năng ", padding=(12, 8))
         func_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
         func_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(func_frame, text="Function:", font=("Helvetica", 9, "bold")).grid(
+        ttk.Label(func_frame, text="Tính năng:", font=("Helvetica", 9, "bold")).grid(
             row=0, column=0, sticky="w", padx=(0, 8))
 
         func_labels = [f["label"] for f in self.FUNCTIONS]
@@ -1613,14 +1613,14 @@ class TestFeatureDialog:
         btn_row.grid(row=3, column=0, sticky="ew")
 
         self.run_btn = ttk.Button(
-            btn_row, text="▶  Run Test",
+            btn_row, text="▶  Chạy Thử",
             bootstyle="success", width=14,
             command=self._on_run
         )
         self.run_btn.pack(side="left", padx=4)
 
         self.stop_btn = ttk.Button(
-            btn_row, text="⏹  Stop",
+            btn_row, text="⏹  Dừng Lại",
             bootstyle="danger-outline", width=10,
             command=self._on_stop,
             state="disabled"
@@ -1628,7 +1628,7 @@ class TestFeatureDialog:
         self.stop_btn.pack(side="left", padx=4)
 
         ttk.Button(
-            btn_row, text="🗑 Clear Log",
+            btn_row, text="🗑 Xóa Log",
             bootstyle="outline-secondary", width=11,
             command=self._clear_log
         ).pack(side="left", padx=4)
@@ -1640,7 +1640,7 @@ class TestFeatureDialog:
         ).pack(side="left", padx=4)
 
         ttk.Button(
-            btn_row, text="✖  Close",
+            btn_row, text="✖  Đóng",
             bootstyle="outline", width=10,
             command=self._on_close
         ).pack(side="right", padx=4)
@@ -1656,7 +1656,7 @@ class TestFeatureDialog:
         params = func_def.get("params", [])
         if not params:
             ttk.Label(self.params_frame,
-                      text="No parameters needed for this function.",
+                      text="Chức năng này không cần tham số nào.",
                       bootstyle="secondary", font=("Helvetica", 8)).grid(
                 row=0, column=0, columnspan=2, sticky="w")
             return
@@ -1716,10 +1716,10 @@ class TestFeatureDialog:
         for acc in self.accounts:
             if acc.debugger_address == addr:
                 name = acc.label or addr
-                creds = "🔑 Has credentials" if acc.has_credentials else "⚠ No credentials"
-                self.acc_label_var.set(f"Account: {name}  |  {creds}")
+                creds = "🔑 Có mật khẩu" if acc.has_credentials else "⚠ Chưa có mật khẩu"
+                self.acc_label_var.set(f"Tài khoản: {name}  |  {creds}")
                 return
-        self.acc_label_var.set("(Address not in accounts list — temp connection)")
+        self.acc_label_var.set("(Địa chỉ không có trong danh sách — kết nối tạm thời)")
 
     def _check_port(self):
         import socket
@@ -1728,7 +1728,7 @@ class TestFeatureDialog:
             host, port_str = addr.rsplit(":", 1)
             port = int(port_str)
         except Exception:
-            self.conn_status_var.set("❌ Invalid address")
+            self.conn_status_var.set("❌ Địa chỉ lỗi")
             return
 
         try:
@@ -1736,11 +1736,11 @@ class TestFeatureDialog:
                 s.settimeout(1.5)
                 result = s.connect_ex((host, port))
             if result == 0:
-                self.conn_status_var.set("✅ Port open")
+                self.conn_status_var.set("✅ Port mở")
             else:
-                self.conn_status_var.set("❌ Port closed / not running")
+                self.conn_status_var.set("❌ Port đã đóng / chưa mở")
         except Exception as e:
-            self.conn_status_var.set(f"❌ Error: {e}")
+            self.conn_status_var.set(f"❌ Lỗi: {e}")
 
     def _get_selected_func(self) -> Optional[dict]:
         label = self.func_var.get()
@@ -1811,7 +1811,7 @@ class TestFeatureDialog:
 
         addr = self.addr_var.get().strip()
         if not addr or ":" not in addr:
-            self._log_error("Invalid Chrome address. Use format host:port")
+            self._log_error("Địa chỉ Chrome sai định dạng. Vui lòng thử host:port")
             return
 
         params = self._collect_params()
@@ -1824,8 +1824,8 @@ class TestFeatureDialog:
         self.stop_btn.configure(state="normal")
 
         self._log_system(f"{'─'*55}")
-        self._log_system(f"▶  Running: {func_def['label']}")
-        self._log_system(f"   Address: {addr}")
+        self._log_system(f"▶  Đang chạy: {func_def['label']}")
+        self._log_system(f"   Địa chỉ: {addr}")
         if params:
             for k, v in params.items():
                 display_v = "***" if k == "password" else v[:80] if isinstance(v, str) else str(v)
@@ -1842,7 +1842,7 @@ class TestFeatureDialog:
                     stop_event=self._stop_event
                 )
                 if self._stop_event.is_set():
-                    self._log_warning("Test was stopped by user.")
+                    self._log_warning("Chương trình đã bị dừng bởi người dùng.")
                 else:
                     # Show result summary
                     self._log_system(f"{'─'*55}")
@@ -1850,11 +1850,11 @@ class TestFeatureDialog:
                         status = result.get("status", "done")
                         msg = result.get("message", "")
                         if status == "success":
-                            self._log_success(f"✅ RESULT: {msg or 'Success'}")
+                            self._log_success(f"✅ KẾT QUẢ: {msg or 'Thành công'}")
                         elif status == "error":
-                            self._log_error(f"❌ RESULT: {msg or 'Failed'}")
+                            self._log_error(f"❌ KẾT QUẢ: {msg or 'Thất bại'}")
                         else:
-                            self._log_result(f"→  RESULT: {msg or status}")
+                            self._log_result(f"→  KẾT QUẢ: {msg or status}")
                         # Extra data
                         for k, v in result.items():
                             if k not in ("status", "message"):
@@ -1881,7 +1881,7 @@ class TestFeatureDialog:
         if self._stop_event:
             self._stop_event.set()
         self.stop_btn.configure(state="disabled")
-        self._log_warning("Stop signal sent…")
+        self._log_warning("Đã gửi lệnh dừng…")
 
     def _clear_log(self):
         inner = self.log_text.text if hasattr(self.log_text, "text") else self.log_text

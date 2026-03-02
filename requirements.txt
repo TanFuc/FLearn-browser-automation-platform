@@ -12,6 +12,9 @@ pydantic-settings>=2.1.0
 # UI
 ttkbootstrap>=1.10.1
 
+# Security - for credential encryption
+cryptography>=42.0.0
+
 # Type checking (optional, for development)
 # mypy>=1.7.0
 # types-requests>=2.31.0

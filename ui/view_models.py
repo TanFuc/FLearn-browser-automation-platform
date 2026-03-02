@@ -113,8 +113,8 @@ class MainViewModel:
         """
         self._on_account_log[account_address] = callback
 
-    def _handle_log(self, message: str) -> None:
-        """Handle log message from orchestrator."""
+    def _handle_log(self, message: str, level: int = None) -> None:
+        """Handle log message from orchestrator or internal service."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         formatted = f"[{timestamp}] {message}"
 
@@ -200,6 +200,50 @@ class MainViewModel:
         """
         return self.account_manager.save_accounts()
 
+    def set_account_credentials(
+        self,
+        account: Account,
+        email: str,
+        password: Optional[str]
+    ) -> bool:
+        """
+        Save encrypted credentials for an account.
+
+        Args:
+            account: Account to update.
+            email: Facebook email/phone.
+            password: Plaintext password (will be encrypted), or None to keep existing.
+
+        Returns:
+            True if saved successfully.
+        """
+        from utils.crypto import encrypt_password
+
+        try:
+            account.fb_email = email
+            if password:  # Only update if new password provided
+                account.fb_password_enc = encrypt_password(password)
+
+            self.account_manager.save_accounts()
+            self._handle_log(f"Credentials saved for {account.display_name}")
+            return True
+        except Exception as e:
+            self._handle_log(f"Failed to save credentials: {e}", logging.ERROR)
+            return False
+
+    def clear_account_credentials(self, account: Account) -> None:
+        """
+        Remove stored credentials for an account.
+
+        Args:
+            account: Account to clear credentials for.
+        """
+        account.fb_email = None
+        account.fb_password_enc = None
+        account.login_attempts = 0
+        self.account_manager.save_accounts()
+        self._handle_log(f"Credentials cleared for {account.display_name}")
+
     def get_accounts(self) -> List[Account]:
         """
         Get all accounts.
@@ -208,6 +252,18 @@ class MainViewModel:
             List of all accounts.
         """
         return self.account_manager.get_all_accounts()
+
+    def get_account_by_address(self, debugger_address: str) -> Optional[Account]:
+        """
+        Get a single account by its debugger address.
+
+        Args:
+            debugger_address: Chrome remote debugger address (host:port).
+
+        Returns:
+            Account if found, None otherwise.
+        """
+        return self.account_manager.get_account(debugger_address)
 
     def add_account(
         self,
@@ -571,6 +627,132 @@ class MainViewModel:
         # Run in a separate thread to not block UI
         threading.Thread(target=_open, daemon=True).start()
 
+    def test_login_for_account(
+        self,
+        account: Account,
+        on_result: Optional[Callable[[str, str], None]] = None
+    ) -> None:
+        """
+        Test auto-login for an account by opening Chrome and performing login.
+
+        Flow:
+        1. Check if credentials exist
+        2. Start Chrome (headless=False - user can see)
+        3. Connect WebDriver
+        4. Call perform_login() from FacebookAutomation
+        5. Return result via callback
+
+        Args:
+            account: Account to test login for.
+            on_result: Callback(status, message) called when done.
+                       status: "success" | "2fa" | "wrong_pass" | "error" |
+                               "no_credentials" | "chrome_failed"
+        """
+        from utils.crypto import decrypt_password, has_credentials
+        from app.core.automation import FacebookAutomation
+        import time
+
+        def _run():
+            self._handle_log(f"[TEST LOGIN] Starting for {account.display_name}...")
+
+            # Step 1: Check credentials
+            if not has_credentials(account):
+                msg = "No credentials stored. Please set FB email/password first (right-click -> Set FB Credentials)."
+                self._handle_log(f"[TEST LOGIN] {msg}")
+                if on_result:
+                    on_result("no_credentials", msg)
+                return
+
+            # Step 2: Start Chrome (visible - headless=False)
+            self._handle_log(f"[TEST LOGIN] Starting Chrome on port {account.port}...")
+            success = self.browser_manager.start_chrome(
+                port=account.port,
+                proxy=account.proxy,
+                headless=False  # MUST be False: user needs to see the browser
+            )
+
+            if not success:
+                msg = f"Failed to start Chrome on port {account.port}. Check if Chrome is installed."
+                self._handle_log(f"[TEST LOGIN] {msg}")
+                if on_result:
+                    on_result("chrome_failed", msg)
+                return
+
+            # Step 3: Connect WebDriver
+            time.sleep(1.5)  # Brief wait for Chrome to be ready
+            driver = self.browser_manager.get_driver(account.port)
+
+            if not driver:
+                msg = f"Failed to connect WebDriver to Chrome on port {account.port}."
+                self._handle_log(f"[TEST LOGIN] {msg}")
+                if on_result:
+                    on_result("chrome_failed", msg)
+                return
+
+            # Step 4: Decrypt credentials
+            try:
+                email = account.fb_email
+                password = decrypt_password(account.fb_password_enc)
+            except Exception as e:
+                msg = f"Failed to decrypt credentials: {e}"
+                self._handle_log(f"[TEST LOGIN] {msg}")
+                if on_result:
+                    on_result("error", msg)
+                return
+
+            # Step 5: Perform login via FacebookAutomation
+            self._handle_log(f"[TEST LOGIN] Navigating to Facebook login page...")
+            automation = FacebookAutomation(
+                driver=driver,
+                logger=self.logger,
+                on_log=lambda msg: self._handle_log(f"[TEST LOGIN] {msg}")
+            )
+
+            login_result = automation.perform_login(email, password)
+
+            # Step 6: Map result to user-friendly message
+            result_messages = {
+                "success": (
+                    "success",
+                    f"Login SUCCESSFUL for {account.display_name}!\n\n"
+                    f"The account is now logged in. Chrome will remain open so you can verify."
+                ),
+                "2fa": (
+                    "2fa",
+                    f"2FA / Checkpoint Required for {account.display_name}.\n\n"
+                    f"Facebook is asking for additional verification.\n"
+                    f"Please complete it manually in the Chrome window."
+                ),
+                "wrong_pass": (
+                    "wrong_pass",
+                    f"Login FAILED for {account.display_name}.\n\n"
+                    f"Incorrect email or password. Please update credentials\n"
+                    f"(right-click -> Set FB Credentials)."
+                ),
+                "timeout": (
+                    "timeout",
+                    f"Login TIMEOUT for {account.display_name}.\n\n"
+                    f"Could not determine login result. Check the Chrome window manually."
+                ),
+                "error": (
+                    "error",
+                    f"Login ERROR for {account.display_name}.\n\n"
+                    f"An unexpected error occurred. Check Chrome window and logs."
+                ),
+            }
+
+            status, message = result_messages.get(
+                login_result,
+                ("error", f"Unknown result: {login_result}")
+            )
+
+            self._handle_log(f"[TEST LOGIN] Result: {login_result} -> {status}")
+
+            if on_result:
+                on_result(status, message)
+
+        threading.Thread(target=_run, daemon=True).start()
+
     # ========== Auto Loop Methods ==========
 
     def start_auto_loop(self, task_config: TaskConfig = None) -> bool:
@@ -651,3 +833,502 @@ class MainViewModel:
         if 1 <= count <= 10:
             settings.concurrent_browsers = count
             self._handle_log(f"Concurrent browsers set to {count}")
+
+    # ========== Pause/Resume Methods ==========
+
+    def pause_run(self) -> None:
+        """Pause the current run."""
+        if self.is_running:
+            self.orchestrator.pause()
+            self._handle_log("Bot paused")
+
+    def resume_run(self) -> None:
+        """Resume a paused run."""
+        self.orchestrator.resume()
+        self._handle_log("Bot resumed")
+
+    def is_paused(self) -> bool:
+        """Check if the bot is currently paused."""
+        return self.orchestrator.is_paused
+
+    # ========== Reset Status Methods ==========
+
+    def reset_error_accounts(self) -> int:
+        """
+        Reset all ERROR status accounts to IDLE for retry.
+
+        Returns:
+            Number of accounts reset.
+        """
+        count = self.account_manager.reset_error_accounts()
+        if count > 0:
+            self._handle_log(f"Reset {count} ERROR accounts to IDLE")
+        else:
+            self._handle_log("No ERROR accounts to reset")
+        return count
+
+    def reset_checkpoint_accounts(self) -> int:
+        """
+        Reset all CHECKPOINT status accounts to IDLE for retry.
+
+        Returns:
+            Number of accounts reset.
+        """
+        count = self.account_manager.reset_checkpoint_accounts()
+        if count > 0:
+            self._handle_log(f"Reset {count} CHECKPOINT accounts to IDLE")
+        else:
+            self._handle_log("No CHECKPOINT accounts to reset")
+        return count
+
+    def reset_all_account_status(self) -> None:
+        """Reset all accounts to IDLE status."""
+        self.account_manager.reset_all_status()
+        self.account_manager.save_accounts()
+        self._handle_log("All account statuses reset to IDLE")
+
+    # ========== Health Check Methods ==========
+
+    def check_account_health(self, quick: bool = False) -> Dict:
+        """
+        Check health of all accounts.
+
+        Args:
+            quick: If True, only check port connectivity.
+
+        Returns:
+            Dictionary with health check results.
+        """
+        from app.services.health_checker import AccountHealthChecker
+
+        self._handle_log("Starting health check...")
+        self._handle_status_change("Health Check")
+
+        checker = AccountHealthChecker(
+            browser_manager=self.browser_manager,
+            logger=self.logger
+        )
+
+        accounts = self.account_manager.get_all_accounts()
+        results = checker.check_all(accounts, quick=quick)
+        summary = checker.get_summary(results)
+
+        self._handle_log(
+            f"Health check complete: "
+            f"{summary['healthy']}/{summary['total']} healthy, "
+            f"{summary['chrome_not_running']} Chrome not running, "
+            f"{summary['checkpoint']} checkpoint"
+        )
+
+        return {
+            "results": results,
+            "summary": summary
+        }
+
+    # ========== Report Methods ==========
+
+    def generate_report(self, results: List[BatchResult]) -> str:
+        """
+        Generate a report for completed run.
+
+        Args:
+            results: List of BatchResult from the run.
+
+        Returns:
+            Path to the generated report.
+        """
+        from app.services.report_generator import report_generator
+
+        report_path = report_generator.generate_run_report(results)
+        self._handle_log(f"Report generated: {report_path}")
+        return str(report_path)
+
+    def get_recent_reports(self, limit: int = 10) -> List[str]:
+        """
+        Get list of recent report files.
+
+        Args:
+            limit: Maximum number of reports to return.
+
+        Returns:
+            List of report file paths.
+        """
+        from app.services.report_generator import report_generator
+
+        reports = report_generator.get_recent_reports(limit)
+        return [str(p) for p in reports]
+
+    # ─────────────────────────────────────────────────────────────────────
+    #  Feature Test Runner – runs any single automation feature on any Chrome
+    # ─────────────────────────────────────────────────────────────────────
+
+    def run_feature_test(
+        self,
+        address: str,
+        func_id: str,
+        params: dict,
+        log_fn: callable,
+        stop_event
+    ) -> dict:
+        """
+        Execute a single automation function on any Chrome instance.
+
+        This is the backend called by TestFeatureDialog.
+        Connects to Chrome at `address`, executes the function identified
+        by `func_id` with the given `params`, streams logs via `log_fn`,
+        and respects `stop_event` for cancellation.
+
+        Args:
+            address: Chrome debugger address (host:port).
+            func_id: ID of the function to run (matches TestFeatureDialog.FUNCTIONS ids).
+            params: Dict of parameter values for the function.
+            log_fn: Callable(message: str) — writes to the live log.
+            stop_event: threading.Event — set to cancel the test.
+
+        Returns:
+            dict with keys: status ("success"|"error"|"info"), message, and extra data.
+        """
+        import socket
+        import time
+        from app.core.browser import BrowserManager
+        from app.core.automation import FacebookAutomation
+
+        log = log_fn  # alias
+
+        # ── Parse address ──────────────────────────────────────────────
+        try:
+            host, port_str = address.rsplit(":", 1)
+            port = int(port_str)
+        except ValueError:
+            return {"status": "error", "message": f"Invalid address: {address}"}
+
+        # ──────────────────────────────────────────────────────────────
+        #  fn: check_connection  – only check port, no Selenium needed
+        # ──────────────────────────────────────────────────────────────
+        if func_id == "check_connection":
+            log(f"Checking port {host}:{port}…")
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(2)
+                    result = s.connect_ex((host, port))
+                if result == 0:
+                    log(f"→ Port {port} is OPEN")
+                    # Try Selenium connect
+                    log("Connecting Selenium WebDriver…")
+                    bm = BrowserManager(logger=self.logger)
+                    driver = bm.get_driver(port)
+                    if driver:
+                        title = driver.title
+                        url = driver.current_url
+                        log(f"✓ Selenium connected! Page: {title}")
+                        log(f"  URL: {url}")
+                        bm.close_driver(port)
+                        return {"status": "success",
+                                "message": "Chrome connected via Selenium",
+                                "page_title": title,
+                                "current_url": url}
+                    else:
+                        return {"status": "error",
+                                "message": "Port open but Selenium could not connect (check ChromeDriver)"}
+                else:
+                    return {"status": "error",
+                            "message": f"Port {port} is CLOSED — Chrome not running or wrong port"}
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+
+        # ──────────────────────────────────────────────────────────────
+        #  All other functions need Selenium → connect first
+        # ──────────────────────────────────────────────────────────────
+        log(f"Connecting to Chrome at {address}…")
+        bm = BrowserManager(logger=self.logger)
+        driver = bm.get_driver(port)
+
+        if not driver:
+            return {"status": "error",
+                    "message": f"Cannot connect to Chrome at {address}. Is the port open?"}
+
+        log(f"✓ Connected to Chrome  •  page: {driver.title[:60]}")
+
+        # Build automation wrapper
+        def _make_auto() -> FacebookAutomation:
+            return FacebookAutomation(driver=driver, logger=self.logger, on_log=log_fn)
+
+        try:
+            # ── check_login_status ──────────────────────────────────
+            if func_id == "check_login_status":
+                auto = _make_auto()
+                log("Navigating to Facebook home…")
+                driver.get("https://www.facebook.com/")
+                time.sleep(3)
+                if stop_event.is_set():
+                    return {"status": "info", "message": "Stopped by user"}
+
+                url = driver.current_url.lower()
+                if auto.check_checkpoint():
+                    return {"status": "info", "message": "Account is at CHECKPOINT",
+                            "logged_in": False, "checkpoint": True}
+                if auto.check_logged_out():
+                    return {"status": "info", "message": "Account is LOGGED OUT",
+                            "logged_in": False}
+                if "facebook.com" in url and "login" not in url:
+                    title = driver.title
+                    return {"status": "success",
+                            "message": "Account is LOGGED IN",
+                            "logged_in": True,
+                            "page_title": title}
+                return {"status": "info", "message": f"Uncertain status  •  URL: {url}",
+                        "current_url": url}
+
+            # ── check_checkpoint ────────────────────────────────────
+            elif func_id == "check_checkpoint":
+                auto = _make_auto()
+                log(f"Checking checkpoint on current page…")
+                log(f"  URL: {driver.current_url}")
+                is_cp = auto.check_checkpoint()
+                is_out = auto.check_logged_out()
+                msg = ("CHECKPOINT detected!" if is_cp
+                       else "LOGGED OUT!" if is_out
+                       else "No checkpoint — looks OK")
+                return {"status": "info" if not is_cp else "error",
+                        "message": msg,
+                        "checkpoint": is_cp,
+                        "logged_out": is_out,
+                        "current_url": driver.current_url}
+
+            # ── test_login ──────────────────────────────────────────
+            elif func_id == "test_login":
+                email = params.get("email", "")
+                password = params.get("password", "")
+                if not email or not password:
+                    return {"status": "error", "message": "Email and password are required"}
+                auto = _make_auto()
+                log(f"Attempting login as: {email}")
+                result_code = auto.perform_login(email, password)
+                status_map = {
+                    "success":    ("success", "Login successful!"),
+                    "2fa":        ("info",    "2FA / Checkpoint required"),
+                    "wrong_pass": ("error",   "Wrong email or password"),
+                    "timeout":    ("error",   "Login timed out"),
+                    "error":      ("error",   "Unknown error during login"),
+                }
+                st, msg = status_map.get(result_code, ("error", result_code))
+                return {"status": st, "message": msg, "login_result": result_code}
+
+            # ── navigate_url ────────────────────────────────────────
+            elif func_id == "navigate_url":
+                url = params.get("url", "https://www.facebook.com")
+                log(f"Navigating to: {url}")
+                driver.get(url)
+                time.sleep(3)
+                if stop_event.is_set():
+                    return {"status": "info", "message": "Stopped"}
+                final_url = driver.current_url
+                title = driver.title
+                log(f"✓ Loaded:  {title}")
+                log(f"  URL: {final_url}")
+                return {"status": "success", "message": f"Navigated to: {final_url}",
+                        "page_title": title, "final_url": final_url}
+
+            # ── scroll_page ─────────────────────────────────────────
+            elif func_id == "scroll_page":
+                count = int(params.get("count", 5))
+                auto = _make_auto()
+                log(f"Scrolling {count} times…")
+                for i in range(count):
+                    if stop_event.is_set():
+                        log("Stopped.")
+                        break
+                    auto.scroll_page()
+                    log(f"  Scroll {i+1}/{count} done")
+                    time.sleep(1.2)
+                return {"status": "success", "message": f"Scrolled {count} times",
+                        "scrolls_done": count}
+
+            # ── find_invite_buttons ─────────────────────────────────
+            elif func_id == "find_invite_buttons":
+                auto = _make_auto()
+                log(f"Scanning page for Add Friend buttons…")
+                log(f"  Current URL: {driver.current_url}")
+                buttons = auto._find_add_friend_buttons()
+                log(f"  Found {len(buttons)} unique visible Add Friend buttons")
+                for i, btn in enumerate(buttons[:10]):
+                    txt = auto._get_button_text(btn)
+                    log(f"  [{i+1}] {txt}")
+                return {"status": "success" if buttons else "info",
+                        "message": f"Found {len(buttons)} Add Friend button(s)",
+                        "button_count": len(buttons)}
+
+            # ── navigate_group ──────────────────────────────────────
+            elif func_id == "navigate_group":
+                group_url = params.get("group_url", "")
+                if not group_url:
+                    return {"status": "error", "message": "Group URL is required"}
+                auto = _make_auto()
+                log(f"Navigating to group members page…")
+                ok = auto.navigate_to_group(group_url)
+                final_url = driver.current_url
+                on_members = auto._is_on_members_page()
+                return {"status": "success" if ok and on_members else "error",
+                        "message": "On members page ✓" if on_members else "Navigation may have failed",
+                        "on_members_page": on_members,
+                        "final_url": final_url}
+
+            # ── dry_run_invite ──────────────────────────────────────
+            elif func_id == "dry_run_invite":
+                group_url = params.get("group_url", "").strip()
+                max_scrolls = int(params.get("max_scrolls", 5))
+                auto = _make_auto()
+
+                if group_url:
+                    log(f"Navigating to: {group_url}")
+                    auto.navigate_to_group(group_url)
+                    if stop_event.is_set():
+                        return {"status": "info", "message": "Stopped"}
+
+                log(f"Dry-run scan (max {max_scrolls} scrolls)…")
+                total_found = 0
+                for i in range(max_scrolls):
+                    if stop_event.is_set():
+                        log("Stopped.")
+                        break
+                    buttons = auto._find_add_friend_buttons()
+                    log(f"  Scroll {i+1}: {len(buttons)} Add Friend buttons visible")
+                    total_found = max(total_found, len(buttons))
+                    auto.scroll_page()
+                    time.sleep(1.5)
+
+                # Check status
+                is_cp = auto.check_checkpoint()
+                is_out = auto.check_logged_out()
+                extra = ""
+                if is_cp:
+                    extra = "  ⚠️ CHECKPOINT detected!"
+                elif is_out:
+                    extra = "  ⚠️ Logged out!"
+                log(f"Dry-run complete.{extra}")
+                return {"status": "success",
+                        "message": f"Dry run done. Max buttons seen: {total_found}{extra}",
+                        "max_buttons_found": total_found,
+                        "checkpoint": is_cp,
+                        "logged_out": is_out}
+
+            # ── invite_members ──────────────────────────────────────
+            elif func_id == "invite_members":
+                group_url = params.get("group_url", "").strip()
+                max_clicks = int(params.get("max_clicks", 5))
+                max_scrolls = int(params.get("max_scrolls", 10))
+                auto = _make_auto()
+
+                if group_url:
+                    log(f"Navigating to: {group_url}")
+                    ok = auto.navigate_to_group(group_url)
+                    if not ok:
+                        return {"status": "error", "message": "Navigation failed"}
+                    if stop_event.is_set():
+                        return {"status": "info", "message": "Stopped"}
+
+                log(f"Starting invite (max {max_clicks} invites, {max_scrolls} scrolls)…")
+                scrolls, invites = auto.scroll_and_invite(
+                    max_scrolls=max_scrolls,
+                    max_clicks=max_clicks
+                )
+                return {"status": "success" if invites > 0 else "info",
+                        "message": f"Sent {invites} invite(s) in {scrolls} scrolls",
+                        "invites_sent": invites,
+                        "scrolls_done": scrolls}
+
+            # ── post_wall ───────────────────────────────────────────
+            elif func_id == "post_wall":
+                content = params.get("content", "")
+                if not content:
+                    return {"status": "error", "message": "Content is required"}
+                auto = _make_auto()
+                log(f"Posting to wall: {content[:60]}…")
+                ok = auto.post_to_wall(content)
+                return {"status": "success" if ok else "error",
+                        "message": "Posted to wall ✓" if ok else "Post failed"}
+
+            # ── post_group ──────────────────────────────────────────
+            elif func_id == "post_group":
+                group_url = params.get("group_url", "")
+                content = params.get("content", "")
+                if not group_url or not content:
+                    return {"status": "error", "message": "Group URL and content are required"}
+                auto = _make_auto()
+                log(f"Posting to group: {group_url}")
+                ok = auto.post_to_group(group_url, content)
+                return {"status": "success" if ok else "error",
+                        "message": "Posted to group ✓" if ok else "Post failed"}
+
+            # ── share_post ──────────────────────────────────────────
+            elif func_id == "share_post":
+                post_url = params.get("post_url", "")
+                if not post_url:
+                    return {"status": "error", "message": "Post URL is required"}
+                auto = _make_auto()
+                log(f"Sharing post: {post_url}")
+                ok = auto.share_post(post_url)
+                return {"status": "success" if ok else "error",
+                        "message": "Shared ✓" if ok else "Share failed"}
+
+            # ── comment_post ────────────────────────────────────────
+            elif func_id == "comment_post":
+                post_url = params.get("post_url", "")
+                content = params.get("content", "")
+                if not post_url or not content:
+                    return {"status": "error", "message": "Post URL and comment text are required"}
+                auto = _make_auto()
+                log(f"Commenting on: {post_url}")
+                ok = auto.comment_on_post(post_url, content)
+                return {"status": "success" if ok else "error",
+                        "message": "Commented ✓" if ok else "Comment failed"}
+
+            # ── get_page_info ───────────────────────────────────────
+            elif func_id == "get_page_info":
+                log("Reading page info…")
+                title = driver.title
+                url = driver.current_url
+                try:
+                    dom_size = driver.execute_script(
+                        "return document.querySelectorAll('*').length;")
+                    link_count = driver.execute_script(
+                        "return document.querySelectorAll('a').length;")
+                    btn_count = driver.execute_script(
+                        "return document.querySelectorAll('[role=button]').length;")
+                except Exception:
+                    dom_size = link_count = btn_count = "?"
+                log(f"  Title:   {title}")
+                log(f"  URL:     {url}")
+                log(f"  DOM elements: {dom_size}")
+                log(f"  Links:   {link_count}")
+                log(f"  Buttons: {btn_count}")
+                return {"status": "success", "message": "Page info retrieved",
+                        "title": title, "url": url,
+                        "dom_elements": dom_size,
+                        "links": link_count,
+                        "role_buttons": btn_count}
+
+            # ── run_js ──────────────────────────────────────────────
+            elif func_id == "run_js":
+                script = params.get("script", "return document.title;")
+                log(f"Executing JS: {script[:100]}")
+                result_val = driver.execute_script(script)
+                log(f"→ Return value: {result_val}")
+                return {"status": "success", "message": "JS executed",
+                        "return_value": str(result_val)}
+
+            else:
+                return {"status": "error", "message": f"Unknown function id: {func_id}"}
+
+        except Exception as e:
+            self.logger.error(f"Feature test error [{func_id}]: {e}", exc_info=True)
+            log(f"Exception: {e}")
+            return {"status": "error", "message": str(e)}
+
+        finally:
+            # Disconnect driver but don't stop Chrome itself
+            try:
+                bm.close_driver(port)
+            except Exception:
+                pass
+

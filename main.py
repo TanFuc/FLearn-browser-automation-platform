@@ -51,6 +51,7 @@ def setup_logging(debug: bool = False) -> logging.Logger:
 
 def run_gui() -> None:
     """Run the application in GUI mode."""
+    import signal
     from ui.main_window import MainWindow
     from ui.view_models import MainViewModel
 
@@ -61,8 +62,31 @@ def run_gui() -> None:
     view_model = MainViewModel()
     window = MainWindow(view_model)
 
+    # Handle Ctrl+C gracefully
+    def signal_handler(sig, frame):
+        logger.info("Received interrupt signal, shutting down...")
+        try:
+            view_model.shutdown()
+        except Exception:
+            pass
+        try:
+            window.root.quit()
+        except Exception:
+            pass
+
+    signal.signal(signal.SIGINT, signal_handler)
+
     # Run the application
-    window.run()
+    try:
+        window.run()
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+    finally:
+        try:
+            view_model.shutdown()
+        except Exception:
+            pass
+        log_manager.shutdown()
 
 
 def run_cli(args: argparse.Namespace) -> int:

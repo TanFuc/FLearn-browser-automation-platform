@@ -102,6 +102,20 @@ class FacebookAutomation:
         "Kết bạn", "Add as friend", "Thêm làm bạn"
     ]
 
+    # Patterns to REJECT — these are "Cancel invite" or other unwanted buttons.
+    # BUG FIX: Facebook shows "Hủy lời mời [name]" (Cancel invite) buttons on the
+    # members page for people you already sent a request to. XPath Method 3 was
+    # accidentally matching them because their aria-label/text contains "bạn bè".
+    CANCEL_BUTTON_PATTERNS = [
+        "hủy lời mời",   # Vietnamese: Cancel friend request
+        "hủy",           # Vietnamese: Cancel (generic)
+        "thu hồi",       # Vietnamese: Revoke
+        "cancel",        # English
+        "unfriend",      # Remove friend
+        "unfollow",      # Unfollow
+        "remove friend", # Remove friend (English)
+    ]
+
     # Members page URL patterns
     MEMBERS_PAGE_PATTERNS = [
         "/members",
@@ -337,22 +351,78 @@ class FacebookAutomation:
 
     def navigate_to_group(self, group_url: str) -> bool:
         """
-        Navigate to a Facebook group URL.
+        Navigate to a Facebook group members page.
+
+        Ensures the URL points to the members section of the group.
 
         Args:
-            group_url: URL of the Facebook group.
+            group_url: URL of the Facebook group (with or without /members).
 
         Returns:
-            True if navigation successful, False otherwise.
+            True if navigation successful and on members page, False otherwise.
         """
         try:
-            self.driver.get(group_url)
-            time.sleep(3)  # Wait for page load
-            self._log(f"Navigated to group: {group_url}")
+            # Ensure URL points to members page
+            members_url = self._ensure_members_url(group_url)
+            self._log(f"Navigating to: {members_url}")
+
+            self.driver.get(members_url)
+
+            # Wait for page to load properly
+            time.sleep(4)
+
+            # Verify navigation succeeded
+            current_url = self.driver.current_url
+            self._log(f"Current URL after navigation: {current_url}")
+
+            # Check if we're on the members page
+            if not self._is_on_members_page():
+                self._log(
+                    f"[WARNING] Navigation may have failed - not on members page!\n"
+                    f"  Expected: {members_url}\n"
+                    f"  Current: {current_url}",
+                    logging.WARNING
+                )
+                # Try one more time with explicit members URL
+                if "/members" not in current_url.lower():
+                    self._log("Retrying navigation to members page...")
+                    self.driver.get(members_url)
+                    time.sleep(3)
+                    current_url = self.driver.current_url
+                    self._log(f"Current URL after retry: {current_url}")
+
             return True
+
         except Exception as e:
             self._log(f"Failed to navigate: {e}", logging.ERROR)
             return False
+
+    def _ensure_members_url(self, group_url: str) -> str:
+        """
+        Ensure the group URL points to the members page.
+
+        Args:
+            group_url: Original group URL.
+
+        Returns:
+            URL with /members appended if needed.
+        """
+        if not group_url:
+            return group_url
+
+        # Clean up URL
+        url = group_url.strip().rstrip('/')
+
+        # Check if already has /members
+        if '/members' in url.lower():
+            return url
+
+        # Check if it has /people (alternate members URL)
+        if '/people' in url.lower():
+            return url
+
+        # Append /members to the URL
+        return f"{url}/members"
 
     def check_checkpoint(self) -> bool:
         """
@@ -591,7 +661,7 @@ class FacebookAutomation:
     @retry_on_stale()
     def _find_add_friend_buttons(self) -> List[WebElement]:
         """
-        Find all "Add Friend" buttons on the page.
+        Find all "Add Friend" buttons on the page — excluding Cancel/Revoke buttons.
 
         Returns:
             List of button elements.
@@ -606,18 +676,20 @@ class FacebookAutomation:
 
             # Method 2: Find by text content with exact match (avoid partial matches)
             for pattern in self.ADD_FRIEND_PATTERNS:
-                # Use exact text match, not contains
                 xpath = f'//span[text()="{pattern}"]/ancestor::div[@role="button"]'
                 elements = self.driver.find_elements(By.XPATH, xpath)
                 buttons.extend(elements)
 
-            # Method 3: Facebook-specific selector for member list add friend buttons
-            # These are typically in the member cards with specific structure
+            # Method 3: Facebook-specific selector for member list add friend buttons.
+            # IMPORTANT: Use exact text match for Vietnamese patterns to avoid matching
+            # "Hủy lời mời bạn bè" (Cancel friend invite) which also contains "bạn bè".
+            # The not() guard explicitly excludes any button whose aria-label starts with "Hủy".
             specific_xpath = (
                 '//div[contains(@class, "x1yztbdb")]//div[@role="button"]'
+                '[not(contains(@aria-label, "Hủy")) and not(contains(@aria-label, "Cancel"))]'
                 '[.//span[contains(text(), "Add") and contains(text(), "riend")] or '
-                './/span[contains(text(), "Thêm") and contains(text(), "bạn")] or '
-                './/span[contains(text(), "Kết bạn")]]'
+                './/span[text()="Thêm bạn bè" or text()="Thêm bạn" or text()="Kết bạn" or text()="Thêm làm bạn"] or '
+                './/span[text()="Add friend" or text()="Add Friend" or text()="Add as friend"]]'
             )
             elements = self.driver.find_elements(By.XPATH, specific_xpath)
             buttons.extend(elements)
@@ -632,7 +704,6 @@ class FacebookAutomation:
             try:
                 btn_id = btn.id
                 if btn_id not in seen:
-                    # Only include buttons that are displayed
                     if btn.is_displayed():
                         seen.add(btn_id)
                         unique_buttons.append(btn)
@@ -675,23 +746,34 @@ class FacebookAutomation:
             button: Button element to click.
 
         Returns:
-            True if click successful, False otherwise.
+            True if click successful (on a real Add Friend button), False otherwise.
         """
         try:
             # Get button text for logging
             btn_text = self._get_button_text(button)
-
-            # Verify it's likely an "Add Friend" button before clicking
             btn_text_lower = btn_text.lower()
+
+            # ── STEP 1: Reject cancel/revoke buttons FIRST ──────────────
+            # "Hủy lời mời" buttons have aria-label like "Hủy lời mời [Name]"
+            # Clicking them would CANCEL already-sent friend requests!
+            is_cancel = any(
+                pattern in btn_text_lower
+                for pattern in self.CANCEL_BUTTON_PATTERNS
+            )
+            if is_cancel:
+                self.logger.debug(f"BLOCKED cancel-type button: '{btn_text}'")
+                return False
+
+            # ── STEP 2: Confirm it IS an Add Friend button ───────────────
             is_add_friend = any(
                 pattern.lower() in btn_text_lower
                 for pattern in ["add friend", "thêm bạn", "kết bạn", "add as friend"]
             )
-
             if not is_add_friend:
-                self.logger.debug(f"Skipping non-Add-Friend button: {btn_text}")
+                self.logger.debug(f"Skipping non-Add-Friend button: '{btn_text}'")
                 return False
 
+            # ── STEP 3: Scroll and click ─────────────────────────────────
             # Scroll button into view
             self.driver.execute_script(
                 "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
@@ -795,11 +877,36 @@ class FacebookAutomation:
                 self._log(f"Daily remaining ({daily_remaining}) is less than configured max invites ({max_clicks}). Using {daily_remaining}.")
             max_clicks = min(max_clicks, daily_remaining)
 
+        # ===== URL VERIFICATION =====
+        # Log current URL for debugging
+        try:
+            current_url = self.driver.current_url
+            self._log(f"[DEBUG] Current URL: {current_url}")
+        except Exception as e:
+            self._log(f"[ERROR] Cannot get current URL: {e}", logging.ERROR)
+            return 0, 0
+
+        # Verify we're on a members page - STOP if not
+        if not self._is_on_members_page():
+            self._log(
+                f"[ERROR] NOT on a members page! Stopping to prevent false clicks.\n"
+                f"  Current URL: {current_url}\n"
+                f"  Expected URL should contain: /members or /people",
+                logging.ERROR
+            )
+            # Return 0, 0 to indicate no invites were sent
+            return 0, 0
+
         # Dry run mode - only check connections, don't actually click
         if settings.dry_run:
             self._log("[DRY RUN] Mode enabled - checking page without clicking")
             buttons = self._find_add_friend_buttons()
             self._log(f"[DRY RUN] Found {len(buttons)} Add Friend buttons on current view")
+
+            # Log button details for debugging
+            for i, btn in enumerate(buttons[:5]):  # Show first 5
+                btn_text = self._get_button_text(btn)
+                self._log(f"[DRY RUN] Button {i+1}: {btn_text}")
 
             # Verify checkpoint and logged-out status
             if self.check_checkpoint():
@@ -826,8 +933,18 @@ class FacebookAutomation:
             # Find and click add friend buttons
             buttons = self._find_add_friend_buttons()
 
+            # Log button count for first few scrolls (debugging)
+            if scroll_num < 3:
+                self._log(f"[Scroll {scroll_num + 1}] Found {len(buttons)} potential Add Friend buttons")
+                # Log first few button texts for debugging
+                for i, btn in enumerate(buttons[:3]):
+                    btn_text = self._get_button_text(btn)
+                    self._log(f"  Button {i + 1}: '{btn_text}'")
+
             if not buttons:
                 empty_scroll_count += 1
+                if scroll_num < 5:  # Log more details for first scrolls
+                    self._log(f"[Scroll {scroll_num + 1}] No buttons found (empty count: {empty_scroll_count}/{max_empty_scrolls})")
                 if empty_scroll_count >= max_empty_scrolls:
                     self._log(f"No Add Friend buttons found for {max_empty_scrolls} consecutive scrolls. Stopping.")
                     break
@@ -849,7 +966,8 @@ class FacebookAutomation:
                 if self._click_button(button):
                     self.invites_sent += 1
                     clicked_this_scroll += 1
-                    self._log(f"✓ Invite #{self.invites_sent} sent")
+                    btn_text = self._get_button_text(button)
+                    self._log(f"✓ Invite #{self.invites_sent} sent (clicked: '{btn_text}')")
 
                     # Handle any popup
                     self._handle_popup()

@@ -10,6 +10,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
 from typing import Any, Dict, Optional
+from datetime import datetime
 
 try:
     import ttkbootstrap as ttk
@@ -1294,3 +1295,615 @@ class TestLoginResultDialog:
         )
         parent.wait_window(dialog.top)
         return dialog.result
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  TestFeatureDialog
+# ─────────────────────────────────────────────────────────────────────
+
+class TestFeatureDialog:
+    """
+    Interactive dialog to test any single automation feature on any Chrome.
+
+    Features:
+    - Enter any Chrome debugger address (or pick from list)
+    - Select the function to test from a dropdown
+    - Configure function-specific parameters dynamically
+    - Run in background thread with live log streaming
+    - Colored log output (INFO=white, WARNING=yellow, ERROR=red, SUCCESS=green)
+    - Stop button to cancel mid-run
+    - Copy log to clipboard
+    """
+
+    # Registry of all testable functions
+    FUNCTIONS = [
+        {
+            "id": "check_connection",
+            "label": "🔌 Check Chrome Connection",
+            "description": "Verify Selenium can connect to Chrome debugger port.",
+            "params": [],
+            "needs_chrome": True,
+        },
+        {
+            "id": "check_login_status",
+            "label": "🔑 Check Login Status",
+            "description": "Navigate to Facebook and check if the account is logged in.",
+            "params": [],
+            "needs_chrome": True,
+        },
+        {
+            "id": "check_checkpoint",
+            "label": "⚠️ Check Checkpoint",
+            "description": "Detect if the account is at a checkpoint/security check page.",
+            "params": [],
+            "needs_chrome": True,
+        },
+        {
+            "id": "test_login",
+            "label": "🔐 Perform Auto-Login",
+            "description": "Navigate to login page and attempt auto-login with stored credentials.",
+            "params": [
+                {"key": "email",    "label": "Email / Phone", "type": "entry",    "default": ""},
+                {"key": "password", "label": "Password",      "type": "password", "default": ""},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "navigate_url",
+            "label": "🌐 Navigate to URL",
+            "description": "Navigate Chrome to any URL and wait for page load.",
+            "params": [
+                {"key": "url", "label": "URL", "type": "entry", "default": "https://www.facebook.com"},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "scroll_page",
+            "label": "📜 Scroll Page (N times)",
+            "description": "Scroll the current page N times with random pauses.",
+            "params": [
+                {"key": "count", "label": "Scroll Count", "type": "spinbox", "default": "5", "from_": 1, "to": 50},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "find_invite_buttons",
+            "label": "🔍 Find Add Friend Buttons",
+            "description": "Count how many 'Add Friend' buttons are visible on the current page.",
+            "params": [],
+            "needs_chrome": True,
+        },
+        {
+            "id": "navigate_group",
+            "label": "📂 Navigate to Group Members",
+            "description": "Navigate to a Facebook group members page.",
+            "params": [
+                {"key": "group_url", "label": "Group URL", "type": "entry", "default": "https://www.facebook.com/groups/"},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "dry_run_invite",
+            "label": "🧪 Dry Run Invite (No Click)",
+            "description": "Scan members page for invite buttons WITHOUT clicking. Shows count only.",
+            "params": [
+                {"key": "group_url", "label": "Group URL (optional – uses current page if empty)", "type": "entry", "default": ""},
+                {"key": "max_scrolls", "label": "Max Scrolls", "type": "spinbox", "default": "5", "from_": 1, "to": 30},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "invite_members",
+            "label": "👥 Invite Members (Actual)",
+            "description": "Navigate to group & send real friend requests. Use with caution!",
+            "params": [
+                {"key": "group_url",   "label": "Group URL",     "type": "entry",   "default": ""},
+                {"key": "max_clicks",  "label": "Max Invites",   "type": "spinbox", "default": "5", "from_": 1, "to": 100},
+                {"key": "max_scrolls", "label": "Max Scrolls",   "type": "spinbox", "default": "10", "from_": 1, "to": 50},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "post_wall",
+            "label": "📝 Post to Wall",
+            "description": "Post text content to the account's Facebook wall.",
+            "params": [
+                {"key": "content", "label": "Post Content", "type": "text", "default": "Hello World!"},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "post_group",
+            "label": "📝 Post to Group",
+            "description": "Post text content to a Facebook group.",
+            "params": [
+                {"key": "group_url", "label": "Group URL", "type": "entry", "default": ""},
+                {"key": "content",   "label": "Post Content", "type": "text", "default": ""},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "share_post",
+            "label": "🔗 Share a Post",
+            "description": "Share a post to the account's timeline.",
+            "params": [
+                {"key": "post_url", "label": "Post URL", "type": "entry", "default": ""},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "comment_post",
+            "label": "💬 Comment on Post",
+            "description": "Leave a comment on a specific post.",
+            "params": [
+                {"key": "post_url", "label": "Post URL",  "type": "entry", "default": ""},
+                {"key": "content",  "label": "Comment",   "type": "text",  "default": ""},
+            ],
+            "needs_chrome": True,
+        },
+        {
+            "id": "get_page_info",
+            "label": "📋 Get Current Page Info",
+            "description": "Get current page title, URL, and basic DOM stats.",
+            "params": [],
+            "needs_chrome": True,
+        },
+        {
+            "id": "run_js",
+            "label": "⚙️ Run JavaScript",
+            "description": "Execute arbitrary JavaScript on the current page and show return value.",
+            "params": [
+                {"key": "script", "label": "JavaScript Code", "type": "text",
+                 "default": "return document.title;"},
+            ],
+            "needs_chrome": True,
+        },
+    ]
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        run_callback: callable,  # fn(address, func_id, params, log_fn, stop_event) -> dict
+        accounts: list = None,   # list of Account objects for address suggestions
+        title: str = "🔬 Test Feature on Chrome"
+    ):
+        """
+        Initialize TestFeatureDialog.
+
+        Args:
+            parent: Parent widget.
+            run_callback: Callable(address, func_id, params, log_fn, stop_event) -> dict
+            accounts: Known accounts for address suggestions.
+            title: Dialog title.
+        """
+        self.run_callback = run_callback
+        self.accounts = accounts or []
+        self._stop_event = None
+        self._run_thread = None
+
+        self.top = tk.Toplevel(parent)
+        self.top.title(title)
+        self.top.geometry("760x640")
+        self.top.minsize(640, 520)
+        self.top.transient(parent)
+        self.top.grab_set()
+
+        # Center on parent
+        self.top.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - 760) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - 640) // 2
+        self.top.geometry(f"+{x}+{y}")
+
+        self._param_vars: dict = {}
+        self._create_widgets()
+
+        self.top.bind("<Escape>", lambda e: self._on_close())
+        self.top.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ── Widget Construction ──────────────────────
+
+    def _create_widgets(self):
+        from ttkbootstrap.scrolled import ScrolledText as StText
+        self._scrolled_text_cls = StText
+
+        root = self.top
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=0)
+        root.rowconfigure(1, weight=0)
+        root.rowconfigure(2, weight=1)
+        root.rowconfigure(3, weight=0)
+
+        # ── Row 0: Chrome address + connection info ──
+        addr_frame = ttk.Labelframe(root, text=" Chrome Instance ", padding=(12, 8))
+        addr_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+        addr_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(addr_frame, text="Debugger Address:", font=("Helvetica", 9, "bold")).grid(
+            row=0, column=0, sticky="w", padx=(0, 8))
+
+        # Combobox pre-populated from known accounts
+        addresses = [acc.debugger_address for acc in self.accounts]
+        self.addr_var = tk.StringVar(value=addresses[0] if addresses else "127.0.0.1:9222")
+        self.addr_combo = ttk.Combobox(
+            addr_frame,
+            textvariable=self.addr_var,
+            values=addresses,
+            width=22,
+            font=("Courier", 10)
+        )
+        self.addr_combo.grid(row=0, column=1, sticky="w", padx=(0, 8))
+
+        self.conn_status_var = tk.StringVar(value="⬜ Not checked")
+        conn_lbl = ttk.Label(addr_frame, textvariable=self.conn_status_var,
+                             font=("Helvetica", 9))
+        conn_lbl.grid(row=0, column=2, sticky="w")
+
+        ttk.Button(addr_frame, text="Check Port", bootstyle="outline",
+                   command=self._check_port, width=11).grid(row=0, column=3, padx=(8, 0))
+
+        # Account label display
+        self.acc_label_var = tk.StringVar(value="")
+        ttk.Label(addr_frame, textvariable=self.acc_label_var,
+                  font=("Helvetica", 8), bootstyle="secondary").grid(
+            row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
+
+        self.addr_combo.bind("<<ComboboxSelected>>", self._on_addr_change)
+        self.addr_combo.bind("<FocusOut>", self._on_addr_change)
+
+        # ── Row 1: Function selector + params ──
+        func_frame = ttk.Labelframe(root, text=" Function to Test ", padding=(12, 8))
+        func_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
+        func_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(func_frame, text="Function:", font=("Helvetica", 9, "bold")).grid(
+            row=0, column=0, sticky="w", padx=(0, 8))
+
+        func_labels = [f["label"] for f in self.FUNCTIONS]
+        self.func_var = tk.StringVar(value=func_labels[0])
+        self.func_combo = ttk.Combobox(
+            func_frame,
+            textvariable=self.func_var,
+            values=func_labels,
+            state="readonly",
+            width=38
+        )
+        self.func_combo.grid(row=0, column=1, sticky="w", padx=(0, 8))
+        self.func_combo.bind("<<ComboboxSelected>>", self._on_func_change)
+
+        # Description label
+        self.desc_var = tk.StringVar(value=self.FUNCTIONS[0]["description"])
+        desc_lbl = ttk.Label(func_frame, textvariable=self.desc_var,
+                             font=("Helvetica", 8), bootstyle="secondary",
+                             wraplength=640)
+        desc_lbl.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        # Parameters area
+        self.params_frame = ttk.Frame(func_frame)
+        self.params_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.params_frame.columnconfigure(1, weight=1)
+
+        self._build_param_widgets(self.FUNCTIONS[0])
+
+        # ── Row 2: Live log output ──
+        log_frame = ttk.Labelframe(root, text=" Live Output ", padding=(10, 6))
+        log_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=4)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+
+        try:
+            self.log_text = self._scrolled_text_cls(log_frame, height=12, font=("Courier New", 9))
+        except Exception:
+            self.log_text = tk.Text(log_frame, height=12, font=("Courier New", 9))
+        self.log_text.pack(fill="both", expand=True)
+
+        inner = self.log_text.text if hasattr(self.log_text, "text") else self.log_text
+        inner.configure(state="disabled", bg="#1e1e1e", fg="#d4d4d4",
+                        insertbackground="white")
+
+        # Color tags
+        inner.tag_configure("INFO",    foreground="#d4d4d4")
+        inner.tag_configure("SUCCESS", foreground="#6a9955")
+        inner.tag_configure("WARNING", foreground="#d7ba7d")
+        inner.tag_configure("ERROR",   foreground="#f44747")
+        inner.tag_configure("SYSTEM",  foreground="#9cdcfe")
+        inner.tag_configure("RESULT",  foreground="#4ec9b0")
+
+        # ── Row 3: Action buttons ──
+        btn_row = ttk.Frame(root, padding=(10, 6))
+        btn_row.grid(row=3, column=0, sticky="ew")
+
+        self.run_btn = ttk.Button(
+            btn_row, text="▶  Run Test",
+            bootstyle="success", width=14,
+            command=self._on_run
+        )
+        self.run_btn.pack(side="left", padx=4)
+
+        self.stop_btn = ttk.Button(
+            btn_row, text="⏹  Stop",
+            bootstyle="danger-outline", width=10,
+            command=self._on_stop,
+            state="disabled"
+        )
+        self.stop_btn.pack(side="left", padx=4)
+
+        ttk.Button(
+            btn_row, text="🗑 Clear Log",
+            bootstyle="outline-secondary", width=11,
+            command=self._clear_log
+        ).pack(side="left", padx=4)
+
+        ttk.Button(
+            btn_row, text="📋 Copy Log",
+            bootstyle="outline-secondary", width=11,
+            command=self._copy_log
+        ).pack(side="left", padx=4)
+
+        ttk.Button(
+            btn_row, text="✖  Close",
+            bootstyle="outline", width=10,
+            command=self._on_close
+        ).pack(side="right", padx=4)
+
+    # ── Dynamic param rendering ──────────────────
+
+    def _build_param_widgets(self, func_def: dict):
+        """Rebuild parameter widgets for the selected function."""
+        for w in self.params_frame.winfo_children():
+            w.destroy()
+        self._param_vars.clear()
+
+        params = func_def.get("params", [])
+        if not params:
+            ttk.Label(self.params_frame,
+                      text="No parameters needed for this function.",
+                      bootstyle="secondary", font=("Helvetica", 8)).grid(
+                row=0, column=0, columnspan=2, sticky="w")
+            return
+
+        for i, p in enumerate(params):
+            row_w = ttk.Frame(self.params_frame)
+            row_w.grid(row=i, column=0, columnspan=2, sticky="ew", pady=3)
+            row_w.columnconfigure(1, weight=1)
+
+            lbl = ttk.Label(row_w, text=f"{p['label']}:", width=26, anchor="w",
+                            font=("Helvetica", 9))
+            lbl.grid(row=0, column=0, sticky="w", padx=(0, 8))
+
+            ptype = p.get("type", "entry")
+            default = p.get("default", "")
+
+            if ptype == "entry":
+                var = tk.StringVar(value=default)
+                ttk.Entry(row_w, textvariable=var).grid(row=0, column=1, sticky="ew")
+                self._param_vars[p["key"]] = var
+
+            elif ptype == "password":
+                var = tk.StringVar(value=default)
+                ttk.Entry(row_w, textvariable=var, show="*").grid(row=0, column=1, sticky="ew")
+                self._param_vars[p["key"]] = var
+
+            elif ptype == "spinbox":
+                var = tk.StringVar(value=default)
+                ttk.Spinbox(
+                    row_w, from_=p.get("from_", 1), to=p.get("to", 100),
+                    textvariable=var, width=10
+                ).grid(row=0, column=1, sticky="w")
+                self._param_vars[p["key"]] = var
+
+            elif ptype == "text":
+                var = tk.StringVar()
+                text_frame = ttk.Frame(row_w)
+                text_frame.grid(row=0, column=1, sticky="ew")
+                text_frame.columnconfigure(0, weight=1)
+                txt = tk.Text(text_frame, height=3, wrap="word", font=("Helvetica", 9))
+                txt.insert("1.0", default)
+                txt.grid(row=0, column=0, sticky="ew")
+                # Store text widget under key with _textwidget suffix
+                self._param_vars[p["key"]] = txt
+
+    # ── Event Handlers ───────────────────────────
+
+    def _on_func_change(self, event=None):
+        label = self.func_var.get()
+        func_def = next((f for f in self.FUNCTIONS if f["label"] == label), None)
+        if func_def:
+            self.desc_var.set(func_def["description"])
+            self._build_param_widgets(func_def)
+
+    def _on_addr_change(self, event=None):
+        addr = self.addr_var.get().strip()
+        for acc in self.accounts:
+            if acc.debugger_address == addr:
+                name = acc.label or addr
+                creds = "🔑 Has credentials" if acc.has_credentials else "⚠ No credentials"
+                self.acc_label_var.set(f"Account: {name}  |  {creds}")
+                return
+        self.acc_label_var.set("(Address not in accounts list — temp connection)")
+
+    def _check_port(self):
+        import socket
+        addr = self.addr_var.get().strip()
+        try:
+            host, port_str = addr.rsplit(":", 1)
+            port = int(port_str)
+        except Exception:
+            self.conn_status_var.set("❌ Invalid address")
+            return
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1.5)
+                result = s.connect_ex((host, port))
+            if result == 0:
+                self.conn_status_var.set("✅ Port open")
+            else:
+                self.conn_status_var.set("❌ Port closed / not running")
+        except Exception as e:
+            self.conn_status_var.set(f"❌ Error: {e}")
+
+    def _get_selected_func(self) -> Optional[dict]:
+        label = self.func_var.get()
+        return next((f for f in self.FUNCTIONS if f["label"] == label), None)
+
+    def _collect_params(self) -> dict:
+        params = {}
+        func_def = self._get_selected_func()
+        if not func_def:
+            return params
+        for p in func_def.get("params", []):
+            key = p["key"]
+            var = self._param_vars.get(key)
+            if var is None:
+                continue
+            if isinstance(var, tk.Text):
+                params[key] = var.get("1.0", "end-1c").strip()
+            else:
+                params[key] = var.get().strip()
+        return params
+
+    # ── Log Writer (called from background thread) ──
+
+    def _append_log(self, message: str, tag: str = "INFO"):
+        """Append a line to the log widget (must be called from main thread via after)."""
+        def _do():
+            inner = self.log_text.text if hasattr(self.log_text, "text") else self.log_text
+            inner.configure(state="normal")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            full_line = f"[{timestamp}] {message}\n"
+            inner.insert("end", full_line, tag)
+            inner.see("end")
+            inner.configure(state="disabled")
+        try:
+            self.top.after(0, _do)
+        except Exception:
+            pass
+
+    def _log_info(self, msg: str):    self._append_log(msg, "INFO")
+    def _log_success(self, msg: str): self._append_log(msg, "SUCCESS")
+    def _log_warning(self, msg: str): self._append_log(msg, "WARNING")
+    def _log_error(self, msg: str):   self._append_log(msg, "ERROR")
+    def _log_system(self, msg: str):  self._append_log(msg, "SYSTEM")
+    def _log_result(self, msg: str):  self._append_log(msg, "RESULT")
+
+    def _smart_log(self, message: str):
+        """Route log message to appropriate color based on content."""
+        low = message.lower()
+        if any(k in low for k in ("error", "failed", "exception", "traceback")):
+            self._log_error(message)
+        elif any(k in low for k in ("warning", "warn", "checkpoint")):
+            self._log_warning(message)
+        elif any(k in low for k in ("success", "done!", "✓", "✅", "complete")):
+            self._log_success(message)
+        elif any(k in low for k in ("result:", "→", "port open", "connected")):
+            self._log_result(message)
+        else:
+            self._log_info(message)
+
+    # ── Run / Stop ──────────────────────────────
+
+    def _on_run(self):
+        import threading
+
+        func_def = self._get_selected_func()
+        if not func_def:
+            return
+
+        addr = self.addr_var.get().strip()
+        if not addr or ":" not in addr:
+            self._log_error("Invalid Chrome address. Use format host:port")
+            return
+
+        params = self._collect_params()
+
+        # Prepare stop event
+        import threading as _th
+        self._stop_event = _th.Event()
+
+        self.run_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+
+        self._log_system(f"{'─'*55}")
+        self._log_system(f"▶  Running: {func_def['label']}")
+        self._log_system(f"   Address: {addr}")
+        if params:
+            for k, v in params.items():
+                display_v = "***" if k == "password" else v[:80] if isinstance(v, str) else str(v)
+                self._log_system(f"   {k}: {display_v}")
+        self._log_system(f"{'─'*55}")
+
+        def _worker():
+            try:
+                result = self.run_callback(
+                    address=addr,
+                    func_id=func_def["id"],
+                    params=params,
+                    log_fn=self._smart_log,
+                    stop_event=self._stop_event
+                )
+                if self._stop_event.is_set():
+                    self._log_warning("Test was stopped by user.")
+                else:
+                    # Show result summary
+                    self._log_system(f"{'─'*55}")
+                    if isinstance(result, dict):
+                        status = result.get("status", "done")
+                        msg = result.get("message", "")
+                        if status == "success":
+                            self._log_success(f"✅ RESULT: {msg or 'Success'}")
+                        elif status == "error":
+                            self._log_error(f"❌ RESULT: {msg or 'Failed'}")
+                        else:
+                            self._log_result(f"→  RESULT: {msg or status}")
+                        # Extra data
+                        for k, v in result.items():
+                            if k not in ("status", "message"):
+                                self._log_result(f"   {k}: {v}")
+                    else:
+                        self._log_result(f"→  RESULT: {result}")
+                    self._log_system(f"{'─'*55}")
+            except Exception as e:
+                self._log_error(f"Unhandled error: {e}")
+            finally:
+                try:
+                    self.top.after(0, self._on_run_done)
+                except Exception:
+                    pass
+
+        self._run_thread = threading.Thread(target=_worker, daemon=True)
+        self._run_thread.start()
+
+    def _on_run_done(self):
+        self.run_btn.configure(state="normal")
+        self.stop_btn.configure(state="disabled")
+
+    def _on_stop(self):
+        if self._stop_event:
+            self._stop_event.set()
+        self.stop_btn.configure(state="disabled")
+        self._log_warning("Stop signal sent…")
+
+    def _clear_log(self):
+        inner = self.log_text.text if hasattr(self.log_text, "text") else self.log_text
+        inner.configure(state="normal")
+        inner.delete("1.0", "end")
+        inner.configure(state="disabled")
+
+    def _copy_log(self):
+        inner = self.log_text.text if hasattr(self.log_text, "text") else self.log_text
+        content = inner.get("1.0", "end-1c")
+        self.top.clipboard_clear()
+        self.top.clipboard_append(content)
+
+    def _on_close(self):
+        if self._stop_event:
+            self._stop_event.set()
+        self.top.destroy()
+
+    # ── Class-level open method ──────────────────
+
+    @classmethod
+    def open(cls, parent, run_callback, accounts=None):
+        """Open the dialog (non-blocking)."""
+        dlg = cls(parent, run_callback=run_callback, accounts=accounts)
+        return dlg

@@ -39,5 +39,8 @@ nul
 user_settings.json
 account_status.json
 
+# Security - NEVER commit the encryption key
+.encryption_key
+
 # Documentation (temporary)
 implement_*.md

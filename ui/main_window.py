@@ -354,7 +354,7 @@ class MainWindow:
         )
         self.default_profile_btn.grid(row=0, column=1, sticky=EW, padx=(3, 0))
 
-        self.profile_status_var = tk.StringVar(value="Profile: Default")
+        self.profile_status_var = tk.StringVar(value="Profile: Mặc định")
         self.profile_status_lbl = ttk.Label(
             ctrl,
             textvariable=self.profile_status_var,
@@ -740,7 +740,8 @@ class MainWindow:
 
     def _refresh_profile_badge(self):
         label = self.view_model.get_performance_profile_label()
-        self.profile_status_var.set(f"Profile: {label}")
+        display = "Nhanh" if label == "Fast" else "Mặc định"
+        self.profile_status_var.set(f"Profile: {display}")
         if label == "Fast":
             self.profile_status_lbl.configure(bootstyle="inverse-success")
         else:

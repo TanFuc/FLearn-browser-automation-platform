@@ -357,24 +357,24 @@ class BotOrchestrator:
             on_log=account_logger
         )
 
-        # Check for checkpoint/disabled BEFORE checking logged out state
-        # This is important because checkpoint pages can look like login pages
-        try:
-            # We first check if the browser is already on a facebook page. If not, go to facebook.com to evaluate session.
-            current_url = driver.current_url
-            if "facebook.com" not in current_url.lower():
-                driver.get("https://www.facebook.com/")
-                time.sleep(2)
-        except Exception:
-            pass
+        # Required flow with selectable mode:
+        # - always_login_before_task=True: always login before task.
+        # - always_login_before_task=False: login only when session is expired.
+        from utils.crypto import decrypt_password, has_credentials
+        always_login = bool(getattr(settings, "always_login_before_task", True))
+        email = None
+        password = None
 
-        # CRITICAL: Check checkpoint/disabled FIRST before any login attempts
-        if automation.check_checkpoint():
-            self._log(f"[CHECKPOINT] Account {account.debugger_address} requires checkpoint/disabled!", logging.WARNING)
-            account.set_checkpoint()
-            db.record_checkpoint(account.debugger_address)
-            notifier.notify_checkpoint(account.debugger_address)
-            result = TaskResult(account=account, error="Checkpoint")
+        # Step 1: always open Facebook home first to establish session context.
+        self._log(f"[FLOW] B1: Mở fb.com cho {account.debugger_address}...")
+        try:
+            driver.get("https://fb.com/")
+            time.sleep(1.5)
+        except Exception as e:
+            error_msg = f"Không thể mở fb.com: {e}"
+            self._log(f"[ERROR] {error_msg}", logging.ERROR)
+            account.set_error(error_msg)
+            result = TaskResult(account=account, error=error_msg)
             if self._on_account_complete:
                 try:
                     self._on_account_complete(account, result)
@@ -382,43 +382,15 @@ class BotOrchestrator:
                     pass
             return result
 
-        is_logged_out = automation.check_logged_out()
-        if is_logged_out:
-            if getattr(settings, 'auto_login_enabled', False):
-                self._log(f"[WARN] {account.debugger_address} is logged out. Attempting auto-login...")
-                login_ok = self._attempt_auto_login(account, driver, automation)
-                if not login_ok:
-                    result = TaskResult(account=account, error=account.error_message or "Auto-login failed")
-                    if self._on_account_complete:
-                        try:
-                            self._on_account_complete(account, result)
-                        except Exception:
-                            pass
-                    return result
-                # Login OK - recreate automation instance and verify no checkpoint
-                automation = FacebookAutomation(
-                    driver=driver,
-                    logger=self.logger,
-                    on_log=account_logger
+        login_result = "success"
+        if always_login:
+            if not has_credentials(account):
+                error_msg = (
+                    f"Missing imported Facebook credentials for {account.debugger_address}. "
+                    f"Please save email/password before running."
                 )
-                # Post-login checkpoint check (sometimes checkpoint appears AFTER login)
-                time.sleep(1)
-                if automation.check_checkpoint():
-                    self._log(f"[CHECKPOINT] Post-login checkpoint detected for {account.debugger_address}!", logging.WARNING)
-                    account.set_checkpoint()
-                    db.record_checkpoint(account.debugger_address)
-                    notifier.notify_checkpoint(account.debugger_address)
-                    result = TaskResult(account=account, error="Checkpoint after login")
-                    if self._on_account_complete:
-                        try:
-                            self._on_account_complete(account, result)
-                        except Exception:
-                            pass
-                    return result
-            else:
-                error_msg = "Account is logged out and auto-login is disabled."
                 self._log(f"[ERROR] {error_msg}", logging.ERROR)
-                account.set_error("Logged out")
+                account.set_login_failed("Missing imported credentials")
                 result = TaskResult(account=account, error=error_msg)
                 if self._on_account_complete:
                     try:
@@ -426,6 +398,112 @@ class BotOrchestrator:
                     except Exception:
                         pass
                 return result
+
+            try:
+                email = account.fb_email
+                password = decrypt_password(account.fb_password_enc)
+            except Exception as e:
+                error_msg = f"Credential decryption failed for {account.debugger_address}: {e}"
+                self._log(f"[ERROR] {error_msg}", logging.ERROR)
+                account.set_login_failed("Credential decryption failed")
+                result = TaskResult(account=account, error=error_msg)
+                if self._on_account_complete:
+                    try:
+                        self._on_account_complete(account, result)
+                    except Exception:
+                        pass
+                return result
+
+            self._log(f"[FLOW] B2: Bắt đầu đăng nhập bắt buộc cho {account.debugger_address}...")
+            login_result = automation.perform_login(email, password)
+        else:
+            self._log(f"[FLOW] B2: Kiểm tra session hiện tại cho {account.debugger_address}...")
+            if automation.check_logged_out():
+                if not has_credentials(account):
+                    error_msg = (
+                        f"Session đã hết hạn nhưng chưa có credential import cho {account.debugger_address}."
+                    )
+                    self._log(f"[ERROR] {error_msg}", logging.ERROR)
+                    account.set_login_failed("Missing imported credentials")
+                    result = TaskResult(account=account, error=error_msg)
+                    if self._on_account_complete:
+                        try:
+                            self._on_account_complete(account, result)
+                        except Exception:
+                            pass
+                    return result
+
+                try:
+                    email = account.fb_email
+                    password = decrypt_password(account.fb_password_enc)
+                except Exception as e:
+                    error_msg = f"Credential decryption failed for {account.debugger_address}: {e}"
+                    self._log(f"[ERROR] {error_msg}", logging.ERROR)
+                    account.set_login_failed("Credential decryption failed")
+                    result = TaskResult(account=account, error=error_msg)
+                    if self._on_account_complete:
+                        try:
+                            self._on_account_complete(account, result)
+                        except Exception:
+                            pass
+                    return result
+
+                self._log(f"[FLOW] Session đã hết hạn, bắt đầu đăng nhập lại cho {account.debugger_address}...")
+                login_result = automation.perform_login(email, password)
+            else:
+                self._log(f"[FLOW] Session còn hiệu lực, bỏ qua bước đăng nhập cho {account.debugger_address}.")
+
+        if login_result != "success":
+            if login_result == "2fa":
+                account.set_checkpoint()
+                db.record_checkpoint(account.debugger_address)
+                notifier.notify_checkpoint(account.debugger_address)
+                error_msg = "Checkpoint/2FA required after login"
+            elif login_result == "disabled":
+                account.set_checkpoint()
+                db.record_checkpoint(account.debugger_address)
+                notifier.notify_checkpoint(account.debugger_address)
+                error_msg = "Account disabled"
+            elif login_result == "wrong_pass":
+                account.set_login_failed("Wrong email/password")
+                notifier.notify_login_failed(account.debugger_address, "Wrong credentials")
+                error_msg = "Wrong email/password"
+            elif login_result == "timeout":
+                account.set_error("Login timeout")
+                error_msg = "Login timeout"
+            else:
+                account.set_error(f"Login failed: {login_result}")
+                error_msg = f"Login failed: {login_result}"
+
+            self._log(f"[ERROR] B2 thất bại - đăng nhập lỗi cho {account.debugger_address}: {error_msg}", logging.ERROR)
+            result = TaskResult(account=account, error=error_msg)
+            if self._on_account_complete:
+                try:
+                    self._on_account_complete(account, result)
+                except Exception:
+                    pass
+            return result
+
+        account.set_login_success()
+        self._log(f"[FLOW] B2 OK: Đăng nhập thành công cho {account.debugger_address}")
+
+        # Re-check checkpoint after login success because some accounts redirect later.
+        time.sleep(1)
+        if automation.check_checkpoint():
+            self._log(f"[CHECKPOINT] Post-login checkpoint detected for {account.debugger_address}!", logging.WARNING)
+            account.set_checkpoint()
+            db.record_checkpoint(account.debugger_address)
+            notifier.notify_checkpoint(account.debugger_address)
+            result = TaskResult(account=account, error="Checkpoint after login")
+            if self._on_account_complete:
+                try:
+                    self._on_account_complete(account, result)
+                except Exception:
+                    pass
+            return result
+
+        self._log(f"[FLOW] B3: Chuyển sang trang group và chuẩn bị thao tác cho {account.debugger_address}...")
+        self._log(f"[FLOW] B4: Bắt đầu chạy thao tác add theo cấu hình cho {account.debugger_address}...")
 
         # Process based on task configuration
         if config:
@@ -747,8 +825,9 @@ class BotOrchestrator:
                         self.is_running = False
                     return []
 
-        # Reset daily warmup counters at start of day
-        db.reset_daily_warmup()
+        # Reset daily warmup counters once per day.
+        if db.reset_daily_warmup_if_needed():
+            self._log("Daily warmup counters reset for a new day")
 
         accounts = accounts or self.account_manager.get_all_accounts()
         batch_size = batch_size or settings.batch_size

@@ -11,7 +11,7 @@ from datetime import datetime
 from queue import Queue
 from typing import Callable, Dict, List, Optional
 
-from app.config import settings
+from app.config import settings, AppSettings
 from app.core.browser import BrowserManager
 from app.core.proxy import ProxyManager
 from app.models import Account, AccountStatus, ActionType, BatchResult, TaskConfig, TaskResult
@@ -68,6 +68,24 @@ class MainViewModel:
 
         # Message queue for thread-safe UI updates
         self.message_queue: Queue = Queue()
+
+    FAST_PROFILE_EXPECTED = {
+        "use_proxy": False,
+        "proxy_fallback_to_direct": True,
+        "disable_images": True,
+        "scroll_pause_min": 0.8,
+        "scroll_pause_max": 1.6,
+        "click_delay_min": 0.5,
+        "click_delay_max": 1.0,
+        "action_delay_min": 0.5,
+        "action_delay_max": 1.0,
+        "random_breaks_enabled": False,
+        "break_chance_percent": 0,
+        "batch_rest_min": 30,
+        "batch_rest_max": 60,
+        "rest_between_accounts": 10,
+        "always_login_before_task": False,
+    }
 
     def set_ui_callbacks(
         self,
@@ -457,6 +475,109 @@ class MainViewModel:
             settings.scroll_pause_min = min_delay
             settings.scroll_pause_max = max_delay
             self._handle_log(f"Delay cuộn trang 1 khoảng: {min_delay}-{max_delay}s")
+
+    def get_login_mode(self) -> str:
+        """
+        Get login mode.
+
+        Returns:
+            "always" for always-login mode, "session" for login-on-expired mode.
+        """
+        return "always" if settings.always_login_before_task else "session"
+
+    def set_login_mode(self, mode: str) -> None:
+        """
+        Set login mode.
+
+        Args:
+            mode: "always" or "session".
+        """
+        normalized = (mode or "").strip().lower()
+        if normalized not in {"always", "session"}:
+            return
+
+        settings.always_login_before_task = normalized == "always"
+        if settings.always_login_before_task:
+            self._handle_log("Chế độ đăng nhập: luôn đăng nhập trước mỗi lượt chạy")
+        else:
+            self._handle_log("Chế độ đăng nhập: chỉ đăng nhập khi hết session")
+
+    def apply_fast_profile(self) -> bool:
+        """
+        Apply a one-click performance preset for smoother runtime.
+
+        Returns:
+            True if profile applied and saved, False otherwise.
+        """
+        try:
+            settings.use_proxy = False
+            settings.proxy_fallback_to_direct = True
+            settings.disable_images = True
+
+            # Keep delays in valid ranges but significantly faster.
+            settings.scroll_pause_min = 0.8
+            settings.scroll_pause_max = 1.6
+            settings.click_delay_min = 0.5
+            settings.click_delay_max = 1.0
+            settings.action_delay_min = 0.5
+            settings.action_delay_max = 1.0
+
+            # Reduce artificial waiting behaviors.
+            settings.random_breaks_enabled = False
+            settings.break_chance_percent = 0
+            settings.batch_rest_min = 30
+            settings.batch_rest_max = 60
+            settings.rest_between_accounts = 10
+
+            # Reuse active sessions by default for faster runs.
+            settings.always_login_before_task = False
+
+            saved = settings.save_to_file()
+            if saved:
+                self._handle_log("Đã áp dụng Fast Profile: ưu tiên mượt, giảm độ trễ và bỏ proxy.")
+            else:
+                self._handle_log("Áp dụng Fast Profile tạm thời (chưa lưu file cài đặt).")
+            return True
+        except Exception as e:
+            self._handle_log(f"Lỗi khi áp dụng Fast Profile: {e}")
+            return False
+
+    def restore_default_profile(self) -> bool:
+        """
+        Restore performance-related settings to application defaults.
+
+        Returns:
+            True if restored and saved, False otherwise.
+        """
+        try:
+            defaults = AppSettings()
+            for key in self.FAST_PROFILE_EXPECTED:
+                if hasattr(defaults, key):
+                    setattr(settings, key, getattr(defaults, key))
+
+            saved = settings.save_to_file()
+            if saved:
+                self._handle_log("Đã khôi phục cấu hình mặc định cho chế độ chạy.")
+            else:
+                self._handle_log("Đã khôi phục mặc định tạm thời (chưa lưu file cài đặt).")
+            return True
+        except Exception as e:
+            self._handle_log(f"Lỗi khi khôi phục mặc định: {e}")
+            return False
+
+    def get_performance_profile_label(self) -> str:
+        """
+        Get current profile label for UI badge.
+
+        Returns:
+            "Fast" if fast profile is active, otherwise "Default".
+        """
+        for key, expected in self.FAST_PROFILE_EXPECTED.items():
+            if not hasattr(settings, key):
+                return "Default"
+            if getattr(settings, key) != expected:
+                return "Default"
+        return "Fast"
 
     def clear_all_proxies(self) -> None:
         """Clear proxies from all accounts."""

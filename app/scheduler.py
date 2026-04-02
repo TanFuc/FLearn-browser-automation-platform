@@ -72,6 +72,8 @@ class Scheduler:
             parts = time_str.strip().split(":")
             hour = int(parts[0])
             minute = int(parts[1]) if len(parts) > 1 else 0
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError("Hour or minute out of range")
             return (hour, minute)
         except (ValueError, IndexError):
             self.logger.warning(f"Invalid time format: {time_str}, using default")

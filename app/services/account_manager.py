@@ -69,8 +69,31 @@ class AccountManager:
             return []
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            # Use utf-8-sig to transparently handle BOM-prefixed JSON files.
+            with open(file_path, "r", encoding="utf-8-sig") as f:
+                raw_data = json.load(f)
+
+            # Support both plain list and wrapped dict formats.
+            if isinstance(raw_data, list):
+                data = raw_data
+            elif isinstance(raw_data, dict):
+                data = raw_data.get("accounts", [])
+            else:
+                self._log(
+                    f"Invalid accounts format in {file_path}: expected list or dict",
+                    logging.ERROR
+                )
+                return []
+
+            if not isinstance(data, list):
+                self._log(
+                    f"Invalid accounts payload in {file_path}: 'accounts' must be a list",
+                    logging.ERROR
+                )
+                return []
+
+            # Replace in-memory state with file content to avoid stale entries.
+            self.accounts.clear()
 
             accounts = []
             for item in data:

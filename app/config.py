@@ -166,6 +166,10 @@ class AppSettings(BaseSettings):
 
     # ========== Auto Login Settings ==========
     auto_login_enabled: bool = Field(default=True, description="Auto re-login when session expires")
+    always_login_before_task: bool = Field(
+        default=True,
+        description="Always perform login before each task (if False, login only when session expires)"
+    )
     max_login_retries: int = Field(default=2, ge=1, le=5, description="Max login attempts per session")
     login_success_wait: int = Field(default=30, ge=10, le=120, description="Seconds to wait after successful login")
     notify_on_login: bool = Field(default=True, description="Send Telegram notification on login events")

@@ -211,6 +211,14 @@ class MainWindow:
     MIN_SIDEBAR = 220
     MAX_SIDEBAR = 320
     COLS_BREAKPOINTS = {900: 2, 1200: 3, 1600: 4}  # window_width -> card columns
+    LOGIN_MODE_LABELS = {
+        "always": "Luôn đăng nhập mỗi lần chạy",
+        "session": "Chỉ đăng nhập khi hết phiên",
+    }
+    LOGIN_MODE_LABEL_TO_KEY = {
+        "Luôn đăng nhập mỗi lần chạy": "always",
+        "Chỉ đăng nhập khi hết phiên": "session",
+    }
 
     def __init__(self, view_model: MainViewModel):
         self.view_model = view_model
@@ -307,6 +315,56 @@ class MainWindow:
         self.stop_btn.pack(pady=3, fill=X)
         ToolTip(self.stop_btn, text="Dừng lại tất cả các luồng đang chạy")
 
+        ttk.Separator(ctrl).pack(fill=X, pady=6)
+
+        ttk.Label(ctrl, text="Chế độ đăng nhập:").pack(anchor=W)
+        current_mode = self.view_model.get_login_mode()
+        current_mode_label = self.LOGIN_MODE_LABELS.get(current_mode, self.LOGIN_MODE_LABELS["always"])
+        self.login_mode_var = tk.StringVar(value=current_mode_label)
+        self.login_mode_combo = ttk.Combobox(
+            ctrl,
+            textvariable=self.login_mode_var,
+            values=list(self.LOGIN_MODE_LABELS.values()),
+            state="readonly",
+            width=28
+        )
+        self.login_mode_combo.pack(fill=X, pady=(2, 0))
+        self.login_mode_combo.bind("<<ComboboxSelected>>", self._on_login_mode_change)
+        ToolTip(self.login_mode_combo, text="Chọn cách hệ thống xử lý bước đăng nhập trước khi vào group")
+
+        profile_btn_row = ttk.Frame(ctrl)
+        profile_btn_row.pack(fill=X, pady=(6, 0))
+        profile_btn_row.columnconfigure(0, weight=1)
+        profile_btn_row.columnconfigure(1, weight=1)
+
+        self.fast_profile_btn = ttk.Button(
+            profile_btn_row,
+            text="⚡ Fast Profile",
+            bootstyle="outline-info",
+            command=self._on_apply_fast_profile
+        )
+        self.fast_profile_btn.grid(row=0, column=0, sticky=EW, padx=(0, 3))
+        ToolTip(self.fast_profile_btn, text="Áp preset nhanh: tắt proxy, giảm delay, ưu tiên mượt")
+
+        self.default_profile_btn = ttk.Button(
+            profile_btn_row,
+            text="↺ Khôi phục mặc định",
+            bootstyle="outline-secondary",
+            command=self._on_restore_default_profile
+        )
+        self.default_profile_btn.grid(row=0, column=1, sticky=EW, padx=(3, 0))
+
+        self.profile_status_var = tk.StringVar(value="Profile: Default")
+        self.profile_status_lbl = ttk.Label(
+            ctrl,
+            textvariable=self.profile_status_var,
+            bootstyle="inverse-secondary",
+            padding=(6, 3),
+            font=("Helvetica", 9, "bold")
+        )
+        self.profile_status_lbl.pack(fill=X, pady=(6, 0))
+        self._refresh_profile_badge()
+
         ttk.Separator(sb).pack(fill=X, pady=5, padx=10)
 
         # ── Auto Loop ──
@@ -351,51 +409,10 @@ class MainWindow:
 
         ttk.Separator(acc).pack(fill=X, pady=6)
 
-        ttk.Button(acc, text="🏥 Kiểm Tra Trạng Thái",   bootstyle="outline-info",
-                   command=self._on_health_check).pack(fill=X, pady=2)
         ttk.Button(acc, text="🔄 Reset Lỗi Đỏ",   bootstyle="outline-warning",
                    command=self._on_reset_errors).pack(fill=X, pady=2)
         ttk.Button(acc, text="🔄 Reset Checkpoint", bootstyle="outline-warning",
                    command=self._on_reset_checkpoints).pack(fill=X, pady=2)
-
-        ttk.Separator(sb).pack(fill=X, pady=5, padx=10)
-
-        # ── Quick Test (Test Any Chrome) ──
-        test = ttk.Labelframe(sb, text=" Test Nhanh Chrome ", padding=10)
-        test.pack(fill=X, padx=10, pady=5)
-
-        test.columnconfigure(1, weight=1)
-
-        ttk.Label(test, text="Địa chỉ:", font=("Helvetica", 9)).grid(row=0, column=0, sticky=W, pady=3)
-        self.test_addr_var = tk.StringVar(value="127.0.0.1:9222")
-        self.test_addr_entry = ttk.Entry(test, textvariable=self.test_addr_var, width=16)
-        self.test_addr_entry.grid(row=0, column=1, sticky=EW, padx=(5, 0), pady=3)
-        ToolTip(self.test_addr_entry, text="Nhập địa chỉ Chrome (host:port)")
-
-        self.quick_test_btn = ttk.Button(
-            test, text="🧪 Đăng Nhập",
-            bootstyle="outline-info",
-            command=self._on_quick_test_login
-        )
-        self.quick_test_btn.grid(row=1, column=0, columnspan=2, sticky=EW, pady=(5, 0))
-        ToolTip(self.quick_test_btn, text="Đăng nhập tự động cho Chrome (cần lưu mật khẩu)")
-
-        self.open_any_btn = ttk.Button(
-            test, text="🌐 Mở Trình Duyệt",
-            bootstyle="outline-primary",
-            command=self._on_open_any_chrome
-        )
-        self.open_any_btn.grid(row=2, column=0, columnspan=2, sticky=EW, pady=(3, 0))
-        ToolTip(self.open_any_btn, text="Bật trình duyệt cho chrome này")
-
-        self.test_feature_btn = ttk.Button(
-            test, text="🔬 Chức Năng Test…",
-            bootstyle="outline-warning",
-            command=self._on_test_feature
-        )
-        self.test_feature_btn.grid(row=3, column=0, columnspan=2, sticky=EW, pady=(3, 0))
-        ToolTip(self.test_feature_btn,
-                text="Mở cửa sổ test nhanh chức năng lẻ")
 
         ttk.Separator(sb).pack(fill=X, pady=5, padx=10)
 
@@ -689,6 +706,45 @@ class MainWindow:
 
     def _on_auto_loop_toggle(self):
         self.view_model.set_auto_loop_enabled(self.auto_loop_var.get())
+
+    def _on_login_mode_change(self, _event=None):
+        label = self.login_mode_var.get().strip()
+        mode = self.LOGIN_MODE_LABEL_TO_KEY.get(label, "always")
+        self.view_model.set_login_mode(mode)
+
+    def _on_apply_fast_profile(self):
+        if self.view_model.apply_fast_profile():
+            current_mode = self.view_model.get_login_mode()
+            self.login_mode_var.set(self.LOGIN_MODE_LABELS.get(current_mode, self.LOGIN_MODE_LABELS["always"]))
+            self.auto_loop_var.set(self.view_model.get_auto_loop_enabled())
+            self.loop_interval_var.set(str(self.view_model.get_auto_loop_interval()))
+            self.concurrent_var.set(str(self.view_model.get_concurrent_browsers()))
+            self.task_max_count_var.set(str(self.view_model.get_max_clicks()))
+            self._refresh_profile_badge()
+            Messagebox.show_info(
+                "Đã áp dụng Fast Profile.\n\n"
+                "Lưu ý: preset này tối ưu tốc độ và độ mượt, không đảm bảo vượt checkpoint.",
+                "Fast Profile"
+            )
+        else:
+            Messagebox.show_error("Không thể áp dụng Fast Profile. Xem log để biết chi tiết.", "Lỗi")
+
+    def _on_restore_default_profile(self):
+        if self.view_model.restore_default_profile():
+            current_mode = self.view_model.get_login_mode()
+            self.login_mode_var.set(self.LOGIN_MODE_LABELS.get(current_mode, self.LOGIN_MODE_LABELS["always"]))
+            self._refresh_profile_badge()
+            Messagebox.show_info("Đã khôi phục cấu hình mặc định.", "Khôi phục mặc định")
+        else:
+            Messagebox.show_error("Không thể khôi phục mặc định. Xem log để biết chi tiết.", "Lỗi")
+
+    def _refresh_profile_badge(self):
+        label = self.view_model.get_performance_profile_label()
+        self.profile_status_var.set(f"Profile: {label}")
+        if label == "Fast":
+            self.profile_status_lbl.configure(bootstyle="inverse-success")
+        else:
+            self.profile_status_lbl.configure(bootstyle="inverse-secondary")
 
     def _on_start_loop(self):
         if hasattr(self, "_loop_running") and self._loop_running:
@@ -1187,8 +1243,10 @@ class MainWindow:
         if hasattr(self, "test_login_btn"):
             self.test_login_btn.configure(state=NORMAL, text="🧪 Đăng Nhập")
         if is_quick:
-            self.quick_test_btn.configure(state=NORMAL, text="🧪 Đăng Nhập")
-            self.open_any_btn.configure(state=NORMAL)
+            if hasattr(self, "quick_test_btn"):
+                self.quick_test_btn.configure(state=NORMAL, text="🧪 Đăng Nhập")
+            if hasattr(self, "open_any_btn"):
+                self.open_any_btn.configure(state=NORMAL)
 
         self._log_message(f"[TEST LOGIN] {account.display_name}: {status}")
 

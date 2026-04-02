@@ -410,9 +410,13 @@ class FacebookAutomation:
             self._log(f"Navigating to: {members_url}")
 
             self.driver.get(members_url)
-
-            # Wait for page to load properly
-            time.sleep(4)
+            try:
+                WebDriverWait(self.driver, 8).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
+                )
+            except Exception:
+                pass
+            time.sleep(1.0)
 
             # Verify navigation succeeded
             current_url = self.driver.current_url
@@ -430,7 +434,13 @@ class FacebookAutomation:
                 if "/members" not in current_url.lower():
                     self._log("Thử điều hướng lại vào trang thành viên...")
                     self.driver.get(members_url)
-                    time.sleep(3)
+                    try:
+                        WebDriverWait(self.driver, 6).until(
+                            lambda d: d.execute_script("return document.readyState") == "complete"
+                        )
+                    except Exception:
+                        pass
+                    time.sleep(0.8)
                     current_url = self.driver.current_url
                     self._log(f"Current URL after retry: {current_url}")
 
@@ -695,12 +705,18 @@ class FacebookAutomation:
             "timeout"    - Timeout, result uncertain
             "error"      - Unknown error occurred
         """
-        self._log("Attempting auto-login to Facebook...")
+        self._log("[FLOW] B2: Thực hiện đăng nhập Facebook (fb.com -> điền tài khoản/mật khẩu)...")
 
         try:
-            # Step 1: Navigate to login page
-            self.driver.get("https://www.facebook.com/login")
-            time.sleep(random.uniform(2.0, 3.5))
+            # Step 1: Navigate to fb.com first (required entry point)
+            self.driver.get("https://fb.com/")
+            time.sleep(random.uniform(1.2, 2.2))
+
+            # If login form is not present, force explicit login page.
+            email_candidates = self.driver.find_elements(By.XPATH, '//input[@id="email" or @name="email"]')
+            if not email_candidates:
+                self.driver.get("https://www.facebook.com/login")
+                time.sleep(random.uniform(1.5, 3.0))
 
             # Step 2: Find and fill email field
             email_field = self._wait_for_element(
@@ -744,7 +760,7 @@ class FacebookAutomation:
             self._log("Clicked login button, waiting for result...")
 
             # Step 5: Wait and check result (with retry for slow loading)
-            time.sleep(random.uniform(3.0, 5.0))
+            time.sleep(random.uniform(2.0, 3.5))
 
             # Retry check a few times for slow connections
             for check_attempt in range(3):
@@ -841,31 +857,49 @@ class FacebookAutomation:
         """
         buttons = []
         try:
-            # Method 1: Find by exact aria-label (most reliable)
-            for pattern in self.ADD_FRIEND_PATTERNS:
-                xpath = f'//div[@aria-label="{pattern}" and @role="button"]'
-                elements = self.driver.find_elements(By.XPATH, xpath)
-                buttons.extend(elements)
-
-            # Method 2: Find by text content with exact match (avoid partial matches)
-            for pattern in self.ADD_FRIEND_PATTERNS:
-                xpath = f'//span[text()="{pattern}"]/ancestor::div[@role="button"]'
-                elements = self.driver.find_elements(By.XPATH, xpath)
-                buttons.extend(elements)
-
-            # Method 3: Facebook-specific selector for member list add friend buttons.
-            # IMPORTANT: Use exact text match for Vietnamese patterns to avoid matching
-            # "Hủy lời mời bạn bè" (Cancel friend invite) which also contains "bạn bè".
-            # The not() guard explicitly excludes any button whose aria-label starts with "Hủy".
-            specific_xpath = (
-                '//div[contains(@class, "x1yztbdb")]//div[@role="button"]'
-                '[not(contains(@aria-label, "Hủy")) and not(contains(@aria-label, "Cancel"))]'
-                '[.//span[contains(text(), "Add") and contains(text(), "riend")] or '
-                './/span[text()="Thêm bạn bè" or text()="Thêm bạn" or text()="Kết bạn" or text()="Thêm làm bạn"] or '
-                './/span[text()="Add friend" or text()="Add Friend" or text()="Add as friend"]]'
+            # Method 1: Flexible aria-label matching for dynamic labels like
+            # "Add friend John Doe" or "Thêm bạn bè Nguyễn Văn A".
+            aria_xpath = (
+                '//*[@role="button" or self::button]'
+                '[not(@aria-disabled="true") and not(@disabled)]'
+                '[('
+                'contains(translate(normalize-space(@aria-label), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "add friend") '
+                'or contains(translate(normalize-space(@aria-label), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "add as friend") '
+                'or contains(normalize-space(@aria-label), "Thêm bạn") '
+                'or contains(normalize-space(@aria-label), "Thêm bạn bè") '
+                'or contains(normalize-space(@aria-label), "Kết bạn") '
+                ')]'
+                '[not(contains(translate(normalize-space(@aria-label), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "cancel"))]'
+                '[not(contains(translate(normalize-space(@aria-label), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "revoke"))]'
+                '[not(contains(normalize-space(@aria-label), "Hủy"))]'
+                '[not(contains(normalize-space(@aria-label), "Thu hồi"))]'
             )
-            elements = self.driver.find_elements(By.XPATH, specific_xpath)
-            buttons.extend(elements)
+            buttons.extend(self.driver.find_elements(By.XPATH, aria_xpath))
+
+            # Method 2: Text-based matching on visible button labels.
+            text_xpath = (
+                '//*[(self::div and @role="button") or self::button]'
+                '[not(@aria-disabled="true") and not(@disabled)]'
+                '[.//span[contains(translate(normalize-space(text()), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "add friend") '
+                'or contains(translate(normalize-space(text()), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "add as friend") '
+                'or normalize-space(text())="Thêm bạn bè" '
+                'or normalize-space(text())="Thêm bạn" '
+                'or normalize-space(text())="Kết bạn" '
+                'or normalize-space(text())="Thêm làm bạn"]]'
+            )
+            buttons.extend(self.driver.find_elements(By.XPATH, text_xpath))
+
+            # Method 3: Group member card scoped selector for better precision.
+            card_xpath = (
+                '//div[contains(@class, "x1yztbdb") or contains(@class, "x1n2onr6")]'
+                '//*[(self::div and @role="button") or self::button]'
+                '[not(@aria-disabled="true") and not(@disabled)]'
+                '[not(contains(normalize-space(@aria-label), "Hủy")) and not(contains(normalize-space(@aria-label), "Thu hồi"))]'
+                '[.//span[contains(translate(normalize-space(text()), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "add") '
+                'or contains(normalize-space(text()), "Thêm") '
+                'or contains(normalize-space(text()), "Kết bạn")]]'
+            )
+            buttons.extend(self.driver.find_elements(By.XPATH, card_xpath))
 
         except Exception as e:
             self.logger.debug(f"Error finding buttons: {e}")
@@ -1200,6 +1234,7 @@ class FacebookAutomation:
                 result.error = "No group URL"
                 return result
 
+            self._log("[FLOW] B3: Điều hướng sang group members...")
             if not self.navigate_to_group(account.group_url):
                 account.set_error("Navigation failed")
                 result.error = "Navigation failed"
@@ -1212,6 +1247,7 @@ class FacebookAutomation:
                 return result
 
             # Scroll and invite with daily limit
+            self._log("[FLOW] B4: Bắt đầu add friend...")
             scrolls, invites = self.scroll_and_invite(daily_remaining=daily_remaining)
 
             # Update result
@@ -1766,12 +1802,13 @@ class FacebookAutomation:
                     result.error = "No group URL"
                     return result
 
-                self._log(f"Navigating to group: {target_url}")
+                self._log(f"[FLOW] B3: Điều hướng sang group members: {target_url}")
                 if not self.navigate_to_group(target_url):
                     account.set_error("Navigation failed")
                     result.error = "Navigation failed"
                     return result
 
+                self._log("[FLOW] B4: Bắt đầu add friend...")
                 scrolls, invites = self.scroll_and_invite(
                     max_clicks=task_config.max_count,
                     daily_remaining=daily_remaining

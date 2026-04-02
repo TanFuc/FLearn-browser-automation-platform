@@ -38,10 +38,11 @@ class Database:
             db_path: Path to database file.
             logger: Optional logger instance.
         """
-        self.db_path = db_path or Path("fb_auto_invite.db")
+        self.db_path = db_path or settings.database_file
         self.logger = logger or logging.getLogger(__name__)
         self.conn: Optional[sqlite3.Connection] = None
         self._lock = threading.Lock()
+        self._last_warmup_reset_date: Optional[date] = None
         self._init_db()
 
     def _init_db(self) -> None:
@@ -56,6 +57,9 @@ class Database:
 
     def _create_tables(self) -> None:
         """Create required database tables."""
+        if not self.conn:
+            raise RuntimeError("Database connection is not initialized")
+
         cursor = self.conn.cursor()
 
         # Invite history table
@@ -276,6 +280,27 @@ class Database:
             cursor = self.conn.cursor()
             cursor.execute("UPDATE warmup_status SET invites_today = 0")
             self.conn.commit()
+
+    def reset_daily_warmup_if_needed(self) -> bool:
+        """
+        Reset warmup counters at most once per calendar day.
+
+        Returns:
+            True if reset was executed, False if already reset today.
+        """
+        today = date.today()
+        with self._lock:
+            if self._last_warmup_reset_date == today:
+                return False
+
+            if not self.conn:
+                return False
+
+            cursor = self.conn.cursor()
+            cursor.execute("UPDATE warmup_status SET invites_today = 0")
+            self.conn.commit()
+            self._last_warmup_reset_date = today
+            return True
 
     def record_checkpoint(self, account_address: str) -> None:
         """

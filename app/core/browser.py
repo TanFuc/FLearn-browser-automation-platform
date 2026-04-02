@@ -321,23 +321,12 @@ class BrowserManager:
             driver = webdriver.Chrome(service=service, options=options)
             self.drivers[port] = driver
 
-            # Cleanup extra windows (like New Tab from crash restore) and maximize
+            # Avoid closing windows on attach because some Chrome sessions expose
+            # transient handles and closing them can invalidate the active target.
             try:
                 handles = driver.window_handles
-                if len(handles) > 1:
-                    current_handle = driver.current_window_handle
-                    for handle in handles:
-                        if handle != current_handle:
-                            try:
-                                driver.switch_to.window(handle)
-                                driver.close()
-                            except Exception:
-                                pass
-                    # Switch back to the attached handle
-                    try:
-                        driver.switch_to.window(current_handle)
-                    except Exception:
-                        pass
+                if handles:
+                    driver.switch_to.window(handles[0])
             except Exception as e:
                 self.logger.debug(f"Error checking window handles on port {port}: {e}")
 

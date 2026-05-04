@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Research Dashboard — FAuto</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="research.css">
+</head>
+<body>
+<div class="layout">
+
+<!-- Sidebar -->
+<nav class="sidebar">
+    <div class="sidebar-brand">
+        <h2>🔬 AI Research</h2>
+        <p>Intelligence Dashboard</p>
+    </div>
+    <div class="nav-section">Nghiên Cứu</div>
+    <div class="nav-item active" data-page="mmo" onclick="switchPage('mmo',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <span>MMO / Affiliate</span>
+    </div>
+    <div class="nav-item" data-page="ai" onclick="switchPage('ai',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+        <span>AI Tools Market</span>
+    </div>
+    <div class="nav-item" data-page="suggest" onclick="switchPage('suggest',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span>Gợi Ý AI</span>
+    </div>
+    <div class="nav-section">Hệ Thống</div>
+    <div class="nav-item" data-page="quota" onclick="switchPage('quota',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span>Quota Monitor</span>
+    </div>
+    <div class="back-link" onclick="window.location='/'">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+        <span>Dashboard chính</span>
+    </div>
+</nav>
+
+<!-- Main content -->
+<main class="main">
+
+    <!-- Quota status bar (always visible) -->
+    <div class="quota-bar" id="quotaBar">
+        <div class="quota-item">Requests hôm nay: <span id="qReq">—</span></div>
+        <div class="quota-item">Soft cap: <span id="qSoft">20</span></div>
+        <div class="quota-item">Hard cap: <span id="qHard">30</span></div>
+        <div class="quota-item">Tokens: <span id="qTokens">—</span></div>
+        <div class="quota-item">Cache hits: <span id="qCache">—</span></div>
+        <div class="progress-wrap">
+            <span style="font-size:0.78rem;color:var(--muted);">Quota:</span>
+            <div class="progress-bar"><div class="progress-fill" id="quotaFill" style="width:0%"></div></div>
+            <span id="quotaPct" style="font-size:0.78rem;">0%</span>
+        </div>
+    </div>
+
+    <div id="alertBanner"></div>
+
+    <!-- ═══ PAGE 1: MMO ═══ -->
+    <div id="page-mmo" class="page-tabs active">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>⚡ MMO / Affiliate Intelligence</h1>
+                <p id="mmoUpdated">Đang tải dữ liệu...</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="exportCSV('mmo')">⬇ Export CSV</button>
+                <button class="btn btn-primary btn-sm" id="mmoRefreshBtn" onclick="refreshPage('mmo')">↺ Refresh AI</button>
+            </div>
+        </div>
+
+        <!-- Top cards -->
+        <div class="cards-grid" id="mmoTopCards"></div>
+
+        <!-- Table -->
+        <div class="table-wrap">
+            <div class="table-toolbar">
+                <input class="search-input" id="mmoSearch" placeholder="🔍 Tìm cơ hội..." oninput="filterMMO()">
+                <select class="filter-select" id="mmoCategoryFilter" onchange="filterMMO()">
+                    <option value="">Tất cả Niche</option>
+                </select>
+                <select class="filter-select" id="mmoSortFilter" onchange="filterMMO()">
+                    <option value="trend">Sắp xếp: Trend</option>
+                    <option value="monetization">Sắp xếp: Monetization</option>
+                    <option value="competition">Sắp xếp: Competition</option>
+                </select>
+                <span id="mmoCount" style="font-size:0.8rem;color:var(--muted);margin-left:auto;"></span>
+            </div>
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead><tr>
+                        <th>Cơ Hội</th>
+                        <th>Niche</th>
+                        <th onclick="sortMMO('trend')">Trend ↕</th>
+                        <th onclick="sortMMO('monetization')">Monetize ↕</th>
+                        <th onclick="sortMMO('competition')">Cạnh Tranh ↕</th>
+                        <th>Traffic</th>
+                        <th>Mô Hình</th>
+                    </tr></thead>
+                    <tbody id="mmoTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ PAGE 2: AI TOOLS ═══ -->
+    <div id="page-ai" class="page-tabs">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>🤖 AI Market & Tool Intelligence</h1>
+                <p id="aiUpdated">Đang tải dữ liệu...</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="exportCSV('ai')">⬇ Export CSV</button>
+                <button class="btn btn-primary btn-sm" id="aiRefreshBtn" onclick="refreshPage('ai_tools')">↺ Refresh AI</button>
+            </div>
+        </div>
+
+        <!-- Highlights -->
+        <div class="cards-grid" id="aiTopCards"></div>
+
+        <!-- Table -->
+        <div class="table-wrap">
+            <div class="table-toolbar">
+                <input class="search-input" id="aiSearch" placeholder="🔍 Tìm công cụ AI..." oninput="filterAI()">
+                <select class="filter-select" id="aiTypeFilter" onchange="filterAI()">
+                    <option value="">Tất cả loại</option>
+                    <option value="code">Code</option>
+                    <option value="video">Video</option>
+                    <option value="writing">Writing</option>
+                    <option value="automation">Automation</option>
+                    <option value="image">Image</option>
+                </select>
+                <select class="filter-select" id="aiPriceFilter" onchange="filterAI()">
+                    <option value="">Tất cả giá</option>
+                    <option value="free">Free</option>
+                    <option value="freemium">Freemium</option>
+                    <option value="paid">Paid</option>
+                </select>
+                <label style="font-size:0.8rem;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;">
+                    <input type="checkbox" id="aiBestValue" onchange="filterAI()"> Chỉ Best Value
+                </label>
+                <span id="aiCount" style="font-size:0.8rem;color:var(--muted);margin-left:auto;"></span>
+            </div>
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead><tr>
+                        <th>Công Cụ</th>
+                        <th>Loại</th>
+                        <th>Giá</th>
+                        <th>Status</th>
+                        <th>Use Case</th>
+                        <th>Tín Hiệu</th>
+                        <th>Value</th>
+                    </tr></thead>
+                    <tbody id="aiTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ PAGE 3: SUGGESTIONS ═══ -->
+    <div id="page-suggest" class="page-tabs">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>💡 Gợi Ý AI</h1>
+                <p id="suggestUpdated">Đang tải dữ liệu...</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-primary btn-sm" id="suggestRefreshBtn" onclick="refreshPage('suggestions')">↺ Refresh AI</button>
+            </div>
+        </div>
+        <div id="suggestList"></div>
+    </div>
+
+    <!-- ═══ PAGE 4: QUOTA ═══ -->
+    <div id="page-quota" class="page-tabs">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>📊 Quota & Usage Monitor</h1>
+                <p>Theo dõi sử dụng API Gemini, bảo vệ free-tier</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-danger btn-sm" onclick="resetQuota()">⚠ Reset Quota</button>
+                <button class="btn btn-primary btn-sm" onclick="runDailyJob()">▶ Run Daily Job</button>
+            </div>
+        </div>
+
+        <div id="quotaAlertFull"></div>
+        <div class="usage-grid" id="usageGrid"></div>
+
+        <div class="table-wrap" style="margin-top:24px;">
+            <div class="table-toolbar"><b style="font-size:0.85rem;">📋 Recent API Calls</b></div>
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead><tr>
+                        <th>Model</th><th>Prompt Tokens</th><th>Output Tokens</th><th>Total</th><th>Cache</th><th>Endpoint</th><th>Thời Gian</th>
+                    </tr></thead>
+                    <tbody id="recentCallsBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</main>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="research.js"></script>
+</body>
+</html>

@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAuto - Hệ Thống Tự Động Kết Bạn</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">
+                    <span class="f-letter">F</span>
+                </div>
+                <h2><span class="brand-f">F</span>Auto</h2>
+            </div>
+            <nav class="mobile-scroll">
+                <a href="#" class="nav-item active" data-tab="dashboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span>Bảng Điều Khiển</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="accounts">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                    <span>Quản Lý Tài Khoản</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <span>Cài Đặt Hệ Thống</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="logs">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    <span>Nhật Ký Hoạt Động</span>
+                </a>
+            </nav>
+                <div style="padding: 12px; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);">
+                    <a href="/research.html" target="_blank" style="display:flex; align-items:center; gap:8px; padding:10px 12px; background:rgba(99,102,241,0.12); border:1px solid rgba(99,102,241,0.25); border-radius:8px; color:#818cf8; font-size:0.82rem; font-weight:600; text-decoration:none; transition:all 0.2s;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3"/></svg>
+                        🔬 AI Research
+                    </a>
+                </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header>
+                <div>
+                    <h1>Trung Tâm Điều Khiển</h1>
+                    <p class="header-subtitle">Quản lý và theo dõi các chiến dịch tự động kết bạn.</p>
+                </div>
+                <div class="status-badge online">Hệ Thống Đang Chạy</div>
+            </header>
+
+            <div class="content-wrapper">
+                <!-- Dashboard Tab -->
+                <div id="dashboard-tab" class="tab-pane active">
+                    <div class="grid-2-col top-grid">
+                        <!-- Task Runner Card -->
+                        <div class="card glass-card shadow-effect">
+                            <div class="card-header">
+                                <h3>Khởi Chạy Chiến Dịch Mới</h3>
+                            </div>
+                            <form id="run-task-form">
+                                <div class="form-group">
+                                    <label>Chọn Tài Khoản</label>
+                                    <div class="custom-multiselect" id="accountMultiselect">
+                                        <div class="multiselect-header" onclick="toggleMultiselect()">
+                                            <span id="multiselect-selected-text">-- Chọn tài khoản --</span>
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                        </div>
+                                        <div class="multiselect-options" id="multiselect-options">
+                                            <!-- Khởi tạo bằng JS -->
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="taskType">Loại Chiến Dịch</label>
+                                    <select id="taskType" name="taskType" class="form-control" style="background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 12px; border-radius: var(--radius-md); width: 100%;" onchange="toggleTaskTypeUI()">
+                                        <option value="invite">Kết Bạn Tự Động (Group Members)</option>
+                                        <option value="unfollow">Hủy Theo Dõi (Unfollow Bạn Bè)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="groupUrlContainer">
+                                    <label for="groupUrl">URL Group Đích</label>
+                                    <input type="url" id="groupUrl" name="groupUrl" placeholder="https://www.facebook.com/groups/YOUR_GROUP_ID/members" required>
+                                </div>
+                                <div class="form-group" id="unfollowOptionsContainer" style="display: none;">
+                                    <label for="maxUnfollow">Số Lượng Hủy Theo Dõi Tối Đa (Để 0 là Hủy Tất Cả)</label>
+                                    <input type="number" id="maxUnfollow" name="maxUnfollow" placeholder="Nhập số lượng, ví dụ: 50" min="0" value="0">
+                                </div>
+                                <div class="form-actions mt-auto" style="display: flex; flex-direction: column; gap: 10px;">
+                                    <button type="submit" class="btn btn-primary full-width" id="btnRun">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                        Bắt Đầu Chạy
+                                    </button>
+                                    <div id="control-buttons" style="display: none; gap: 10px;">
+                                        <button type="button" class="btn full-width" id="btnPause" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3);">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                                            Tạm Dừng
+                                        </button>
+                                        <button type="button" class="btn full-width" id="btnResume" style="background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); display: none;">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                            Tiếp Tục
+                                        </button>
+                                        <button type="button" class="btn full-width" id="btnStop" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3);">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                                            Dừng Hẳn
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Stats Card -->
+                        <div class="card glass-card shadow-effect stats-card">
+                            <div class="card-header">
+                                <h3>Thống Kê Phiên Làm Việc</h3>
+                            </div>
+                            <div class="stats-grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
+                                <div class="stat-box">
+                                    <span class="stat-label">Hàng Đợi</span>
+                                    <span class="stat-value text-gradient-warning" id="stat-queued">0</span>
+                                </div>
+                                <div class="stat-box">
+                                    <span class="stat-label">Đang Chạy</span>
+                                    <span class="stat-value text-gradient-primary" id="stat-active">0</span>
+                                </div>
+                                <div class="stat-box">
+                                    <span class="stat-label">Lời Mời Đã Gửi</span>
+                                    <span class="stat-value text-gradient-success" id="stat-sent">0</span>
+                                </div>
+                                <div class="stat-box">
+                                    <span class="stat-label">Đã Hủy Theo Dõi</span>
+                                    <span class="stat-value text-gradient-error" id="stat-unfollows">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Logs Terminal on Dashboard -->
+                    <div class="card terminal-card shadow-effect mt-4">
+                        <div class="terminal-header">
+                            <div class="terminal-dots">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <div class="terminal-title">Nhật Ký Hoạt Động (Live)</div>
+                            <button id="btnDashboardClearLogs" class="btn-icon" title="Xoá Nhật Ký">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            </button>
+                        </div>
+                        <div class="terminal-body" id="live-logs-container" style="max-height: 400px; overflow-y: auto;">
+                            <div class="log-line system"><span class="log-time">[Hệ thống]</span> <span class="log-msg">Khởi tạo thành công. Đang chờ tác vụ...</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs Tab -->
+                <div id="logs-tab" class="tab-pane">
+                    <div class="card terminal-card shadow-effect" style="height: calc(100vh - 120px); display: flex; flex-direction: column;">
+                        <div class="terminal-header">
+                            <div class="terminal-dots">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <div class="terminal-title">Toàn Bộ Nhật Ký Hệ Thống (Lưu Trữ Vĩnh Viễn)</div>
+                            <button id="btnClearLogs" class="btn-icon" title="Xoá Nhật Ký Khỏi Màn Hình">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            </button>
+                        </div>
+                        <div class="terminal-body" id="logs-container" style="flex: 1; overflow-y: auto;">
+                            <div class="log-line system"><span class="log-time">[Hệ thống]</span> <span class="log-msg">Đang tải lịch sử logs...</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings Tab -->
+                <div id="settings-tab" class="tab-pane">
+                    <div class="card glass-card shadow-effect">
+                        <div class="card-header">
+                            <h3 style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
+                                Cấu Hình Bot Tự Động
+                                <button type="button" id="btnNaturalConfig" style="font-size:0.8rem; padding: 6px 12px; background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px; cursor:pointer; display:flex; gap:6px; align-items:center; transition:var(--transition);">
+                                    <span>🔮</span> Tự Động Gợi Ý Độ Trễ
+                                </button>
+                            </h3>
+                            <p class="subtitle" style="margin-top: 8px;">Những cấu hình này sẽ tự động áp dụng cho mọi chiến dịch ngay lập tức.</p>
+                        </div>
+                        
+                        <form id="settings-form">
+                            <div class="grid-2-col settings-grid">
+                                <div class="form-section">
+                                    <h4 class="section-title">Giới Hạn Tác Vụ</h4>
+                                    <div class="form-group-row">
+                                        <div class="form-group">
+                                            <label for="maxScrolls">Số Lượt Cuộn Tối Đa</label>
+                                            <input type="number" id="maxScrolls" name="maxScrolls" min="1" value="20">
+                                            <span class="field-hint">Tránh bị đánh dấu là spam</span>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="maxClicks">Số Lời Mời Tối Đa</label>
+                                            <input type="number" id="maxClicks" name="maxClicks" min="1" value="50">
+                                            <span class="field-hint">Mỗi lần chạy bot</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-section">
+                                    <h4 class="section-title">Độ Trễ Phỏng Theo Người Thật</h4>
+                                    <div class="form-group-row">
+                                        <div class="form-group">
+                                            <label for="delayMin">Delay Giữa Các Lần Bấm (Từ ms)</label>
+                                            <input type="number" id="delayMin" name="delayMin" min="100" value="1000">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="delayMax">Đến (ms)</label>
+                                            <input type="number" id="delayMax" name="delayMax" min="100" value="3000">
+                                        </div>
+                                    </div>
+                                    <div class="form-group-row">
+                                        <div class="form-group">
+                                            <label for="scrollPauseMin">Thời Gian Chờ Cuộn Trang (Từ ms)</label>
+                                            <input type="number" id="scrollPauseMin" name="scrollPauseMin" min="100" value="2000">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="scrollPauseMax">Đến (ms)</label>
+                                            <input type="number" id="scrollPauseMax" name="scrollPauseMax" min="100" value="5000">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section filter-section mt-4">
+                                <h4 class="section-title">Bộ Lọc Thông Minh (Smart Filters)</h4>
+                                <div class="checkbox-wrapper">
+                                    <div class="checkbox-group">
+                                        <label class="custom-checkbox">
+                                            <input type="checkbox" id="skipAdmins" name="skipAdmins" checked>
+                                            <span class="checkmark"></span>
+                                            <span class="checkbox-label">Bỏ qua Quản Trị Viên & Người Kiểm Duyệt</span>
+                                        </label>
+                                    </div>
+                                    <div class="checkbox-group">
+                                        <label class="custom-checkbox">
+                                            <input type="checkbox" id="skipVerified" name="skipVerified" checked>
+                                            <span class="checkmark"></span>
+                                            <span class="checkbox-label">Bỏ qua Tài Khoản Đã Xác Minh (Tích xanh)</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-actions form-footer">
+                                <button type="submit" class="btn btn-primary btn-large" id="btnSaveSettings">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                                    Lưu Cấu Hình
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Accounts Tab -->
+                <div id="accounts-tab" class="tab-pane">
+                    <div class="card glass-card shadow-effect">
+                        <div class="card-header">
+                            <h3>Quản Lý Tài Khoản</h3>
+                            <p class="subtitle">Thêm mới và theo dõi trạng thái các tài khoản Facebook.</p>
+                        </div>
+                        
+                        <form id="add-account-form" style="margin-bottom: 30px;">
+                            <div class="grid-2-col">
+                                <div class="form-group">
+                                    <label for="newAccountId">ID Tài Khoản (Bắt buộc) <span id="generate-id-btn" title="Tạo ID ngẫu nhiên" style="color:var(--primary); cursor:pointer; float:right; font-size:0.85rem; display:flex; align-items:center; gap:4px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.21l5.67-5.67"/></svg> Tạo Tự Động</span></label>
+                                    <input type="text" id="newAccountId" placeholder="Ví dụ: acc_01" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="newAccountName">Tên Hiển Thị (Tùy chọn)</label>
+                                    <input type="text" id="newAccountName" placeholder="Ví dụ: Nguyễn Văn A">
+                                </div>
+                            </div>
+                            <div class="grid-2-col">
+                                <div class="form-group">
+                                    <label for="newAccountProxy">Proxy (Tuỳ chọn)</label>
+                                    <input type="text" id="newAccountProxy" placeholder="http://user:pass@ip:port">
+                                </div>
+                            <div class="grid-2-col">
+                                <div class="form-group">
+                                    <label for="newAccountEmail">Email / UID (Để Auto Login)</label>
+                                    <input type="text" id="newAccountEmail" placeholder="Nhập Email hoặc UID">
+                                </div>
+                                <div class="form-group">
+                                    <label for="newAccountPassword">Mật khẩu Facebook</label>
+                                    <div class="password-wrapper">
+                                        <input type="password" id="newAccountPassword" placeholder="Nhập Mật khẩu">
+                                        <button type="button" id="togglePasswordBtn" class="toggle-password-btn" title="Hiện mật khẩu">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="grid-2-col">
+                                <div class="form-group">
+                                    <label for="newAccountGroupUrl">URL Group Mặc Định (Tùy chọn)</label>
+                                    <input type="url" id="newAccountGroupUrl" placeholder="https://facebook.com/groups/abc">
+                                </div>
+                                <div class="form-group">
+                                    <label for="newAccountLimit">Giới Hạn Gửi / Ngày</label>
+                                    <input type="number" id="newAccountLimit" value="50" min="1">
+                                </div>
+                            </div>
+                            <div class="form-actions mt-auto" style="margin-top: 15px; padding-bottom: 20px;">
+                                <button type="submit" class="btn btn-primary full-width">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                    Lưu Tài Khoản
+                                </button>
+                            </div>
+                        </form>
+
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Tên / ID</th>
+                                        <th>Trạng Thái</th>
+                                        <th>URL Group</th>
+                                        <th>Đã Gửi (Hôm nay)</th>
+                                        <th>Đã Hủy T.Dõi</th>
+                                        <th>Thao Tác</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="accounts-table-body">
+                                    <!-- Rows injected via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Soft-Deleted Accounts Section -->
+                        <div style="margin-top: 32px;">
+                            <div class="card-header" style="cursor:pointer; user-select:none;" onclick="toggleDeletedSection()">
+                                <h3 style="display:flex; align-items:center; gap:8px; margin:0;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    Tài Khoản Đã Xóa (Soft Deleted)
+                                    <span id="deleted-count-badge" style="background:rgba(239,68,68,0.2); color:#f87171; font-size:0.75rem; padding:2px 8px; border-radius:12px; font-weight:600;">0</span>
+                                </h3>
+                            </div>
+                            <div id="deleted-accounts-section" style="display:none; margin-top:12px;">
+                                <div class="table-responsive">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Tên / ID</th>
+                                                <th>Email</th>
+                                                <th>Ngày Xóa Mềm</th>
+                                                <th>Thao Tác</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="deleted-accounts-table-body">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast">Đã lưu thành công!</div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -69,6 +69,9 @@ class MainViewModel:
         # Message queue for thread-safe UI updates
         self.message_queue: Queue = Queue()
 
+        # Auto-load accounts from DB on startup
+        self.load_accounts()
+
     FAST_PROFILE_EXPECTED = {
         "use_proxy": False,
         "proxy_fallback_to_direct": True,
@@ -288,7 +291,9 @@ class MainViewModel:
         self,
         debugger_address: str,
         group_url: Optional[str] = None,
-        proxy: Optional["Proxy"] = None
+        proxy: Optional["Proxy"] = None,
+        fb_email: Optional[str] = None,
+        fb_password_enc: Optional[str] = None
     ) -> Account:
         """
         Add a new account.
@@ -297,6 +302,8 @@ class MainViewModel:
             debugger_address: Chrome debugger address.
             group_url: Optional Facebook group URL.
             proxy: Optional proxy for the account.
+            fb_email: Optional Facebook email.
+            fb_password_enc: Optional encrypted password.
 
         Returns:
             Created account.
@@ -305,10 +312,54 @@ class MainViewModel:
         account = Account(
             debugger_address=debugger_address,
             group_url=group_url,
-            proxy=proxy
+            proxy=proxy,
+            fb_email=fb_email,
+            fb_password_enc=fb_password_enc
         )
         self.account_manager.add_account(account)
         return account
+
+    def add_accounts_by_port_range(
+        self,
+        start_port: int,
+        end_port: int,
+        group_url: Optional[str] = None
+    ) -> Dict[str, int]:
+        """
+        Bulk-create accounts from a port range.
+
+        Args:
+            start_port: Start port (inclusive).
+            end_port: End port (inclusive).
+            group_url: Optional group URL for all created accounts.
+
+        Returns:
+            Dict with created/skipped counts.
+        """
+        if start_port > end_port:
+            start_port, end_port = end_port, start_port
+
+        created = 0
+        skipped = 0
+        normalized_url = (group_url or "").strip() or None
+
+        for port in range(start_port, end_port + 1):
+            address = f"127.0.0.1:{port}"
+            if self.account_manager.get_account(address):
+                skipped += 1
+                continue
+
+            account = Account(debugger_address=address, group_url=normalized_url)
+            self.account_manager.add_account(account, save=False)
+            created += 1
+
+        if created > 0:
+            self.account_manager.save_accounts()
+
+        self._handle_log(
+            f"Tạo nhanh tài khoản: {created} mới, {skipped} đã tồn tại (dải {start_port}-{end_port})"
+        )
+        return {"created": created, "skipped": skipped}
 
     def remove_account(self, debugger_address: str) -> bool:
         """
@@ -374,14 +425,17 @@ class MainViewModel:
 
         return self.account_manager.assign_proxies()
 
-    def start_run(self) -> bool:
+    def start_run(self, skip_login: bool = False) -> bool:
         """
         Start the bot run.
+
+        Args:
+            skip_login: Skip login phase.
 
         Returns:
             True if started successfully.
         """
-        return self.start_run_with_task()
+        return self.start_run_with_task(skip_login=skip_login)
 
     def stop_run(self) -> None:
         """Stop the current run."""
@@ -647,12 +701,13 @@ class MainViewModel:
             max_count=self.task_max_count if self.task_max_count is not None else settings.max_clicks
         )
 
-    def start_run_with_task(self, task_config: TaskConfig = None) -> bool:
+    def start_run_with_task(self, task_config: TaskConfig = None, skip_login: bool = False) -> bool:
         """
         Start a run with specific task configuration.
 
         Args:
             task_config: Task configuration (uses current settings if not provided).
+            skip_login: Skip login phase.
 
         Returns:
             True if started successfully.
@@ -695,7 +750,8 @@ class MainViewModel:
         # Run in background thread
         self._run_thread = self.orchestrator.run_async(
             accounts=accounts,
-            account_loggers=self._on_account_log
+            account_loggers=self._on_account_log,
+            skip_login=skip_login
         )
 
         return True
@@ -817,6 +873,23 @@ class MainViewModel:
             )
 
             login_result = automation.perform_login(email, password)
+
+            # Update account status based on login result
+            if login_result == "success":
+                account.status = AccountStatus.OK
+                account.error_message = None
+            elif login_result == "2fa":
+                account.status = AccountStatus.CHECKPOINT
+                account.error_message = "Requires 2FA/Identity Verification"
+            elif login_result in ["wrong_pass", "disabled", "error", "timeout"]:
+                account.status = AccountStatus.ERROR
+                account.error_message = f"Login failed: {login_result}"
+            
+            self.account_manager.save_accounts()
+            
+            # Request UI refresh via message queue
+            self.message_queue.put(("status", f"Đã cập nhật trạng thái {account.display_name}"))
+            self.message_queue.put(("account_update", account))
 
             # Step 6: Map result to user-friendly message
             result_messages = {

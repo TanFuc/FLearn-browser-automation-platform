@@ -52,60 +52,96 @@ class AccountManager:
         if self.on_log:
             self.on_log(message)
 
+    def _save_account_to_db(self, account: Account) -> None:
+        """Helper to save a single account to DB."""
+        from app.database import db
+        
+        cursor = db.conn.cursor()
+        data = account.to_dict()
+        
+        debugger_address = data.get("debugger_address")
+        label = data.get("label")
+        group_url = data.get("group_url")
+        proxy = data.get("proxy")
+        fb_email = data.get("fb_email")
+        fb_password_enc = data.get("fb_password_enc")
+        status = data.get("status")
+        error_message = data.get("error_message")
+        invites_sent = data.get("invites_sent", 0)
+        last_run = data.get("last_run")
+        login_attempts = data.get("login_attempts", 0)
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO accounts (
+                debugger_address, label, group_url, proxy, fb_email, 
+                fb_password_enc, status, error_message, invites_sent, 
+                last_run, login_attempts
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            debugger_address, label, group_url, proxy, fb_email,
+            fb_password_enc, status, error_message, invites_sent,
+            last_run, login_attempts
+        ))
+        db.conn.commit()
+
     def load_accounts(self, file_path: Path = None) -> List[Account]:
         """
-        Load accounts from JSON file.
-
-        Args:
-            file_path: Path to accounts JSON file.
+        Load accounts from SQLite Database (with JSON fallback migration).
 
         Returns:
             List of loaded accounts.
         """
-        file_path = file_path or settings.account_status_file
-
-        if not file_path.exists():
-            self._log(f"Account file not found: {file_path}", logging.WARNING)
-            return []
+        from app.database import db
+        from datetime import datetime
+        
+        self.accounts.clear()
+        accounts = []
 
         try:
-            # Use utf-8-sig to transparently handle BOM-prefixed JSON files.
-            with open(file_path, "r", encoding="utf-8-sig") as f:
-                raw_data = json.load(f)
+            cursor = db.conn.cursor()
+            cursor.execute("SELECT * FROM accounts")
+            rows = cursor.fetchall()
 
-            # Support both plain list and wrapped dict formats.
-            if isinstance(raw_data, list):
-                data = raw_data
-            elif isinstance(raw_data, dict):
-                data = raw_data.get("accounts", [])
-            else:
-                self._log(
-                    f"Invalid accounts format in {file_path}: expected list or dict",
-                    logging.ERROR
-                )
-                return []
+            if rows:
+                for row in rows:
+                    try:
+                        acc_dict = dict(row)
+                        if acc_dict.get('last_run'):
+                            acc_dict['last_run'] = datetime.fromisoformat(acc_dict['last_run'])
+                        if acc_dict.get('last_login_at'):
+                            acc_dict['last_login_at'] = datetime.fromisoformat(acc_dict['last_login_at'])
+                            
+                        account = Account.from_dict(acc_dict)
+                        self.accounts[account.debugger_address] = account
+                        accounts.append(account)
+                    except Exception as e:
+                        self._log(f"Error parsing account from DB: {e}", logging.WARNING)
+                
+                self._log(f"Loaded {len(accounts)} accounts from Database")
+                return accounts
 
-            if not isinstance(data, list):
-                self._log(
-                    f"Invalid accounts payload in {file_path}: 'accounts' must be a list",
-                    logging.ERROR
-                )
-                return []
+            # Migration
+            file_path = file_path or settings.account_status_file
+            if file_path.exists():
+                self._log(f"DB empty, migrating accounts from {file_path}...", logging.INFO)
+                with open(file_path, "r", encoding="utf-8-sig") as f:
+                    raw_data = json.load(f)
+                
+                data = raw_data if isinstance(raw_data, list) else raw_data.get("accounts", [])
+                
+                for item in data:
+                    try:
+                        account = Account.from_dict(item)
+                        self.accounts[account.debugger_address] = account
+                        accounts.append(account)
+                        self._save_account_to_db(account)
+                    except Exception as e:
+                        self._log(f"Error parsing account from JSON: {e}", logging.WARNING)
+                        
+                self._log(f"Migrated {len(accounts)} accounts from JSON to Database")
+                return accounts
 
-            # Replace in-memory state with file content to avoid stale entries.
-            self.accounts.clear()
-
-            accounts = []
-            for item in data:
-                try:
-                    account = Account.from_dict(item)
-                    self.accounts[account.debugger_address] = account
-                    accounts.append(account)
-                except Exception as e:
-                    self._log(f"Error parsing account: {e}", logging.WARNING)
-
-            self._log(f"Loaded {len(accounts)} accounts from {file_path}")
-            return accounts
+            return []
 
         except Exception as e:
             self._log(f"Error loading accounts: {e}", logging.ERROR)
@@ -113,27 +149,14 @@ class AccountManager:
 
     def save_accounts(self, file_path: Path = None) -> bool:
         """
-        Save accounts to JSON file.
-
-        Args:
-            file_path: Path to save accounts to.
-
-        Returns:
-            True if saved successfully, False otherwise.
+        Save all accounts to SQLite Database.
         """
-        file_path = file_path or settings.account_status_file
-
         try:
-            data = [acc.to_dict() for acc in self.accounts.values()]
-
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-
-            self._log(f"Saved {len(data)} accounts to {file_path}")
+            for account in self.accounts.values():
+                self._save_account_to_db(account)
             return True
-
         except Exception as e:
-            self._log(f"Error saving accounts: {e}", logging.ERROR)
+            self._log(f"Error saving accounts to DB: {e}", logging.ERROR)
             return False
 
     def add_account(self, account: Account, save: bool = True) -> None:
@@ -187,8 +210,16 @@ class AccountManager:
         if debugger_address in self.accounts:
             del self.accounts[debugger_address]
             self._log(f"Removed account: {debugger_address}")
+            
             if save:
-                self.save_accounts()
+                from app.database import db
+                try:
+                    cursor = db.conn.cursor()
+                    cursor.execute("DELETE FROM accounts WHERE debugger_address = ?", (debugger_address,))
+                    db.conn.commit()
+                except Exception as e:
+                    self._log(f"Error deleting account from DB: {e}", logging.ERROR)
+                    
             return True
         return False
 

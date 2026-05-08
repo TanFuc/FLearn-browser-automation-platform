@@ -44,23 +44,18 @@ async function autoInviteTask(page, context, account, targetUrl, emitLog, increm
     let invitesSent = 0;
     let scrollsDone = 0;
     
-    // 1. Kiểm tra URL đã trỏ tới members chưa
-    let currentUrl = page.url();
-    if (!currentUrl.toLowerCase().includes('/members') && !currentUrl.toLowerCase().includes('/people')) {
-        let membersUrl = currentUrl.replace(/\/$/, '') + '/members';
-        emitLog(accountId, `Tự động điều hướng sang trang thành viên: ${membersUrl}`);
-        await page.goto(membersUrl);
-        await page.waitForLoadState('networkidle');
-    }
-
-    // Đảm bảo trang đã load đủ để có thể lấy text và check element
-    await page.waitForLoadState('networkidle').catch(() => {});
-    await page.waitForTimeout(2000);
-
-    // 2. Kiểm tra tài khoản bị Checkpoint, Khóa, hoặc Chưa Đăng Nhập
+    // 1. Kiểm tra Checkpoint/Khóa ngay lập tức
     let pageText = await page.evaluate(() => document.body.innerText).catch(() => "");
     let titleText = await page.title().catch(() => "");
     
+    if (page.url().includes('/checkpoint/') || titleText.toLowerCase().includes('checkpoint')) {
+        throw new Error('Tài khoản đã bị Checkpoint! Vui lòng gỡ checkpoint.');
+    }
+    if (pageText.includes('disabled') || pageText.includes('vô hiệu hóa') || pageText.includes('không thể sử dụng facebook')) {
+        throw new Error('Tài khoản đã bị khóa (Disabled/Banned)!');
+    }
+
+    // 2. Kiểm tra đăng nhập
     const emailInputCount = await page.locator('input[name="email"], input[id="email"]').count().catch(() => 0);
     const passInputCount = await page.locator('input[name="pass"], input[id="pass"]').count().catch(() => 0);
     
@@ -73,27 +68,53 @@ async function autoInviteTask(page, context, account, targetUrl, emitLog, increm
                         pageText.includes('Tham gia hoặc đăng nhập Facebook');
 
     if (isLoggedOut) {
+        emitLog(accountId, "Tài khoản chưa đăng nhập, đang tiến hành tự động đăng nhập...");
         await autoLogin(page, account, emitLog);
         
+        // Sau khi login xong thì reload lại targetUrl
+        emitLog(accountId, `Điều hướng tới trang đích: ${targetUrl}`);
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+        await page.waitForTimeout(2000);
+    }
+
+    // 3. Đảm bảo ở đúng trang thành viên
+    let currentUrl = page.url();
+    if (!currentUrl.toLowerCase().includes('/members') && !currentUrl.toLowerCase().includes('/people')) {
         let membersUrl = targetUrl;
         if (!membersUrl.toLowerCase().includes('/members') && !membersUrl.toLowerCase().includes('/people')) {
             membersUrl = membersUrl.replace(/\/$/, '') + '/members';
         }
-        emitLog(accountId, `Điều hướng lại trang thành viên...`);
-        await page.goto(membersUrl);
-        await page.waitForLoadState('networkidle').catch(() => {});
-        await page.waitForTimeout(2000);
-        
-        pageText = await page.evaluate(() => document.body.innerText).catch(() => "");
-        titleText = await page.title().catch(() => "");
+        emitLog(accountId, `Điều hướng sang trang thành viên: ${membersUrl}`);
+        await page.goto(membersUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
     }
 
-    if (page.url().includes('/checkpoint/') || titleText.toLowerCase().includes('checkpoint')) {
-        throw new Error('Tài khoản đã bị Checkpoint! Vui lòng gỡ checkpoint.');
+    // 4. Đợi nội dung thực tế xuất hiện (tránh skeleton/spam icon)
+    emitLog(accountId, "Đang kiểm tra dữ liệu trang...", 'system');
+    
+    // Kiểm tra kẹt loading (màn hình trắng có logo FB hoặc skeleton)
+    let isStuckLoading = await page.evaluate(() => {
+        // Nếu trang có rất ít text và có SVG (logo) hoặc các pulse elements
+        const bodyText = document.body.innerText.trim();
+        const svgCount = document.querySelectorAll('svg').length;
+        return bodyText.length < 100 && svgCount >= 1;
+    });
+
+    if (isStuckLoading) {
+        emitLog(accountId, "⚠️ Phát hiện trang bị kẹt ở màn hình chờ (Loading/Pulse). Đang thử tải lại...", 'warning');
+        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        await page.waitForTimeout(5000);
     }
-    if (pageText.includes('disabled') || pageText.includes('vô hiệu hóa') || pageText.includes('không thể sử dụng facebook')) {
-        throw new Error('Tài khoản đã bị khóa (Disabled/Banned)!');
+
+    try {
+        // Đợi nội dung chính hoặc danh sách thành viên xuất hiện
+        // [role="main"] là container chính của FB mới
+        await page.waitForSelector('[role="main"]', { timeout: 15000 });
+        emitLog(accountId, "Đã nhận diện được nội dung trang.", 'success');
+    } catch(e) {
+        emitLog(accountId, "Cảnh báo: Không tìm thấy vùng nội dung chính. Tiếp tục thử kịch bản...", 'warning');
     }
+    
+    await page.waitForTimeout(2000);
 
     emitLog(accountId, "Kiểm tra an toàn: Tốt. Bắt đầu kịch bản Add Friend...", 'system');
 
@@ -222,6 +243,7 @@ async function autoInviteTask(page, context, account, targetUrl, emitLog, increm
     }
     
     emitLog(accountId, `Hoàn thành. Số requests: ${invitesSent}, Số lần cuộn: ${scrollsDone}`);
+    return { successCount: invitesSent, scrollsDone: scrollsDone };
 }
 
 async function autoUnfollowTask(page, context, account, jobData, emitLog, incrementStats) {
@@ -331,6 +353,7 @@ async function autoUnfollowTask(page, context, account, jobData, emitLog, increm
     }
     
     emitLog(accountId, `Hoàn thành. Số lượt bỏ theo dõi: ${unfollowsDone}, Số lần cuộn: ${scrollsDone}`);
+    return { successCount: unfollowsDone, scrollsDone: scrollsDone };
 }
 
 module.exports = {

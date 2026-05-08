@@ -37,12 +37,29 @@ async function initDB() {
   );
   `;
 
+  const aiAttemptsTable = `
+  CREATE TABLE IF NOT EXISTS ai_request_attempts (
+    id SERIAL PRIMARY KEY,
+    endpoint TEXT,
+    prompt_hash TEXT,
+    model_name TEXT,
+    attempt_number INTEGER,
+    response_status INTEGER,
+    success BOOLEAN DEFAULT FALSE,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+  );
+  `;
+
   try {
     await db.query(accountsTable);
     console.log("✅ Created 'accounts' table.");
     
     await db.query(tasksTable);
     console.log("✅ Created 'tasks' table.");
+
+    await db.query(aiAttemptsTable);
+    console.log("✅ Created 'ai_request_attempts' table.");
     
     console.log("Database initialized successfully!");
   } catch (error) {

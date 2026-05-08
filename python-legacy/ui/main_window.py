@@ -22,7 +22,33 @@ from app.config import settings
 from app.models import Account, AccountStatus, ActionType, BatchResult
 from ui.dialogs import AccountDialog, SettingsDialog
 from ui.view_models import MainViewModel
-import ui.styles as styles
+class styles:
+    THEME_NAME = "darkly"
+    PRIMARY = "primary"
+    SECONDARY = "secondary"
+    SUCCESS = "success"
+    INFO = "info"
+    WARNING = "warning"
+    DANGER = "danger"
+    LIGHT = "light"
+    DARK = "dark"
+    FONT_H1 = 24
+    FONT_H2 = 18
+    FONT_H3 = 14
+    FONT_NORMAL = 10
+    FONT_SMALL = 9
+    PADDING_SMALL = 5
+    PADDING_MEDIUM = 10
+    PADDING_LARGE = 20
+    SIDEBAR_WIDTH = 250
+    STATUS_COLORS = {
+        "IDLE": "secondary",
+        "RUNNING": "primary",
+        "OK": "success",
+        "CHECKPOINT": "warning",
+        "ERROR": "danger",
+        "PROXY_DEAD": "danger",
+    }
 
 
 # ─────────────────────────────────────────────
@@ -241,6 +267,10 @@ class MainWindow:
         # Start message loop
         self._process_messages()
 
+        # Initial data refresh
+        self._refresh_account_list()
+        self._refresh_monitor_grid()
+
         # Bind resize so cards re-grid
         self.root.bind("<Configure>", self._on_window_resize)
 
@@ -300,10 +330,15 @@ class MainWindow:
         ctrl = ttk.Labelframe(sb, text=" Trình Điều Khiển ", padding=10)
         ctrl.pack(fill=X, padx=10, pady=5)
 
-        self.start_btn = ttk.Button(ctrl, text="▶  BẮT ĐẦU", bootstyle=SUCCESS,
+        self.start_btn = ttk.Button(ctrl, text="▶  CHẠY TOÀN BỘ", bootstyle=SUCCESS,
                                     command=self._on_start, width=16)
         self.start_btn.pack(pady=3, fill=X)
-        ToolTip(self.start_btn, text="Bắt đầu chạy tự động")
+        ToolTip(self.start_btn, text="Bắt đầu chạy tự động (Kiểm tra Login -> Thao Tác)")
+
+        self.action_only_btn = ttk.Button(ctrl, text="⚡ CHỈ CHẠY THAO TÁC", bootstyle="outline-success",
+                                    command=self._on_start_action_only, width=16)
+        self.action_only_btn.pack(pady=3, fill=X)
+        ToolTip(self.action_only_btn, text="Bỏ qua bước Login, chạy thẳng thao tác luôn (Yêu cầu đã đăng nhập)")
 
         self.pause_btn = ttk.Button(ctrl, text="⏸  TẠM DỪNG", bootstyle=WARNING,
                                     command=self._on_pause, state=DISABLED, width=16)
@@ -364,6 +399,66 @@ class MainWindow:
         )
         self.profile_status_lbl.pack(fill=X, pady=(6, 0))
         self._refresh_profile_badge()
+
+        ttk.Separator(sb).pack(fill=X, pady=5, padx=10)
+
+        # Quick Config
+        quick_cfg = ttk.Labelframe(sb, text=" Cấu Hình Nhanh ", padding=10)
+        quick_cfg.pack(fill=X, padx=10, pady=5)
+        quick_cfg.columnconfigure(1, weight=1)
+
+        ttk.Label(quick_cfg, text="Batch size:").grid(row=0, column=0, sticky=W, pady=3)
+        self.quick_batch_var = tk.StringVar(value=str(self.view_model.get_batch_size()))
+        ttk.Spinbox(quick_cfg, from_=1, to=20, textvariable=self.quick_batch_var, width=8).grid(
+            row=0, column=1, sticky=W, pady=3
+        )
+
+        ttk.Label(quick_cfg, text="Max click/account:").grid(row=1, column=0, sticky=W, pady=3)
+        self.quick_clicks_var = tk.StringVar(value=str(self.view_model.get_max_clicks()))
+        ttk.Spinbox(quick_cfg, from_=1, to=200, textvariable=self.quick_clicks_var, width=8).grid(
+            row=1, column=1, sticky=W, pady=3
+        )
+
+        self.quick_proxy_var = tk.BooleanVar(value=self.view_model.get_use_proxy())
+        ttk.Checkbutton(
+            quick_cfg,
+            text="Dùng proxy",
+            variable=self.quick_proxy_var,
+            bootstyle="round-toggle"
+        ).grid(row=2, column=0, columnspan=2, sticky=W, pady=(4, 2))
+
+        ttk.Button(
+            quick_cfg,
+            text="Áp dụng nhanh",
+            bootstyle="outline-primary",
+            command=self._on_apply_quick_config
+        ).grid(row=3, column=0, columnspan=2, sticky=EW, pady=(6, 0))
+
+        ttk.Separator(sb).pack(fill=X, pady=5, padx=10)
+
+        # Bulk account creator
+        bulk = ttk.Labelframe(sb, text=" Tạo Nhanh Account ", padding=10)
+        bulk.pack(fill=X, padx=10, pady=5)
+        bulk.columnconfigure(1, weight=1)
+
+        ttk.Label(bulk, text="Port từ:").grid(row=0, column=0, sticky=W, pady=3)
+        self.bulk_start_port_var = tk.StringVar(value="9222")
+        ttk.Entry(bulk, textvariable=self.bulk_start_port_var, width=10).grid(row=0, column=1, sticky=W, pady=3)
+
+        ttk.Label(bulk, text="Port đến:").grid(row=1, column=0, sticky=W, pady=3)
+        self.bulk_end_port_var = tk.StringVar(value="9231")
+        ttk.Entry(bulk, textvariable=self.bulk_end_port_var, width=10).grid(row=1, column=1, sticky=W, pady=3)
+
+        ttk.Label(bulk, text="Group URL (tuỳ chọn):").grid(row=2, column=0, columnspan=2, sticky=W, pady=(4, 2))
+        self.bulk_group_url_var = tk.StringVar(value="")
+        ttk.Entry(bulk, textvariable=self.bulk_group_url_var).grid(row=3, column=0, columnspan=2, sticky=EW, pady=(0, 4))
+
+        ttk.Button(
+            bulk,
+            text="➕ Tạo theo dải port",
+            bootstyle="outline-success",
+            command=self._on_bulk_create_accounts
+        ).grid(row=4, column=0, columnspan=2, sticky=EW)
 
         ttk.Separator(sb).pack(fill=X, pady=5, padx=10)
 
@@ -513,6 +608,7 @@ class MainWindow:
 
     def _create_accounts_tab(self):
         frame = ttk.Frame(self.notebook)
+        self.accounts_tab_frame = frame
         self.notebook.add(frame, text="👥 Quản Lý Tài Khoản")
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(1, weight=1)
@@ -548,10 +644,11 @@ class MainWindow:
                    command=self._on_remove_selected).pack(side=LEFT, padx=2)
 
         # ── Accounts Table ──
-        cols = ("address", "label", "status", "proxy", "invites", "last_run")
+        cols = ("address", "fb_email", "label", "status", "proxy", "invites", "last_run")
         self.acc_tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="browse")
 
         self.acc_tree.heading("address",  text="Địa Chỉ Debugger")
+        self.acc_tree.heading("fb_email", text="Email FB")
         self.acc_tree.heading("label",    text="Tên / Nhãn")
         self.acc_tree.heading("status",   text="Trạng Thái")
         self.acc_tree.heading("proxy",    text="Proxy")
@@ -559,6 +656,7 @@ class MainWindow:
         self.acc_tree.heading("last_run", text="Lần Chạy Cuối")
 
         self.acc_tree.column("address",  width=160, minwidth=120)
+        self.acc_tree.column("fb_email", width=160, minwidth=120)
         self.acc_tree.column("label",    width=140, minwidth=80)
         self.acc_tree.column("status",   width=100, minwidth=80)
         self.acc_tree.column("proxy",    width=140, minwidth=80)
@@ -578,6 +676,8 @@ class MainWindow:
 
         self.acc_tree.grid(row=1, column=0, sticky=NSEW, padx=(5, 0), pady=5)
         vsb.grid(row=1, column=1, sticky=NS, pady=5)
+
+        self.accounts_tab_frame.bind("<Configure>", self._on_accounts_tab_resize)
 
         self._create_account_context_menu()
         self.acc_tree.bind("<Button-3>", self._show_account_context_menu)
@@ -685,6 +785,38 @@ class MainWindow:
 
         if self.view_model.start_run():
             self.start_btn.configure(state=DISABLED)
+            self.action_only_btn.configure(state=DISABLED)
+            self.pause_btn.configure(state=NORMAL)
+            self.stop_btn.configure(state=NORMAL)
+        else:
+            Messagebox.show_error("Could not start run. Check logs.", "Start Failed")
+
+    def _on_start_action_only(self):
+        action_str = self.action_var.get().upper().replace(" ", "_")
+        try:
+            action = ActionType[action_str]
+        except KeyError:
+            action = ActionType.INVITE
+
+        self.view_model.set_current_action(action)
+
+        if hasattr(self, "task_url_var"):
+            self.view_model.set_task_target_url(self.task_url_var.get().strip())
+        if hasattr(self, "task_content_text"):
+            content = self.task_content_text.get("1.0", "end-1c").strip()
+            self.view_model.set_task_content(content)
+            
+        try:
+            max_count = int(self.task_max_count_var.get().strip())
+            if max_count > 0:
+                self.view_model.set_task_max_count(max_count)
+        except ValueError:
+            Messagebox.show_warning("Số lượng/lần không hợp lệ (phải là số). Sẽ dùng giá trị cài đặt chung.", "Cảnh Báo")
+
+        # Start run with skip_login=True
+        if self.view_model.start_run(skip_login=True):
+            self.start_btn.configure(state=DISABLED)
+            self.action_only_btn.configure(state=DISABLED)
             self.pause_btn.configure(state=NORMAL)
             self.stop_btn.configure(state=NORMAL)
         else:
@@ -701,6 +833,7 @@ class MainWindow:
     def _on_stop(self):
         self.view_model.stop_run()
         self.start_btn.configure(state=NORMAL)
+        self.action_only_btn.configure(state=NORMAL)
         self.pause_btn.configure(state=DISABLED, text="⏸  TẠM DỪNG", bootstyle=WARNING)
         self.stop_btn.configure(state=DISABLED)
 
@@ -711,6 +844,45 @@ class MainWindow:
         label = self.login_mode_var.get().strip()
         mode = self.LOGIN_MODE_LABEL_TO_KEY.get(label, "always")
         self.view_model.set_login_mode(mode)
+
+    def _on_apply_quick_config(self):
+        try:
+            batch = int(self.quick_batch_var.get().strip())
+            clicks = int(self.quick_clicks_var.get().strip())
+        except ValueError:
+            Messagebox.show_warning("Batch size và Max click phải là số hợp lệ.", "Cảnh báo")
+            return
+
+        self.view_model.set_batch_size(batch)
+        self.view_model.set_max_clicks(clicks)
+        self.view_model.set_use_proxy(bool(self.quick_proxy_var.get()))
+
+        settings.save_to_file()
+        self._log_message("Đã áp dụng Cấu Hình Nhanh.")
+
+    def _on_bulk_create_accounts(self):
+        try:
+            start_port = int(self.bulk_start_port_var.get().strip())
+            end_port = int(self.bulk_end_port_var.get().strip())
+        except ValueError:
+            Messagebox.show_warning("Port bắt đầu/kết thúc phải là số.", "Cảnh báo")
+            return
+
+        if not (1 <= start_port <= 65535 and 1 <= end_port <= 65535):
+            Messagebox.show_warning("Port phải nằm trong khoảng 1-65535.", "Cảnh báo")
+            return
+
+        result = self.view_model.add_accounts_by_port_range(
+            start_port=start_port,
+            end_port=end_port,
+            group_url=self.bulk_group_url_var.get().strip()
+        )
+        self._refresh_account_list()
+        self._refresh_monitor_grid()
+        Messagebox.show_info(
+            f"Đã tạo {result['created']} account mới, bỏ qua {result['skipped']} account đã tồn tại.",
+            "Tạo nhanh account"
+        )
 
     def _on_apply_fast_profile(self):
         if self.view_model.apply_fast_profile():
@@ -753,6 +925,7 @@ class MainWindow:
             self._loop_running = False
             self.loop_btn.configure(text="▶  BẮT ĐẦU LẶP", bootstyle="outline-success")
             self.start_btn.configure(state=NORMAL)
+            self.action_only_btn.configure(state=NORMAL)
             self.stop_btn.configure(state=DISABLED)
             return
 
@@ -797,6 +970,7 @@ class MainWindow:
             self._loop_running = True
             self.loop_btn.configure(text="⏹  DỪNG LẶP", bootstyle="outline-danger")
             self.start_btn.configure(state=DISABLED)
+            self.action_only_btn.configure(state=DISABLED)
             self.stop_btn.configure(state=DISABLED)
         else:
             Messagebox.show_error("Could not start auto loop. Check logs.", "Start Failed")
@@ -856,7 +1030,9 @@ class MainWindow:
             self.view_model.add_account(
                 account.debugger_address,
                 account.group_url,
-                account.proxy
+                account.proxy,
+                account.fb_email,
+                account.fb_password_enc
             )
             self._refresh_account_list()
             self._refresh_monitor_grid()
@@ -1087,16 +1263,47 @@ class MainWindow:
             proxy_str = acc.proxy.address if acc.proxy else "—"
             last_run_str = acc.last_run.strftime("%Y-%m-%d %H:%M") if acc.last_run else "—"
             label_str = acc.label or "—"
+            email_str = acc.fb_email or "—"
             tag = self._get_status_tag(acc.status)
 
             self.acc_tree.insert("", END, values=(
                 acc.debugger_address,
+                email_str,
                 label_str,
                 status_str,
                 proxy_str,
                 acc.invites_sent,
                 last_run_str
             ), tags=(tag,))
+
+        self._auto_resize_account_columns()
+
+    def _on_accounts_tab_resize(self, _event):
+        self._auto_resize_account_columns()
+
+    def _auto_resize_account_columns(self):
+        """Resize table columns proportionally to keep layout responsive."""
+        if not hasattr(self, "acc_tree"):
+            return
+
+        total_width = self.acc_tree.winfo_width()
+        if total_width <= 200:
+            return
+
+        weights = {
+            "address": 22,
+            "fb_email": 20,
+            "label": 14,
+            "status": 11,
+            "proxy": 16,
+            "invites": 6,
+            "last_run": 11,
+        }
+        weight_sum = sum(weights.values())
+
+        for col, w in weights.items():
+            width = int((w / weight_sum) * total_width)
+            self.acc_tree.column(col, width=max(width, 70))
 
     def _get_status_tag(self, status: AccountStatus) -> str:
         return {
@@ -1154,9 +1361,32 @@ class MainWindow:
             self._refresh_monitor_grid()
 
     def _update_account_status(self, account: Account):
+        # Update Monitor Cards
         if account.debugger_address in self.account_cards:
             self.account_cards[account.debugger_address].update_status(
                 account.status, account.invites_sent)
+
+        # Update Treeview row
+        for item in self.acc_tree.get_children():
+            values = self.acc_tree.item(item, "values")
+            if values and values[0] == account.debugger_address:
+                status_str = account.status.value
+                proxy_str = account.proxy.address if account.proxy else "—"
+                last_run_str = account.last_run.strftime("%Y-%m-%d %H:%M") if account.last_run else "—"
+                label_str = account.label or "—"
+                email_str = account.fb_email or "—"
+                tag = self._get_status_tag(account.status)
+
+                self.acc_tree.item(item, values=(
+                    account.debugger_address,
+                    email_str,
+                    label_str,
+                    status_str,
+                    proxy_str,
+                    account.invites_sent,
+                    last_run_str
+                ), tags=(tag,))
+                break
 
     # ─────────── Log / Status ───────────
 
@@ -1202,6 +1432,7 @@ class MainWindow:
 
                 elif msg_type == "run_complete":
                     self.start_btn.configure(state="normal")
+                    self.action_only_btn.configure(state="normal")
                     self.stop_btn.configure(state="disabled")
                     self.pause_btn.configure(state="disabled", text="⏸  TẠM DỪNG", bootstyle=WARNING)
                     self._refresh_account_list()
@@ -1219,6 +1450,7 @@ class MainWindow:
                     self._loop_running = False
                     self.loop_btn.configure(text="▶  BẮT ĐẦU LẶP", bootstyle="outline-success")
                     self.start_btn.configure(state="normal")
+                    self.action_only_btn.configure(state="normal")
                     Messagebox.show_info("Đã hoàn thành tất cả vòng lặp tự động.", "Lặp Xong")
 
                 elif msg_type == "test_login_done":

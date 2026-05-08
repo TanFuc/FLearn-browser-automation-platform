@@ -109,6 +109,23 @@ class Database:
             )
         """)
 
+        # Accounts table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                debugger_address TEXT PRIMARY KEY,
+                label TEXT,
+                group_url TEXT,
+                proxy TEXT,
+                fb_email TEXT,
+                fb_password_enc TEXT,
+                status TEXT,
+                error_message TEXT,
+                invites_sent INTEGER DEFAULT 0,
+                last_run DATETIME,
+                login_attempts INTEGER DEFAULT 0
+            )
+        """)
+
         self.conn.commit()
 
     def record_invites(

@@ -85,11 +85,17 @@ async function run() {
             soft_cap INTEGER DEFAULT 20,
             hard_cap INTEGER DEFAULT 30,
             is_blocked BOOLEAN DEFAULT FALSE,
+            blocked_until TIMESTAMPTZ,
+            blocked_model TEXT,
+            last_model TEXT,
             last_cron_run TIMESTAMPTZ,
             last_successful_run TIMESTAMPTZ,
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
     `);
+    await db.query(`ALTER TABLE quota_state ADD COLUMN IF NOT EXISTS blocked_until TIMESTAMPTZ`);
+    await db.query(`ALTER TABLE quota_state ADD COLUMN IF NOT EXISTS blocked_model TEXT`);
+    await db.query(`ALTER TABLE quota_state ADD COLUMN IF NOT EXISTS last_model TEXT`);
     await db.query(`INSERT INTO quota_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
     console.log('✓ quota_state');
 

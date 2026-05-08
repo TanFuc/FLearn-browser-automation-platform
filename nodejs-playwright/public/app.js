@@ -4,6 +4,7 @@ const socket = io();
 const navItems = document.querySelectorAll('.nav-item');
 const tabPanes = document.querySelectorAll('.tab-pane');
 const logsContainer = document.getElementById('logs-container');
+const liveLogsContainer = document.getElementById('live-logs-container');
 const runTaskForm = document.getElementById('run-task-form');
 const settingsForm = document.getElementById('settings-form');
 const addAccountForm = document.getElementById('add-account-form');
@@ -16,19 +17,195 @@ const statActive = document.getElementById('stat-active');
 const statSent = document.getElementById('stat-sent');
 const statUnfollows = document.getElementById('stat-unfollows');
 
+let autoScrollLogs = true;
+let autoScrollLive = true;
+
+function updateAutoScrollState(container, setState) {
+    if (!container) return;
+    const threshold = 40;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    setState(distanceFromBottom <= threshold);
+}
+
+if (logsContainer) {
+    logsContainer.addEventListener('scroll', () => {
+        updateAutoScrollState(logsContainer, (v) => { autoScrollLogs = v; });
+    });
+}
+
+if (liveLogsContainer) {
+    liveLogsContainer.addEventListener('scroll', () => {
+        updateAutoScrollState(liveLogsContainer, (v) => { autoScrollLive = v; });
+    });
+}
+
 // Tab Navigation logic
 navItems.forEach(item => {
     item.addEventListener('click', (e) => {
         e.preventDefault();
         const targetId = item.getAttribute('data-tab');
+        console.log('[App] Tab clicked:', targetId);
         
         navItems.forEach(n => n.classList.remove('active'));
         item.classList.add('active');
         
-        tabPanes.forEach(t => t.classList.remove('active'));
-        document.getElementById(targetId + '-tab').classList.add('active');
+        tabPanes.forEach(t => {
+            t.classList.remove('active');
+            t.style.display = 'none';
+        });
+
+        // Update Header Title based on tab
+        const headerTitle = document.getElementById('mainTitle');
+        const headerSub = document.getElementById('mainSubTitle');
+
+        const targetPane = document.getElementById(targetId + '-tab');
+        if (targetPane) {
+            targetPane.classList.add('active');
+            targetPane.style.display = 'block';
+        }
+
+        if (headerTitle && headerSub) {
+            if (targetId === 'dashboard') {
+                headerTitle.textContent = 'Trung Tâm Điều Khiển';
+                headerSub.textContent = 'Quản lý và theo dõi các chiến dịch tự động kết bạn.';
+            } else if (targetId === 'accounts') {
+                headerTitle.textContent = 'Quản Lý Tài Khoản';
+                headerSub.textContent = 'Thêm mới và theo dõi trạng thái các tài khoản Facebook.';
+            } else if (targetId === 'settings') {
+                headerTitle.textContent = 'Cài Đặt Hệ Thống';
+                headerSub.textContent = 'Cấu hình các thông số hoạt động của bot.';
+            } else if (targetId === 'logs') {
+                headerTitle.textContent = 'Nhật Ký Hệ Thống';
+                headerSub.textContent = 'Xem toàn bộ lịch sử hoạt động của các tiến trình.';
+                const container = document.getElementById('logs-container');
+                if (container) {
+                    autoScrollLogs = true;
+                    setTimeout(() => { container.scrollTop = container.scrollHeight; }, 100);
+                }
+            } else if (targetId === 'schedules') {
+                headerTitle.textContent = 'Quản Lý Lịch Hẹn';
+                headerSub.textContent = 'Xem và quản lý các tác vụ đã lên lịch và lịch sử chạy.';
+                loadSchedules();
+            } else if (targetId === 'research') {
+                headerTitle.textContent = 'AI Research Intelligence';
+                headerSub.textContent = 'Khám phá cơ hội MMO và công cụ AI mới nhất 2025.';
+                const rTab = document.getElementById('research-tab');
+                if (rTab) { rTab.style.display = 'block'; rTab.style.opacity = '1'; }
+                if (typeof loadMMO === 'function') loadMMO();
+            }
+        }
+
+        // Handle Research Tab visibility specifically
+        const rTab = document.getElementById('research-tab');
+        if (rTab && targetId !== 'research') rTab.style.display = 'none';
     });
 });
+
+// ─── Schedule Management ──────────────────────────────────────────────────
+window.loadSchedules = async () => {
+    try {
+        const res = await fetch('/api/automation/schedules');
+        const schedules = await res.json();
+        const tbody = document.getElementById('schedulesTableBody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        if (schedules.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; opacity:0.6; padding:20px;">Chưa có lịch hẹn nào được tạo.</td></tr>';
+            return;
+        }
+
+        schedules.forEach(s => {
+            const tr = document.createElement('tr');
+            const lastRun = s.last_run ? new Date(s.last_run).toLocaleString('vi-VN') : 'Chưa chạy';
+            const createdAt = new Date(s.created_at).toLocaleString('vi-VN');
+            
+            let typeBadge = `<span class="badge" style="background:rgba(99,102,241,0.1);color:#818cf8;border:1px solid rgba(99,102,241,0.2)">${s.task_type}</span>`;
+            if (s.task_type === 'unfollow') typeBadge = `<span class="badge" style="background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2)">${s.task_type}</span>`;
+
+            tr.innerHTML = `
+                <td>
+                    <div style="font-size:0.7rem; opacity:0.6;">#${s.id.slice(0,8)}</div>
+                    ${typeBadge}
+                </td>
+                <td>
+                    <div style="font-size:0.85rem;">${s.account_ids.length} tài khoản</div>
+                    <div style="font-size:0.7rem; opacity:0.6;">${s.account_ids.join(', ')}</div>
+                </td>
+                <td>
+                    <div style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.85rem;" title="${s.group_url || 'N/A'}">
+                        ${s.group_url ? `<a href="${s.group_url}" target="_blank">${s.group_url}</a>` : 'N/A'}
+                    </div>
+                </td>
+                <td>
+                    <div style="font-size:0.85rem; font-weight:600;">${s.schedule_type === 'none' ? 'Chạy ngay' : (s.schedule_type === 'time' ? 'Hàng ngày @ ' + s.schedule_value : 'Lặp lại mỗi ' + s.schedule_value + ' giờ')}</div>
+                    <div style="font-size:0.7rem; opacity:0.6;">Tạo: ${createdAt}</div>
+                </td>
+                <td>
+                    <div style="font-size:0.85rem;">${s.total_runs} lượt</div>
+                    <div style="font-size:0.7rem; opacity:0.6;">Cuối: ${lastRun}</div>
+                </td>
+                <td>
+                    <span class="status-badge online" style="font-size:0.7rem; padding:2px 6px;">${s.status}</span>
+                </td>
+                <td>
+                    <button class="btn btn-outline btn-sm" onclick="viewScheduleHistory('${s.id}')">Lịch Sử</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (err) {
+        console.error('Lỗi tải lịch:', err);
+    }
+};
+
+window.viewScheduleHistory = async (id) => {
+    const section = document.getElementById('scheduleHistorySection');
+    const tbody = document.getElementById('historyTableBody');
+    const title = document.getElementById('historyTitle');
+    if (!section || !tbody) return;
+
+    section.style.display = 'block';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Đang tải...</td></tr>';
+    title.textContent = `Lịch Sử Chạy (#${id.slice(0,8)})`;
+    section.scrollIntoView({ behavior: 'smooth' });
+
+    try {
+        const res = await fetch(`/api/automation/history?scheduleId=${id}`);
+        const history = await res.json();
+        tbody.innerHTML = '';
+
+        if (history.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; opacity:0.6; padding:20px;">Lịch hẹn này chưa phát sinh lượt chạy nào.</td></tr>';
+            return;
+        }
+
+        history.forEach(h => {
+            const tr = document.createElement('tr');
+            const start = new Date(h.started_at).toLocaleString('vi-VN');
+            const duration = h.finished_at ? Math.round((new Date(h.finished_at) - new Date(h.started_at)) / 1000) + 's' : 'Đang chạy...';
+            
+            let statusCls = h.status === 'completed' ? 'success' : (h.status === 'failed' ? 'error' : 'warning');
+            
+            tr.innerHTML = `
+                <td style="font-size:0.85rem;">${start}</td>
+                <td><b>${h.account_id}</b> <br><small>${h.account_name || ''}</small></td>
+                <td><span class="status-badge" style="background:var(--${statusCls}); color:#fff; font-size:0.7rem;">${h.status}</span></td>
+                <td style="max-width:300px; font-size:0.8rem; font-family:monospace;">
+                    ${h.status === 'failed' ? `<span style="color:var(--error)">${h.error || h.error_message || 'N/A'}</span>` : (h.result_summary || 'Thành công')}
+                </td>
+                <td style="font-size:0.85rem;">${duration}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--error);">Lỗi: ${err.message}</td></tr>`;
+    }
+};
+
+window.closeHistory = () => {
+    document.getElementById('scheduleHistorySection').style.display = 'none';
+};
 
 // Load configuration on mount
 fetch('/api/config')
@@ -88,14 +265,17 @@ window.toggleTaskTypeUI = () => {
 
 function renderAccountsTable(accounts) {
     const tbody = document.getElementById('accounts-table-body');
+    if (!tbody) return;
     tbody.innerHTML = '';
+
+    const activeAccounts = (accounts || []).filter(acc => !acc.deleted_at);
     
-    if (!accounts || accounts.length === 0) {
+    if (!activeAccounts || activeAccounts.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #94a3b8;">Chưa có tài khoản nào. Vui lòng thêm mới.</td></tr>';
         return;
     }
 
-    accounts.forEach(acc => {
+    activeAccounts.forEach(acc => {
         const tr = document.createElement('tr');
         let statusColor = 'var(--text-main)';
         if (acc.status === 'active') statusColor = 'var(--success)';
@@ -146,13 +326,13 @@ window.openBrowser = (id) => {
         });
 };
 
-// Fetch Accounts initially for select options
 function loadAccounts() {
     fetch('/api/accounts')
         .then(res => res.json())
         .then(accounts => {
             loadedAccounts = accounts;
             const optionsContainer = document.getElementById('multiselect-options');
+            if (!optionsContainer) return;
             optionsContainer.innerHTML = '';
             
             accounts.forEach(acc => {
@@ -181,7 +361,8 @@ function loadAccounts() {
                 
                 const text = document.createElement('span');
                 text.className = 'checkbox-label';
-                text.textContent = `${acc.id} (${acc.status})`;
+                const displayName = acc.name ? `${acc.id} - ${acc.name}` : acc.id;
+                text.textContent = `${displayName} (${acc.status})`;
                 
                 label.appendChild(input);
                 label.appendChild(checkmark);
@@ -194,10 +375,8 @@ function loadAccounts() {
         });
 }
 
-// Track editing mode
 let editingId = null;
 
-// Edit Account Logic
 window.editAccount = (id) => {
     const acc = loadedAccounts.find(a => a.id === id);
     if (!acc) return;
@@ -214,12 +393,10 @@ window.editAccount = (id) => {
     document.getElementById('newAccountPassword').value = acc.fb_password || '';
     document.getElementById('newAccountLimit').value = acc.daily_limit;
 
-    // Update form button
     const submitBtn = document.querySelector('#add-account-form button[type="submit"]');
-    submitBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline></svg> Cập Nhật Tài Khoản`;
+    submitBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline></svg> Cập Nhật Tài Khoản`;
     submitBtn.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
 
-    // Show cancel button
     let cancelBtn = document.getElementById('btnCancelEdit');
     if (!cancelBtn) {
         cancelBtn = document.createElement('button');
@@ -233,7 +410,6 @@ window.editAccount = (id) => {
     }
     cancelBtn.style.display = 'block';
 
-    // Switch to accounts tab and scroll
     document.querySelector('[data-tab="accounts"]').click();
     document.getElementById('add-account-form').scrollIntoView({ behavior: 'smooth' });
 };
@@ -247,47 +423,39 @@ function resetAccountForm() {
     document.getElementById('generate-id-btn').click();
 
     const submitBtn = document.querySelector('#add-account-form button[type="submit"]');
-    submitBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Lưu Tài Khoản`;
+    submitBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Lưu Tài Khoản`;
     submitBtn.style.background = '';
 
     const cancelBtn = document.getElementById('btnCancelEdit');
     if (cancelBtn) cancelBtn.style.display = 'none';
 }
 
-// Soft Delete
 window.softDeleteAccount = (id) => {
-    if (!confirm(`Xóa mềm tài khoản "${id}"? Tài khoản sẽ bị ẩn khỏi danh sách nhưng có thể khôi phục.`)) return;
+    if (!confirm(`Xóa mềm tài khoản "${id}"?`)) return;
     fetch(`/api/accounts/${id}`, { method: 'DELETE' })
-        .then(res => res.json())
         .then(() => { showToast(`Đã xóa mềm: ${id}`); loadAccounts(); loadDeletedAccounts(); })
         .catch(() => showToast('Lỗi khi xóa!'));
 };
 
-// Hard Delete
 window.hardDeleteAccount = (id) => {
-    if (!confirm(`XÓA CỨNG "${id}"? Hành động này KHÔNG thể hoàn tác! Tài khoản sẽ bị xóa vĩnh viễn khỏi CSDL.`)) return;
+    if (!confirm(`XÓA CỨNG "${id}"?`)) return;
     fetch(`/api/accounts/${id}/hard`, { method: 'DELETE' })
-        .then(res => res.json())
         .then(() => { showToast(`Đã xóa cứng: ${id}`); loadDeletedAccounts(); })
         .catch(() => showToast('Lỗi khi xóa cứng!'));
 };
 
-// Restore Account
 window.restoreAccount = (id) => {
     fetch(`/api/accounts/${id}/restore`, { method: 'POST' })
-        .then(res => res.json())
         .then(() => { showToast(`Đã khôi phục: ${id}`); loadAccounts(); loadDeletedAccounts(); })
         .catch(() => showToast('Lỗi khôi phục!'));
 };
 
-// Toggle deleted section
 window.toggleDeletedSection = () => {
     const section = document.getElementById('deleted-accounts-section');
     section.style.display = section.style.display === 'none' ? 'block' : 'none';
     if (section.style.display === 'block') loadDeletedAccounts();
 };
 
-// Load soft-deleted accounts
 function loadDeletedAccounts() {
     fetch('/api/accounts/deleted')
         .then(res => res.json())
@@ -300,7 +468,7 @@ function loadDeletedAccounts() {
             tbody.innerHTML = '';
 
             if (accounts.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; opacity:0.5;">Không có tài khoản nào đã xóa mềm.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; opacity:0.5;">Không có tài khoản nào.</td></tr>';
                 return;
             }
 
@@ -324,16 +492,12 @@ function loadDeletedAccounts() {
                 `;
                 tbody.appendChild(tr);
             });
-        })
-        .catch(console.error);
+        });
 }
-
-// Auto-fill Group URL when selecting account in Dashboard (now handled inside loadAccounts checkbox event)
 
 loadAccounts();
 loadDeletedAccounts();
 
-// Show notification toast
 function showToast(message) {
     toast.innerText = message;
     toast.classList.add('show');
@@ -342,7 +506,6 @@ function showToast(message) {
     }, 3000);
 }
 
-// Handle settings submission
 settingsForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const config = {
@@ -356,92 +519,83 @@ settingsForm.addEventListener('submit', (e) => {
         skipVerified: document.getElementById('skipVerified').checked,
     };
 
-    const btn = document.getElementById('btnSaveSettings');
-    btn.innerHTML = 'Đang lưu...';
-    btn.disabled = true;
-
     fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
     }).then(() => {
-        showToast('Đã lưu cấu hình thành công!');
-        addLog('Đã cập nhật cấu hình hệ thống.', 'system');
-        
-        setTimeout(() => {
-            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg> Lưu Cấu Hình`;
-            btn.disabled = false;
-        }, 500);
+        showToast('Đã lưu cấu hình!');
     });
 });
 
-// Handle Run task submission
+window.toggleScheduleUI = () => {
+    const type = document.getElementById('scheduleType').value;
+    const timeInput = document.getElementById('scheduleTime');
+    const intervalInput = document.getElementById('scheduleInterval');
+    const btnSubmit = document.getElementById('btnSubmitRun');
+    
+    if (type === 'time') {
+        timeInput.style.display = 'block';
+        intervalInput.style.display = 'none';
+        btnSubmit.textContent = 'Hẹn Giờ Bắt Đầu';
+    } else if (type === 'interval') {
+        timeInput.style.display = 'none';
+        intervalInput.style.display = 'block';
+        btnSubmit.textContent = 'Tạo Lịch Chạy Lặp Lại';
+    } else {
+        timeInput.style.display = 'none';
+        intervalInput.style.display = 'none';
+        btnSubmit.textContent = 'Bắt Đầu';
+    }
+};
+
 runTaskForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const accountIds = selectedAccountIds;
     const taskType = document.getElementById('taskType').value;
     const groupUrl = document.getElementById('groupUrl').value;
     const maxUnfollow = document.getElementById('maxUnfollow').value;
-    const btn = document.getElementById('btnRun');
+    const scheduleType = document.getElementById('scheduleType').value;
+    const scheduleTime = document.getElementById('scheduleTime').value;
+    const scheduleInterval = document.getElementById('scheduleInterval').value;
     
     if (accountIds.length === 0) {
-        showToast('Vui lòng chọn ít nhất 1 tài khoản!');
+        showToast('Chọn ít nhất 1 tài khoản!');
         return;
     }
     
-    btn.disabled = true;
-    btn.innerHTML = 'Đang đưa vào hàng đợi...';
-
+    if (scheduleType === 'time' && !scheduleTime) {
+        showToast('Vui lòng chọn giờ bắt đầu!');
+        return;
+    }
+    
+    if (scheduleType === 'interval' && (!scheduleInterval || scheduleInterval < 1)) {
+        showToast('Vui lòng nhập khoảng cách giờ hợp lệ!');
+        return;
+    }
+    
     fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: accountIds, groupUrl, taskType, maxUnfollow })
-    })
-    .then(res => res.json())
-    .then(data => {
-        addLog(`Đã xếp hàng đợi cho các tài khoản: ${accountIds.join(', ')}`, 'system');
-        setTimeout(() => {
-            btn.disabled = false;
-            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Bắt Đầu Chạy`;
-            
-            // Hiện các nút điều khiển
+        body: JSON.stringify({ 
+            accountId: accountIds, 
+            groupUrl, 
+            taskType, 
+            maxUnfollow,
+            scheduleType,
+            scheduleTime,
+            scheduleInterval
+        })
+    }).then(() => {
+        if (scheduleType === 'none') {
+            showToast('Đã đưa vào hàng đợi!');
             document.getElementById('control-buttons').style.display = 'flex';
-            document.getElementById('btnPause').style.display = 'flex';
-            document.getElementById('btnResume').style.display = 'none';
-        }, 1000);
-    })
-    .catch(err => {
-        addLog(`Lỗi khởi tạo tác vụ: ${err}`, 'error');
-        btn.disabled = false;
+        } else {
+            showToast('Đã thiết lập lịch hẹn giờ thành công!');
+        }
     });
 });
 
-// Logic cho nút Tạm Dừng
-document.getElementById('btnPause').addEventListener('click', () => {
-    fetch('/api/pause', { method: 'POST' }).then(() => {
-        document.getElementById('btnPause').style.display = 'none';
-        document.getElementById('btnResume').style.display = 'flex';
-    });
-});
-
-// Logic cho nút Tiếp Tục
-document.getElementById('btnResume').addEventListener('click', () => {
-    fetch('/api/resume', { method: 'POST' }).then(() => {
-        document.getElementById('btnResume').style.display = 'none';
-        document.getElementById('btnPause').style.display = 'flex';
-    });
-});
-
-// Logic cho nút Dừng Hẳn
-document.getElementById('btnStop').addEventListener('click', () => {
-    if(confirm('Bạn có chắc chắn muốn DỪNG HẲN chiến dịch đang chạy?')) {
-        fetch('/api/stop', { method: 'POST' }).then(() => {
-            document.getElementById('control-buttons').style.display = 'none'; // Ẩn control
-        });
-    }
-});
-
-// Handle Add / Update Account
 addAccountForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const id = document.getElementById('newAccountId').value.trim();
@@ -460,21 +614,14 @@ addAccountForm.addEventListener('submit', (e) => {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name, proxy, daily_limit, group_url, fb_email, fb_password })
-    })
-    .then(res => res.json())
-    .then(data => {
-        showToast(isEditing ? 'Cập nhật tài khoản thành công!' : 'Thêm tài khoản thành công!');
+    }).then(() => {
+        showToast(isEditing ? 'Cập nhật thành công!' : 'Thêm thành công!');
         resetAccountForm();
         loadAccounts();
-    })
-    .catch(err => {
-        showToast('Lỗi khi lưu tài khoản!');
     });
 });
 
-// Auto Generate ID Logic
 document.getElementById('generate-id-btn').addEventListener('click', () => {
-    // Format: fa_YYMMDD_XXXX
     const date = new Date();
     const yy = String(date.getFullYear()).slice(2);
     const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -483,91 +630,30 @@ document.getElementById('generate-id-btn').addEventListener('click', () => {
     document.getElementById('newAccountId').value = `fa_${yy}${mm}${dd}_${randomStr}`;
 });
 
-// Auto trigger ID generation on load
-if (!document.getElementById('newAccountId').value) {
-    document.getElementById('generate-id-btn').click();
-}
-
-// Natural Config Suggestion
-document.getElementById('btnNaturalConfig').addEventListener('click', () => {
-    // Randomize human-like delays
-    const delayMin = Math.floor(Math.random() * (1200 - 800 + 1) + 800);
-    const delayMax = Math.floor(Math.random() * (3500 - 2500 + 1) + 2500);
+function addLog(message, type = 'info', timestamp = null, options = {}) {
+    if (!liveLogsContainer || !logsContainer) return;
+    const { toLive = true, toFull = true } = options;
     
-    const scrollMin = Math.floor(Math.random() * (2500 - 1800 + 1) + 1800);
-    const scrollMax = Math.floor(Math.random() * (6000 - 4500 + 1) + 4500);
+    let timeStr = timestamp ? new Date(timestamp).toLocaleTimeString('vi-VN', { hour12: false }) : new Date().toLocaleTimeString('vi-VN', { hour12: false });
     
-    document.getElementById('delayMin').value = delayMin;
-    document.getElementById('delayMax').value = delayMax;
-    document.getElementById('scrollPauseMin').value = scrollMin;
-    document.getElementById('scrollPauseMax').value = scrollMax;
-    
-    // Add visual feedback to the button
-    const btn = document.getElementById('btnNaturalConfig');
-    btn.style.background = 'rgba(16, 185, 129, 0.2)';
-    btn.style.borderColor = 'var(--success)';
-    setTimeout(() => {
-        btn.style.background = 'rgba(255,255,255,0.1)';
-        btn.style.borderColor = 'rgba(255,255,255,0.2)';
-    }, 500);
-
-    showToast('Đã gợi ý bộ thông số ngẫu nhiên mô phỏng người thật. Vui lòng bấm Lưu!');
-});
-
-// Toggle Password Logic
-const togglePasswordBtn = document.getElementById('togglePasswordBtn');
-const passwordInput = document.getElementById('newAccountPassword');
-
-togglePasswordBtn.addEventListener('click', () => {
-    const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
-    passwordInput.setAttribute('type', type);
-    
-    if (type === 'password') {
-        togglePasswordBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
-        togglePasswordBtn.title = "Hiện mật khẩu";
-    } else {
-        togglePasswordBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
-        togglePasswordBtn.title = "Ẩn mật khẩu";
-    }
-});
-
-// Clear Logs manually
-btnClearLogs.addEventListener('click', () => {
-    logsContainer.innerHTML = '';
-});
-
-// Append to Log Terminal
-function addLog(message, type = 'info', timestamp = null) {
-    const liveLogsContainer = document.getElementById('live-logs-container');
-    
-    let timeStr = '';
-    if (timestamp) {
-        const date = new Date(timestamp);
-        timeStr = date.toLocaleTimeString('vi-VN', { hour12: false });
-    } else {
-        timeStr = new Date().toLocaleTimeString('vi-VN', { hour12: false });
-    }
-    
-    if (message.includes('✓')) type = 'success';
-    else if (message.toLowerCase().includes('lỗi') || message.toLowerCase().includes('error')) type = 'error';
-    else if (message.toLowerCase().includes('warning') || message.toLowerCase().includes('cảnh báo')) type = 'warning';
-    
-    const htmlContent = `<span class="log-time">[${timeStr}]</span> <span class="log-msg">${message}</span>`;
-    
-    // Add to dedicated Logs Tab
     const el = document.createElement('div');
     el.className = `log-line ${type}`;
-    el.innerHTML = htmlContent;
-    logsContainer.appendChild(el);
-    logsContainer.scrollTop = logsContainer.scrollHeight;
+    el.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="log-msg">${message}</span>`;
     
-    // Add to Dashboard Live Logs
-    if (liveLogsContainer) {
-        const liveEl = document.createElement('div');
-        liveEl.className = `log-line ${type}`;
-        liveEl.innerHTML = htmlContent;
+    if (toFull) {
+        logsContainer.appendChild(el);
+        if (autoScrollLogs) logsContainer.scrollTop = logsContainer.scrollHeight;
+    }
+    
+    if (toLive) {
+        const liveEl = el.cloneNode(true);
         liveLogsContainer.appendChild(liveEl);
-        liveLogsContainer.scrollTop = liveLogsContainer.scrollHeight;
+        if (autoScrollLive) liveLogsContainer.scrollTop = liveLogsContainer.scrollHeight;
+
+        const maxLiveLines = 40;
+        while (liveLogsContainer.children.length > maxLiveLines) {
+            liveLogsContainer.removeChild(liveLogsContainer.firstChild);
+        }
     }
 }
 
@@ -576,36 +662,28 @@ function loadLogs() {
         .then(res => res.json())
         .then(logs => {
             if (logs && logs.length > 0) {
-                logsContainer.innerHTML = ''; // clear default message
-                const liveLogsContainer = document.getElementById('live-logs-container');
-                if (liveLogsContainer) liveLogsContainer.innerHTML = '';
-                
+                logsContainer.innerHTML = '';
                 logs.forEach(log => {
-                    let type = 'info';
-                    if(log.type === 'error') type = 'error';
-                    else if(log.type === 'success') type = 'success';
-                    else if(log.type === 'warning') type = 'warning';
-                    else if(log.type === 'system') type = 'system';
-                    
-                    addLog(`[${log.account_id}] ${log.message}`, type, log.created_at);
+                    addLog(`[${log.account_id}] ${log.message}`, log.type || 'info', log.created_at, { toLive: false, toFull: true });
                 });
+                // Cuộn xuống cuối sau khi tải xong
+                if (logsContainer) {
+                    autoScrollLogs = true;
+                    logsContainer.scrollTop = logsContainer.scrollHeight;
+                }
             }
-        })
-        .catch(console.error);
+        });
 }
 
-// Load logs initially
 loadLogs();
 
-// Socket Events
+socket.on('connect', () => {
+    const badge = document.querySelector('.status-badge');
+    if (badge) { badge.innerText = 'Hệ Thống Đang Kết Nối'; badge.classList.add('online'); }
+});
+
 socket.on('log', (data) => {
-    let type = 'info';
-    if(data.type === 'error') type = 'error';
-    else if(data.type === 'success') type = 'success';
-    else if(data.type === 'warning') type = 'warning';
-    else if(data.type === 'system') type = 'system';
-    
-    addLog(`[${data.accountId}] ${data.message}`, type);
+    addLog(`[${data.accountId}] ${data.message}`, data.type || 'info');
 });
 
 socket.on('stats', (data) => {
@@ -613,8 +691,46 @@ socket.on('stats', (data) => {
     if(data.active !== undefined) statActive.innerText = data.active;
     if(data.sent !== undefined) statSent.innerText = data.sent;
     if(data.unfollows !== undefined) statUnfollows.innerText = data.unfollows;
-    if(data.accounts !== undefined) {
-        loadedAccounts = data.accounts;
-        renderAccountsTable(data.accounts);
-    }
+    if(data.accounts !== undefined) renderAccountsTable(data.accounts);
 });
+
+window.stopAllTasks = () => {
+    fetch('/api/stop', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Hệ thống đang dừng...');
+                document.getElementById('control-buttons').style.display = 'none';
+            }
+        }).catch(err => showToast('Lỗi khi dừng hệ thống'));
+};
+
+let isPaused = false;
+window.pauseAllTasks = () => {
+    const btn = document.getElementById('btnPause');
+    if (!isPaused) {
+        fetch('/api/pause', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    isPaused = true;
+                    btn.textContent = 'Tiếp Tục';
+                    btn.classList.remove('btn-warning');
+                    btn.classList.add('btn-success');
+                    showToast('Đã tạm dừng');
+                }
+            }).catch(err => showToast('Lỗi khi tạm dừng'));
+    } else {
+        fetch('/api/resume', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    isPaused = false;
+                    btn.textContent = 'Tạm Dừng';
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-warning');
+                    showToast('Đã tiếp tục');
+                }
+            }).catch(err => showToast('Lỗi khi tiếp tục'));
+    }
+};

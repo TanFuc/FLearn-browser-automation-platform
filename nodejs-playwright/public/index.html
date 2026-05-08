@@ -3,21 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FAuto - Hệ Thống Tự Động Kết Bạn</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>FAuto - AI Automation Platform</title>
+    <!-- Premium Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="research.css">
 </head>
 <body>
     <div class="app-container">
-        <!-- Sidebar -->
+        <!-- Sidebar Navigation -->
         <aside class="sidebar">
             <div class="logo">
-                <div class="logo-icon">
-                    <span class="f-letter">F</span>
-                </div>
-                <h2><span class="brand-f">F</span>Auto</h2>
+                <div class="logo-icon"><span class="f-letter">F</span></div>
+                <h2>FAuto<span class="brand-f">.</span></h2>
             </div>
-            <nav class="mobile-scroll">
+            <nav>
                 <a href="#" class="nav-item active" data-tab="dashboard">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                     <span>Bảng Điều Khiển</span>
@@ -28,350 +31,402 @@
                 </a>
                 <a href="#" class="nav-item" data-tab="settings">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    <span>Cài Đặt Hệ Thống</span>
+                    <span>Cài Đặt</span>
                 </a>
                 <a href="#" class="nav-item" data-tab="logs">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                    <span>Nhật Ký Hoạt Động</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                    <span>Nhật Ký</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="schedules">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                    <span>Quản Lý Lịch</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="research">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+                    <span>AI Research</span>
+                    <span id="researchQuotaBadge" style="margin-left:auto;font-size:0.65rem;background:rgba(99,102,241,0.2);color:#818cf8;padding:2px 5px;border-radius:4px;display:none">0</span>
                 </a>
             </nav>
-                <div style="padding: 12px; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);">
-                    <a href="/research.html" target="_blank" style="display:flex; align-items:center; gap:8px; padding:10px 12px; background:rgba(99,102,241,0.12); border:1px solid rgba(99,102,241,0.25); border-radius:8px; color:#818cf8; font-size:0.82rem; font-weight:600; text-decoration:none; transition:all 0.2s;">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3"/></svg>
-                        🔬 AI Research
-                    </a>
-                </div>
         </aside>
 
-        <!-- Main Content -->
+        <!-- Main Content Area -->
         <main class="main-content">
             <header>
                 <div>
-                    <h1>Trung Tâm Điều Khiển</h1>
-                    <p class="header-subtitle">Quản lý và theo dõi các chiến dịch tự động kết bạn.</p>
+                    <h1 id="mainTitle">Trung Tâm Điều Khiển</h1>
+                    <p class="header-subtitle" id="mainSubTitle">Quản lý và theo dõi các chiến dịch tự động.</p>
                 </div>
-                <div class="status-badge online">Hệ Thống Đang Chạy</div>
+                <div class="status-badge"><span>Hệ Thống Đang Kết Nối</span></div>
             </header>
 
             <div class="content-wrapper">
-                <!-- Dashboard Tab -->
-                <div id="dashboard-tab" class="tab-pane active">
-                    <div class="grid-2-col top-grid">
-                        <!-- Task Runner Card -->
-                        <div class="card glass-card shadow-effect">
-                            <div class="card-header">
-                                <h3>Khởi Chạy Chiến Dịch Mới</h3>
-                            </div>
-                            <form id="run-task-form">
-                                <div class="form-group">
-                                    <label>Chọn Tài Khoản</label>
-                                    <div class="custom-multiselect" id="accountMultiselect">
-                                        <div class="multiselect-header" onclick="toggleMultiselect()">
-                                            <span id="multiselect-selected-text">-- Chọn tài khoản --</span>
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                                        </div>
-                                        <div class="multiselect-options" id="multiselect-options">
-                                            <!-- Khởi tạo bằng JS -->
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <label for="taskType">Loại Chiến Dịch</label>
-                                    <select id="taskType" name="taskType" class="form-control" style="background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 12px; border-radius: var(--radius-md); width: 100%;" onchange="toggleTaskTypeUI()">
-                                        <option value="invite">Kết Bạn Tự Động (Group Members)</option>
-                                        <option value="unfollow">Hủy Theo Dõi (Unfollow Bạn Bè)</option>
-                                    </select>
-                                </div>
-                                <div class="form-group" id="groupUrlContainer">
-                                    <label for="groupUrl">URL Group Đích</label>
-                                    <input type="url" id="groupUrl" name="groupUrl" placeholder="https://www.facebook.com/groups/YOUR_GROUP_ID/members" required>
-                                </div>
-                                <div class="form-group" id="unfollowOptionsContainer" style="display: none;">
-                                    <label for="maxUnfollow">Số Lượng Hủy Theo Dõi Tối Đa (Để 0 là Hủy Tất Cả)</label>
-                                    <input type="number" id="maxUnfollow" name="maxUnfollow" placeholder="Nhập số lượng, ví dụ: 50" min="0" value="0">
-                                </div>
-                                <div class="form-actions mt-auto" style="display: flex; flex-direction: column; gap: 10px;">
-                                    <button type="submit" class="btn btn-primary full-width" id="btnRun">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                                        Bắt Đầu Chạy
-                                    </button>
-                                    <div id="control-buttons" style="display: none; gap: 10px;">
-                                        <button type="button" class="btn full-width" id="btnPause" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3);">
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-                                            Tạm Dừng
-                                        </button>
-                                        <button type="button" class="btn full-width" id="btnResume" style="background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); display: none;">
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                                            Tiếp Tục
-                                        </button>
-                                        <button type="button" class="btn full-width" id="btnStop" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3);">
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
-                                            Dừng Hẳn
-                                        </button>
-                                    </div>
-                                </div>
-                            </form>
+                <!-- ═══ SCHEDULES TAB ═══ -->
+                <div id="schedules-tab" class="tab-pane">
+                    <div class="card">
+                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                            <h2 class="card-title">Quản Lý Lịch Hẹn & Tự Động Hóa</h2>
+                            <button class="btn btn-primary btn-sm" onclick="loadSchedules()">🔄 Làm mới</button>
                         </div>
-
-                        <!-- Stats Card -->
-                        <div class="card glass-card shadow-effect stats-card">
-                            <div class="card-header">
-                                <h3>Thống Kê Phiên Làm Việc</h3>
-                            </div>
-                            <div class="stats-grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
-                                <div class="stat-box">
-                                    <span class="stat-label">Hàng Đợi</span>
-                                    <span class="stat-value text-gradient-warning" id="stat-queued">0</span>
-                                </div>
-                                <div class="stat-box">
-                                    <span class="stat-label">Đang Chạy</span>
-                                    <span class="stat-value text-gradient-primary" id="stat-active">0</span>
-                                </div>
-                                <div class="stat-box">
-                                    <span class="stat-label">Lời Mời Đã Gửi</span>
-                                    <span class="stat-value text-gradient-success" id="stat-sent">0</span>
-                                </div>
-                                <div class="stat-box">
-                                    <span class="stat-label">Đã Hủy Theo Dõi</span>
-                                    <span class="stat-value text-gradient-error" id="stat-unfollows">0</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Live Logs Terminal on Dashboard -->
-                    <div class="card terminal-card shadow-effect mt-4">
-                        <div class="terminal-header">
-                            <div class="terminal-dots">
-                                <span></span><span></span><span></span>
-                            </div>
-                            <div class="terminal-title">Nhật Ký Hoạt Động (Live)</div>
-                            <button id="btnDashboardClearLogs" class="btn-icon" title="Xoá Nhật Ký">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                            </button>
-                        </div>
-                        <div class="terminal-body" id="live-logs-container" style="max-height: 400px; overflow-y: auto;">
-                            <div class="log-line system"><span class="log-time">[Hệ thống]</span> <span class="log-msg">Khởi tạo thành công. Đang chờ tác vụ...</span></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Logs Tab -->
-                <div id="logs-tab" class="tab-pane">
-                    <div class="card terminal-card shadow-effect" style="height: calc(100vh - 120px); display: flex; flex-direction: column;">
-                        <div class="terminal-header">
-                            <div class="terminal-dots">
-                                <span></span><span></span><span></span>
-                            </div>
-                            <div class="terminal-title">Toàn Bộ Nhật Ký Hệ Thống (Lưu Trữ Vĩnh Viễn)</div>
-                            <button id="btnClearLogs" class="btn-icon" title="Xoá Nhật Ký Khỏi Màn Hình">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                            </button>
-                        </div>
-                        <div class="terminal-body" id="logs-container" style="flex: 1; overflow-y: auto;">
-                            <div class="log-line system"><span class="log-time">[Hệ thống]</span> <span class="log-msg">Đang tải lịch sử logs...</span></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Settings Tab -->
-                <div id="settings-tab" class="tab-pane">
-                    <div class="card glass-card shadow-effect">
-                        <div class="card-header">
-                            <h3 style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
-                                Cấu Hình Bot Tự Động
-                                <button type="button" id="btnNaturalConfig" style="font-size:0.8rem; padding: 6px 12px; background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px; cursor:pointer; display:flex; gap:6px; align-items:center; transition:var(--transition);">
-                                    <span>🔮</span> Tự Động Gợi Ý Độ Trễ
-                                </button>
-                            </h3>
-                            <p class="subtitle" style="margin-top: 8px;">Những cấu hình này sẽ tự động áp dụng cho mọi chiến dịch ngay lập tức.</p>
-                        </div>
-                        
-                        <form id="settings-form">
-                            <div class="grid-2-col settings-grid">
-                                <div class="form-section">
-                                    <h4 class="section-title">Giới Hạn Tác Vụ</h4>
-                                    <div class="form-group-row">
-                                        <div class="form-group">
-                                            <label for="maxScrolls">Số Lượt Cuộn Tối Đa</label>
-                                            <input type="number" id="maxScrolls" name="maxScrolls" min="1" value="20">
-                                            <span class="field-hint">Tránh bị đánh dấu là spam</span>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="maxClicks">Số Lời Mời Tối Đa</label>
-                                            <input type="number" id="maxClicks" name="maxClicks" min="1" value="50">
-                                            <span class="field-hint">Mỗi lần chạy bot</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="form-section">
-                                    <h4 class="section-title">Độ Trễ Phỏng Theo Người Thật</h4>
-                                    <div class="form-group-row">
-                                        <div class="form-group">
-                                            <label for="delayMin">Delay Giữa Các Lần Bấm (Từ ms)</label>
-                                            <input type="number" id="delayMin" name="delayMin" min="100" value="1000">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="delayMax">Đến (ms)</label>
-                                            <input type="number" id="delayMax" name="delayMax" min="100" value="3000">
-                                        </div>
-                                    </div>
-                                    <div class="form-group-row">
-                                        <div class="form-group">
-                                            <label for="scrollPauseMin">Thời Gian Chờ Cuộn Trang (Từ ms)</label>
-                                            <input type="number" id="scrollPauseMin" name="scrollPauseMin" min="100" value="2000">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="scrollPauseMax">Đến (ms)</label>
-                                            <input type="number" id="scrollPauseMax" name="scrollPauseMax" min="100" value="5000">
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-section filter-section mt-4">
-                                <h4 class="section-title">Bộ Lọc Thông Minh (Smart Filters)</h4>
-                                <div class="checkbox-wrapper">
-                                    <div class="checkbox-group">
-                                        <label class="custom-checkbox">
-                                            <input type="checkbox" id="skipAdmins" name="skipAdmins" checked>
-                                            <span class="checkmark"></span>
-                                            <span class="checkbox-label">Bỏ qua Quản Trị Viên & Người Kiểm Duyệt</span>
-                                        </label>
-                                    </div>
-                                    <div class="checkbox-group">
-                                        <label class="custom-checkbox">
-                                            <input type="checkbox" id="skipVerified" name="skipVerified" checked>
-                                            <span class="checkmark"></span>
-                                            <span class="checkbox-label">Bỏ qua Tài Khoản Đã Xác Minh (Tích xanh)</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-actions form-footer">
-                                <button type="submit" class="btn btn-primary btn-large" id="btnSaveSettings">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                                    Lưu Cấu Hình
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <!-- Accounts Tab -->
-                <div id="accounts-tab" class="tab-pane">
-                    <div class="card glass-card shadow-effect">
-                        <div class="card-header">
-                            <h3>Quản Lý Tài Khoản</h3>
-                            <p class="subtitle">Thêm mới và theo dõi trạng thái các tài khoản Facebook.</p>
-                        </div>
-                        
-                        <form id="add-account-form" style="margin-bottom: 30px;">
-                            <div class="grid-2-col">
-                                <div class="form-group">
-                                    <label for="newAccountId">ID Tài Khoản (Bắt buộc) <span id="generate-id-btn" title="Tạo ID ngẫu nhiên" style="color:var(--primary); cursor:pointer; float:right; font-size:0.85rem; display:flex; align-items:center; gap:4px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.21l5.67-5.67"/></svg> Tạo Tự Động</span></label>
-                                    <input type="text" id="newAccountId" placeholder="Ví dụ: acc_01" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="newAccountName">Tên Hiển Thị (Tùy chọn)</label>
-                                    <input type="text" id="newAccountName" placeholder="Ví dụ: Nguyễn Văn A">
-                                </div>
-                            </div>
-                            <div class="grid-2-col">
-                                <div class="form-group">
-                                    <label for="newAccountProxy">Proxy (Tuỳ chọn)</label>
-                                    <input type="text" id="newAccountProxy" placeholder="http://user:pass@ip:port">
-                                </div>
-                            <div class="grid-2-col">
-                                <div class="form-group">
-                                    <label for="newAccountEmail">Email / UID (Để Auto Login)</label>
-                                    <input type="text" id="newAccountEmail" placeholder="Nhập Email hoặc UID">
-                                </div>
-                                <div class="form-group">
-                                    <label for="newAccountPassword">Mật khẩu Facebook</label>
-                                    <div class="password-wrapper">
-                                        <input type="password" id="newAccountPassword" placeholder="Nhập Mật khẩu">
-                                        <button type="button" id="togglePasswordBtn" class="toggle-password-btn" title="Hiện mật khẩu">
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="grid-2-col">
-                                <div class="form-group">
-                                    <label for="newAccountGroupUrl">URL Group Mặc Định (Tùy chọn)</label>
-                                    <input type="url" id="newAccountGroupUrl" placeholder="https://facebook.com/groups/abc">
-                                </div>
-                                <div class="form-group">
-                                    <label for="newAccountLimit">Giới Hạn Gửi / Ngày</label>
-                                    <input type="number" id="newAccountLimit" value="50" min="1">
-                                </div>
-                            </div>
-                            <div class="form-actions mt-auto" style="margin-top: 15px; padding-bottom: 20px;">
-                                <button type="submit" class="btn btn-primary full-width">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                                    Lưu Tài Khoản
-                                </button>
-                            </div>
-                        </form>
-
-                        <div class="table-responsive">
+                        <div class="table-container">
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>Tên / ID</th>
+                                        <th>ID / Loại</th>
+                                        <th>Tài Khoản</th>
+                                        <th>Chi tiết / Nhóm</th>
+                                        <th>Lịch Trình</th>
+                                        <th>Lượt Chạy</th>
                                         <th>Trạng Thái</th>
-                                        <th>URL Group</th>
-                                        <th>Đã Gửi (Hôm nay)</th>
-                                        <th>Đã Hủy T.Dõi</th>
                                         <th>Thao Tác</th>
                                     </tr>
                                 </thead>
-                                <tbody id="accounts-table-body">
-                                    <!-- Rows injected via JS -->
+                                <tbody id="schedulesTableBody">
+                                    <tr><td colspan="7" style="text-align:center;">Đang tải...</td></tr>
                                 </tbody>
                             </table>
                         </div>
+                    </div>
 
-                        <!-- Soft-Deleted Accounts Section -->
-                        <div style="margin-top: 32px;">
-                            <div class="card-header" style="cursor:pointer; user-select:none;" onclick="toggleDeletedSection()">
-                                <h3 style="display:flex; align-items:center; gap:8px; margin:0;">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                                    Tài Khoản Đã Xóa (Soft Deleted)
-                                    <span id="deleted-count-badge" style="background:rgba(239,68,68,0.2); color:#f87171; font-size:0.75rem; padding:2px 8px; border-radius:12px; font-weight:600;">0</span>
-                                </h3>
+                    <div id="scheduleHistorySection" style="display:none; margin-top:24px;">
+                        <div class="card">
+                            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                                <h2 class="card-title" id="historyTitle">Lịch Sử Chạy</h2>
+                                <button class="btn btn-outline btn-sm" onclick="closeHistory()">Đóng</button>
                             </div>
-                            <div id="deleted-accounts-section" style="display:none; margin-top:12px;">
-                                <div class="table-responsive">
-                                    <table class="data-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Tên / ID</th>
-                                                <th>Email</th>
-                                                <th>Ngày Xóa Mềm</th>
-                                                <th>Thao Tác</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="deleted-accounts-table-body">
-                                        </tbody>
-                                    </table>
+                            <div class="table-container">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Bắt đầu</th>
+                                            <th>Tài khoản</th>
+                                            <th>Trạng thái</th>
+                                            <th>Kết quả / Lỗi</th>
+                                            <th>Thời gian chạy</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="historyTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ AI RESEARCH TAB ═══ -->
+                <div id="research-tab" class="tab-pane">
+                    <div class="quota-bar" id="quotaBar">
+                        <div class="quota-item">Requests: <span id="qReq">—</span></div>
+                        <div class="quota-item">Soft: <span id="qSoft">20</span></div>
+                        <div class="quota-item">Hard: <span id="qHard">30</span></div>
+                        <div class="quota-item">Tokens: <span id="qTokens">—</span></div>
+                        <div class="quota-item">Cache: <span id="qCache">—</span></div>
+                        <div class="progress-wrap">
+                            <div class="progress-bar"><div class="progress-fill" id="quotaFill" style="width:0%"></div></div>
+                            <span id="quotaPct" style="font-size:0.75rem; font-weight:700; margin-left:8px;">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="cooldown-bar" id="cooldownBar">
+                        <div class="cooldown-status" id="cooldownStatus">Cooldown: --</div>
+                        <div class="cooldown-meta">
+                            <span id="cooldownRemaining">Còn lại: --</span>
+                            <span id="cooldownNext">Lần tiếp theo: --</span>
+                        </div>
+                        <button class="btn btn-outline btn-sm" id="btnResetCooldown">Reset cooldown</button>
+                        <span class="cooldown-badge" id="cooldownDevBadge" style="display:none;">Chế độ phát triển</span>
+                    </div>
+                    
+                    <div style="display:flex; gap:10px; margin-bottom:24px; flex-wrap:wrap;">
+                        <button id="rtab-mmo" class="btn btn-outline" onclick="switchResearchTab('mmo')">⚡ MMO</button>
+                        <button id="rtab-ai" class="btn btn-outline" onclick="switchResearchTab('ai')">🤖 AI Market</button>
+                        <button id="rtab-suggest" class="btn btn-outline" onclick="switchResearchTab('suggest')">💡 Gợi Ý</button>
+                        <button id="rtab-trends" class="btn btn-primary" onclick="switchResearchTab('trends')">🛒 Trends V4</button>
+                        <button id="rtab-quota" class="btn btn-outline" onclick="switchResearchTab('quota')">📊 Usage</button>
+                        <button id="rtab-prompts" class="btn btn-outline" onclick="switchResearchTab('prompts')">🧩 Prompts</button>
+                        <button id="btnTestGemini" class="btn btn-outline" onclick="testGemini()">🧪 Test API</button>
+                    </div>
+
+                    <div id="testResult" class="test-result" style="display:none;"></div>
+
+                    <!-- MMO Page -->
+                    <div id="rpage-mmo" class="rpage" style="display:none;">
+                        <div class="page-header" style="margin-bottom:20px;">
+                            <p id="mmoUpdated" style="font-size:0.8rem; color:var(--text-muted);">Đang tải...</p>
+                        </div>
+                        <div class="daily-summary" id="dailySummary-mmo"></div>
+                        <div class="cards-grid" id="mmoTopCards"></div>
+                        <div id="mmoGroupSections" class="group-sections"></div>
+                        <div class="table-wrap" style="margin-top:24px;">
+                            <div class="table-toolbar">
+                                <input class="search-input" id="mmoSearch" placeholder="Tìm..." oninput="filterMMO()" style="width:200px;">
+                                <select class="filter-select" id="mmoCategoryFilter" onchange="filterMMO()"></select>
+                                <select class="filter-select" id="mmoSortFilter" onchange="filterMMO()">
+                                    <option value="trend">Trend</option>
+                                    <option value="monetization">Monetization</option>
+                                </select>
+                                <span id="mmoCount" style="margin-left:auto; font-size:0.8rem;"></span>
+                                <button class="btn btn-primary btn-sm" onclick="refreshPage('mmo')">↺ Refresh</button>
+                            </div>
+                            <div class="table-responsive">
+                                <table>
+                                    <thead><tr><th>Cơ Hội</th><th>Niche</th><th>Trend</th><th>Monetize</th><th>Cạnh Tranh</th><th>Mô Hình</th></tr></thead>
+                                    <tbody id="mmoTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- AI Tools Page -->
+                    <div id="rpage-ai" class="rpage" style="display:none;">
+                        <div class="page-header" style="margin-bottom:20px;"><p id="aiUpdated"></p></div>
+                        <div class="daily-summary" id="dailySummary-ai"></div>
+                        <div class="cards-grid" id="aiTopCards"></div>
+                        <div id="aiGroupSections" class="group-sections"></div>
+                        <div class="table-wrap">
+                            <div class="table-toolbar">
+                                <input class="search-input" id="aiSearch" placeholder="Tìm..." oninput="filterAI()">
+                                <select class="filter-select" id="aiTypeFilter" onchange="filterAI()"><option value="">Loại</option></select>
+                                <select class="filter-select" id="aiPriceFilter" onchange="filterAI()"><option value="">Giá</option></select>
+                                <label style="font-size:0.8rem;"><input type="checkbox" id="aiBestValue" onchange="filterAI()"> Best Value</label>
+                                <span id="aiCount" style="margin-left:auto;"></span>
+                                <button class="btn btn-primary btn-sm" onclick="refreshPage('ai_tools')">↺ Refresh</button>
+                            </div>
+                            <div class="table-responsive">
+                                <table>
+                                    <thead><tr><th>Công cụ</th><th>Loại</th><th>Giá</th><th>Status</th><th>Use Case</th><th>Market Signal</th><th>Value</th></tr></thead>
+                                    <tbody id="aiTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="rpage-suggest" class="rpage" style="display:none;">
+                        <div class="suggest-toolbar">
+                            <div class="suggest-title">Gợi ý AI</div>
+                            <div id="suggestUpdated" class="suggest-updated"></div>
+                        </div>
+                        <div class="daily-summary" id="dailySummary-suggest"></div>
+                        <div id="suggestList" class="suggest-list"></div>
+                    </div>
+                    
+                    
+                    <!-- V4 Trends Page -->
+                    <div id="rpage-trends" class="rpage active">
+                        <div class="page-header" style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <h2 style="margin:0; font-size:1.2rem;">🛒 Product Trend Intelligence <span style="font-size:0.7rem; font-weight:400; opacity:0.6;">V4.0.1</span></h2>
+                                <p id="v4MetaInfo" style="font-size:0.8rem; color:var(--text-muted); margin:4px 0 0;">Dữ liệu xu hướng thị trường cập nhật từ AI.</p>
+                            </div>
+                            <button class="btn btn-primary btn-sm" id="v4RefreshBtn" onclick="TrendV4.load()">🔄 Refresh</button>
+                        </div>
+
+                        <div class="v4-filter-bar">
+                            <div class="v4-filter-row">
+                                <select class="filter-select" id="v4MarketFilter">
+                                    <option value="vn">🇻🇳 Vietnam</option>
+                                    <option value="global">🌍 Global</option>
+                                </select>
+                                <select class="filter-select" id="v4WindowFilter">
+                                    <option value="last_7_days">7 ngày qua</option>
+                                    <option value="last_30_days">30 ngày qua</option>
+                                </select>
+                                <select class="filter-select" id="v4SortFilter">
+                                    <option value="trend_score">Sắp xếp: Trend</option>
+                                    <option value="confidence_score">Sắp xếp: Tin cậy</option>
+                                </select>
+                                <input type="text" id="v4CustomCategory" class="v4-custom-input" placeholder="Tùy chỉnh (vd: Đồ câu, Outdoor...)">
+                            </div>
+                            <div id="v4CategoryFilters" class="v4-cat-filters">
+                                <label><input type="checkbox" value="Skincare" checked> Skincare</label>
+                                <label><input type="checkbox" value="Gia dụng" checked> Gia dụng</label>
+                                <label><input type="checkbox" value="Fitness" checked> Fitness</label>
+                                <label><input type="checkbox" value="Thời trang" checked> Thời trang</label>
+                                <label><input type="checkbox" value="Mẹ & bé" checked> Mẹ & bé</label>
+                                <label><input type="checkbox" value="Điện tử"> Điện tử</label>
+                                <label><input type="checkbox" value="Sức khỏe"> Sức khỏe</label>
+                                <label><input type="checkbox" value="Thú cưng"> Thú cưng</label>
+                                <label><input type="checkbox" value="Đồ chơi"> Đồ chơi</label>
+                                <label><input type="checkbox" value="Nhà cửa"> Nhà cửa</label>
+                            </div>
+                        </div>
+
+                        <div id="v4TrendGrid" class="v4-grid"></div>
+                    </div>
+
+                    <div id="rpage-quota" class="rpage" style="display:none;">
+                        <div id="quotaAlertFull"></div>
+                        <div class="daily-summary" id="dailySummary-usage"></div>
+                        <div class="daily-table-wrap">
+                            <div class="daily-table-toolbar">
+                                <div class="daily-title">Thống kê theo ngày</div>
+                                <div class="daily-pagination">
+                                    <button class="btn btn-outline btn-sm" id="dailyPrevBtn">← Trước</button>
+                                    <span id="dailyPageInfo" class="daily-page">1/1</span>
+                                    <button class="btn btn-outline btn-sm" id="dailyNextBtn">Sau →</button>
+                                </div>
+                            </div>
+                            <div class="table-responsive">
+                                <table>
+                                    <thead><tr><th>Ngày</th><th>Requests</th><th>Prompt</th><th>Output</th><th>Total</th><th>Cache</th></tr></thead>
+                                    <tbody id="dailyUsageBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="usage-grid" id="usageGrid"></div>
+                        <div class="table-responsive" style="margin-top:20px;">
+                            <table><thead><tr><th>Model</th><th>Prompt</th><th>Output</th><th>Total</th><th>Cache</th><th>Type</th><th>Date</th></tr></thead><tbody id="recentCallsBody"></tbody></table>
+                        </div>
+                    </div>
+                    
+                    <div id="rpage-prompts" class="rpage" style="display:none;">
+                        <div class="prompt-grid">
+                            <div class="prompt-card">
+                                <h3>Prompt Editor</h3>
+                                <form id="promptForm">
+                                    <select id="promptPageType" required class="filter-select" style="width:100%; margin-bottom:12px;">
+                                        <option value="mmo">mmo</option><option value="ai_tools">ai_tools</option><option value="suggestions">suggestions</option>
+                                    </select>
+                                    <input type="text" id="promptVariant" placeholder="v1" required style="margin-bottom:12px;">
+                                    <textarea id="promptText" rows="8" placeholder="Nội dung prompt..." required style="margin-bottom:12px;"></textarea>
+                                    <label style="display:block; margin-bottom:12px;"><input type="checkbox" id="promptSetActive"> Set as Active</label>
+                                    <button type="submit" class="btn btn-primary full-width">Lưu Prompt</button>
+                                </form>
+                            </div>
+                            <div class="prompt-card"><h3>Danh sách</h3><div id="promptList" class="prompt-list"></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ DASHBOARD TAB ═══ -->
+                <div id="dashboard-tab" class="tab-pane active">
+                    <div class="dashboard-grid">
+                        <div class="card">
+                            <div class="card-header"><h3>Khởi Chạy</h3></div>
+                            <form id="run-task-form">
+                                <div class="form-group">
+                                    <label>Tài Khoản</label>
+                                    <div class="custom-multiselect" id="accountMultiselect">
+                                        <div class="multiselect-header" onclick="toggleMultiselect()"><span id="multiselect-selected-text">-- Chọn tài khoản --</span></div>
+                                        <div class="multiselect-options" id="multiselect-options"></div>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>Tác Vụ</label>
+                                    <select id="taskType" onchange="toggleTaskTypeUI()" class="filter-select" style="width:100%;">
+                                        <option value="invite">Kết bạn trong nhóm</option><option value="unfollow">Hủy theo dõi</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="groupUrlContainer"><label>Link Nhóm</label><input type="url" id="groupUrl" placeholder="https://facebook.com/groups/..." inputmode="url"></div>
+                                <div class="form-group" id="unfollowOptionsContainer" style="display:none;"><label>Giới hạn</label><input type="number" id="maxUnfollow" value="50" placeholder="50"></div>
+                                <div class="form-group" id="scheduleOptionsContainer">
+                                    <label>Hẹn Giờ (Tùy chọn)</label>
+                                    <div style="display: flex; gap: 8px;">
+                                        <select id="scheduleType" onchange="toggleScheduleUI()" class="filter-select" style="flex: 1;">
+                                            <option value="none">Chạy ngay</option>
+                                            <option value="time">Lúc (Giờ:Phút)</option>
+                                            <option value="interval">Lặp lại mỗi X giờ</option>
+                                        </select>
+                                        <input type="time" id="scheduleTime" style="display: none; flex: 1;" class="filter-select">
+                                        <input type="number" id="scheduleInterval" placeholder="Số giờ" style="display: none; flex: 1;" min="1" max="72" class="filter-select">
+                                    </div>
+                                    <small id="scheduleHint" style="color:var(--text-muted); font-size:0.8rem; margin-top:4px; display:block;">Bot sẽ chạy lập tức nếu chọn "Chạy ngay".</small>
+                                </div>
+                                <button type="submit" class="btn btn-primary full-width" id="btnSubmitRun">Bắt Đầu</button>
+                            </form>
+                            <div id="control-buttons" style="margin-top:16px; display:none; gap:8px;">
+                                <button class="btn btn-danger full-width" onclick="stopAllTasks()">Dừng</button>
+                                <button class="btn btn-warning full-width" id="btnPause" onclick="pauseAllTasks()">Tạm Dừng</button>
+                            </div>
+                        </div>
+                        
+                        <div class="card dashboard-stats">
+                            <div class="stats-grid">
+                                <div class="card" style="padding:12px; text-align:center;"><p style="font-size:0.7rem; color:var(--text-muted);">Đợi</p><b id="stat-queued">0</b></div>
+                                <div class="card" style="padding:12px; text-align:center;"><p style="font-size:0.7rem; color:var(--text-muted);">Chạy</p><b id="stat-active" style="color:var(--warning);">0</b></div>
+                                <div class="card" style="padding:12px; text-align:center;"><p style="font-size:0.7rem; color:var(--text-muted);">Gửi</p><b id="stat-sent" style="color:var(--accent);">0</b></div>
+                                <div class="card" style="padding:12px; text-align:center;"><p style="font-size:0.7rem; color:var(--text-muted);">Hủy</p><b id="stat-unfollows" style="color:var(--primary);">0</b></div>
+                            </div>
+                            <div class="card terminal-card" style="flex:1; min-height:300px;">
+                                <div class="terminal-header"><div class="terminal-title">live_monitor.log</div></div>
+                                <div class="terminal-body" id="live-logs-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ ACCOUNTS TAB ═══ -->
+                <div id="accounts-tab" class="tab-pane">
+                    <div class="accounts-grid">
+                        <div class="card">
+                            <form id="add-account-form">
+                                <div class="form-group"><label>ID</label><div style="display:flex; gap:8px;"><input type="text" id="newAccountId" required placeholder="fa_YYMMDD_abcd"><button type="button" class="btn btn-outline btn-sm" id="generate-id-btn">↻</button></div></div>
+                                <div class="form-group"><label>Tên / Proxy</label><input type="text" id="newAccountName" placeholder="Tên hiển thị"><input type="text" id="newAccountProxy" style="margin-top:8px;" placeholder="http://user:pass@ip:port"></div>
+                                <div class="form-group"><label>Email / Pass</label><input type="text" id="newAccountEmail" placeholder="email@domain.com"><input type="password" id="newAccountPassword" style="margin-top:8px;" placeholder="Mật khẩu Facebook"></div>
+                                <div class="form-group"><label>Link / Limit</label><input type="url" id="newAccountGroupUrl" placeholder="https://facebook.com/groups/..." inputmode="url"><input type="number" id="newAccountLimit" value="50" style="margin-top:8px;" placeholder="50"></div>
+                                <button type="submit" class="btn btn-primary full-width">Lưu</button>
+                            </form>
+                        </div>
+                        <div class="card">
+                            <div class="table-responsive">
+                                <table>
+                                    <thead><tr><th>Tài Khoản</th><th>Trạng Thái</th><th>Nhóm</th><th>Gửi/Limit</th><th>Hủy</th><th>Thao Tác</th></tr></thead>
+                                    <tbody id="accounts-table-body"></tbody>
+                                </table>
+                            </div>
+                            <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
+                                <button class="btn btn-outline full-width btn-sm" onclick="toggleDeletedSection()">Thùng Rác (<span id="deleted-count-badge">0</span>)</button>
+                                <div id="deleted-accounts-section" style="display:none; margin-top:12px;">
+                                    <div class="table-responsive"><table><thead><tr><th>ID</th><th>Email</th><th>Xóa Lúc</th><th>Thao Tác</th></tr></thead><tbody id="deleted-accounts-table-body"></tbody></table></div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
+                <!-- ═══ SETTINGS TAB ═══ -->
+                <div id="settings-tab" class="tab-pane">
+                    <div class="card">
+                        <form id="settings-form">
+                            <p class="form-hint">Cấu hình số lần thao tác và thời gian chờ cho mỗi phiên chạy. Giữ thấp để an toàn tài khoản.</p>
+                            <div class="settings-grid">
+                                <div class="form-group"><label>Max Scrolls</label><input type="number" id="maxScrolls" placeholder="Số lần cuộn tối đa"></div>
+                                <div class="form-group"><label>Max Clicks</label><input type="number" id="maxClicks" placeholder="Số lần click tối đa"></div>
+                                <div class="form-group"><label>Delay Click (s)</label><div style="display:flex; gap:8px;"><input type="number" id="delayMin" placeholder="Tối thiểu"><input type="number" id="delayMax" placeholder="Tối đa"></div></div>
+                                <div class="form-group"><label>Delay Scroll (s)</label><div style="display:flex; gap:8px;"><input type="number" id="scrollPauseMin" placeholder="Tối thiểu"><input type="number" id="scrollPauseMax" placeholder="Tối đa"></div></div>
+                            </div>
+                            <div class="settings-toggles">
+                                <label><input type="checkbox" id="skipAdmins"> Bỏ qua Admin nhóm</label>
+                                <label><input type="checkbox" id="skipVerified"> Bỏ qua tài khoản tích xanh</label>
+                            </div>
+                            <button type="submit" class="btn btn-primary mt-4">Lưu</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- ═══ LOGS TAB ═══ -->
+                <div id="logs-tab" class="tab-pane">
+                    <div class="card terminal-card" style="height: 70vh;">
+                        <div class="terminal-header"><div class="terminal-title">full_history.log</div><button class="btn btn-outline btn-sm" id="btnClearLogs" style="margin-left:auto;">Xóa</button></div>
+                        <div class="terminal-body" id="logs-container"></div>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
 
-    <!-- Notification Toast -->
-    <div id="toast" class="toast">Đã lưu thành công!</div>
+    <!-- V4 Detail Modal -->
+    <div id="v4DetailModal" class="v4-modal-overlay" onclick="if(event.target===this)TrendV4.closeModal()">
+        <div class="v4-modal">
+            <div class="v4-modal-header">
+                <h2 id="v4ModalTitle">Chi tiết sản phẩm</h2>
+                <button class="v4-modal-close" onclick="TrendV4.closeModal()">✕</button>
+            </div>
+            <div id="v4ModalBody" class="v4-modal-body"></div>
+        </div>
+    </div>
 
+    <div id="toast" class="toast">Đã thực hiện!</div>
     <script src="/socket.io/socket.io.js"></script>
     <script src="app.js"></script>
+    <script src="research.js"></script>
 </body>
 </html>

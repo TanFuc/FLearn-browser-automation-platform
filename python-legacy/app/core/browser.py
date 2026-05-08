@@ -166,8 +166,13 @@ class BrowserManager:
             True if Chrome started successfully, False otherwise.
         """
         if port in self.processes:
-            self.logger.warning(f"Chrome already running on port {port}")
-            return True
+            process = self.processes[port]
+            if process.poll() is None:
+                self.logger.warning(f"Chrome already running on port {port}")
+                return True
+            else:
+                self.logger.info(f"Tiến trình Chrome trên cổng {port} đã bị tắt/crash từ trước. Đang dọn dẹp và khởi động lại...")
+                self.stop_chrome(port)
 
         # Ensure no zombie process is holding the port
         self._kill_zombie_on_port(port)
@@ -298,7 +303,16 @@ class BrowserManager:
             return None
 
         if port in self.drivers:
-            return self.drivers[port]
+            try:
+                _ = self.drivers[port].current_url
+                return self.drivers[port]
+            except Exception:
+                self.logger.warning(f"WebDriver trên cổng {port} đã mất phiên (Stale). Đang khởi tạo lại...")
+                try:
+                    self.drivers[port].quit()
+                except Exception:
+                    pass
+                del self.drivers[port]
 
         if not self._is_port_open(port):
             self.logger.error(f"No Chrome debugger on port {port}")

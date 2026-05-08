@@ -15,11 +15,8 @@ if (process.env.REDIS_PASSWORD) {
 const connection = new IORedis(redisOptions);
 const inviteQueue = new Queue('invite-queue', { connection });
 
-async function addInviteJob(accountId, payload) {
-  await inviteQueue.add('invite', {
-    accountId,
-    payload
-  }, {
+async function addInviteJob(accountId, payload, customOpts = {}) {
+  const baseOpts = {
     attempts: 3,
     backoff: {
       type: 'exponential',
@@ -27,10 +24,29 @@ async function addInviteJob(accountId, payload) {
     },
     removeOnComplete: true,
     removeOnFail: false
+  };
+  
+  await inviteQueue.add('invite', {
+    accountId,
+    payload
+  }, { ...baseOpts, ...customOpts });
+}
+
+const researchQueue = new Queue('research-queue', { connection });
+
+async function addResearchJob() {
+  await researchQueue.add('daily-research', {}, {
+    repeat: { pattern: '0 8 * * *' },
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 10000 },
+    removeOnComplete: true,
+    removeOnFail: false
   });
 }
 
 module.exports = {
   inviteQueue,
-  addInviteJob
+  researchQueue,
+  addInviteJob,
+  addResearchJob
 };

@@ -618,7 +618,25 @@ class FacebookAutomation:
         try:
             current_url = self.driver.current_url.lower()
 
-            # Method 1: Check for login URL patterns (most reliable)
+            # Method 1: Check for visible login form (most reliable indicator)
+            try:
+                email_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="email"], input[id="email"]')
+                pass_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="pass"], input[id="pass"]')
+                login_button = self.driver.find_elements(By.CSS_SELECTOR, '[name="login"], [data-testid="royal_login_button"], button[type="submit"]')
+
+                if email_field and pass_field:
+                    email_visible = any(e.is_displayed() for e in email_field)
+                    pass_visible = any(e.is_displayed() for e in pass_field)
+                    if email_visible and pass_visible:
+                        self._log(
+                            f"[WARNING] Visible login form detected - session expired",
+                            logging.WARNING
+                        )
+                        return True
+            except Exception:
+                pass
+
+            # Method 2: Check for login URL patterns
             for pattern in self.LOGIN_URL_PATTERNS:
                 if pattern in current_url:
                     self._log(
@@ -627,15 +645,14 @@ class FacebookAutomation:
                     )
                     return True
 
-            # Method 2: Check for logged-in indicators (if present, user is logged in)
-            # Only do form-based detection if we're on facebook.com but NOT on groups/posts/profiles
+            # Method 3: Check for logged-in indicators
             try:
-                # Look for strong logged-in indicators first
+                # Look for strong logged-in indicators
+                # Removed '[aria-label="Facebook"]' as it appears on login page too.
                 logged_in_selectors = [
-                    '[aria-label="Facebook"]',  # Main Facebook logo when logged in
                     '[aria-label="Your profile"]',
                     '[aria-label="Trang cá nhân của bạn"]',
-                    '[data-pagelet="LeftRail"]',  # Left sidebar (only appears when logged in)
+                    '[data-pagelet="LeftRail"]',  # Left sidebar
                     '[aria-label="Account"]',
                     '[aria-label="Tài khoản"]',
                     'div[role="navigation"] a[href*="/me/"]',  # Profile link in nav
@@ -645,41 +662,6 @@ class FacebookAutomation:
                     if elements and any(e.is_displayed() for e in elements):
                         # Found logged-in indicator - definitely logged in
                         return False
-            except Exception:
-                pass
-
-            # Method 3: Check for login form - but only if NOT on a valid FB page
-            try:
-                # Skip form check if on known valid pages
-                valid_page_patterns = [
-                    "/groups/",
-                    "/profile.php",
-                    "/home.php",
-                    "/me/",
-                    "/friends",
-                    "/messages",
-                    "/notifications",
-                    "/watch",
-                    "/marketplace",
-                ]
-                is_valid_page = any(p in current_url for p in valid_page_patterns)
-
-                if not is_valid_page:
-                    # Look for login form on suspicious pages
-                    email_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="email"]')
-                    pass_field = self.driver.find_elements(By.CSS_SELECTOR, 'input[name="pass"]')
-                    login_button = self.driver.find_elements(By.CSS_SELECTOR, '[name="login"], [data-testid="royal_login_button"]')
-
-                    if email_field and pass_field and login_button:
-                        # Check if these are visible (actual login page, not hidden forms)
-                        email_visible = any(e.is_displayed() for e in email_field)
-                        pass_visible = any(e.is_displayed() for e in pass_field)
-                        if email_visible and pass_visible:
-                            self._log(
-                                f"[WARNING] Visible login form detected - session expired",
-                                logging.WARNING
-                            )
-                            return True
             except Exception:
                 pass
 
@@ -708,15 +690,53 @@ class FacebookAutomation:
         self._log("[FLOW] B2: Thực hiện đăng nhập Facebook (fb.com -> điền tài khoản/mật khẩu)...")
 
         try:
-            # Step 1: Navigate to fb.com first (required entry point)
-            self.driver.get("https://fb.com/")
+            # Step 1: Navigate to facebook.com first (required entry point)
+            self.driver.get("https://www.facebook.com/")
             time.sleep(random.uniform(1.2, 2.2))
+
+            # Handle Cookie Consent if present
+            try:
+                cookie_buttons = self.driver.find_elements(
+                    By.XPATH,
+                    '//button[contains(., "Allow all cookies") '
+                    'or contains(., "Allow essential and optional cookies") '
+                    'or contains(., "Accept All") '
+                    'or contains(., "Chấp nhận tất cả") '
+                    'or contains(., "Chấp nhận")]'
+                )
+                for btn in cookie_buttons:
+                    if btn.is_displayed():
+                        btn.click()
+                        self._log("Đã tự động click nút Chấp nhận Cookie")
+                        time.sleep(1.5)
+                        break
+            except Exception:
+                pass
 
             # If login form is not present, force explicit login page.
             email_candidates = self.driver.find_elements(By.XPATH, '//input[@id="email" or @name="email"]')
             if not email_candidates:
                 self.driver.get("https://www.facebook.com/login")
                 time.sleep(random.uniform(1.5, 3.0))
+                
+                # Handle Cookie Consent on explicit login page
+                try:
+                    cookie_buttons = self.driver.find_elements(
+                        By.XPATH,
+                        '//button[contains(., "Allow all cookies") '
+                        'or contains(., "Allow essential and optional cookies") '
+                        'or contains(., "Accept All") '
+                        'or contains(., "Chấp nhận tất cả") '
+                        'or contains(., "Chấp nhận")]'
+                    )
+                    for btn in cookie_buttons:
+                        if btn.is_displayed():
+                            btn.click()
+                            self._log("Đã tự động click nút Chấp nhận Cookie")
+                            time.sleep(1.5)
+                            break
+                except Exception:
+                    pass
 
             # Step 2: Find and fill email field
             email_field = self._wait_for_element(
@@ -744,20 +764,40 @@ class FacebookAutomation:
 
             pass_field.clear()
             self._type_with_delay(pass_field, password)
-            time.sleep(random.uniform(0.8, 1.5))
+            time.sleep(random.uniform(0.5, 1.0))
 
-            # Step 4: Click login button
-            login_btn = self._wait_for_element(
-                '//button[@name="login" or @data-testid="royal_login_button" or @id="loginbutton"]'
-                ' | //input[@value="Log In" or @value="Đăng nhập"]',
-                timeout=5
-            )
-            if not login_btn:
-                self._log("Login button not found", logging.WARNING)
-                return "error"
+            # Send ENTER to password field as form submission insurance
+            try:
+                pass_field.send_keys(Keys.ENTER)
+                self._log("Sent ENTER to password field", logging.INFO)
+            except Exception as e:
+                self.logger.debug(f"Failed to send ENTER to pass field: {e}")
 
-            login_btn.click()
-            self._log("Clicked login button, waiting for result...")
+            time.sleep(random.uniform(1.0, 2.0))
+
+            # Step 4: Click login button (Prioritize button/input, fallback to div/span)
+            try:
+                login_btn = self._wait_for_element(
+                    '//button[@name="login" or @data-testid="royal_login_button" or @id="loginbutton"]'
+                    ' | //button[@type="submit"]'
+                    ' | //button[contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "log in")]'
+                    ' | //input[contains(translate(@value, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "log in") or @value="Đăng nhập"]',
+                    timeout=3
+                )
+                
+                if not login_btn:
+                    self._log("Không tìm thấy button chuẩn, thử tìm thẻ div/span chứa text...", logging.INFO)
+                    login_btn = self._wait_for_element(
+                        '//div[(contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "log in") or contains(., "Đăng nhập")) and not(ancestor::button)]'
+                        ' | //span[(contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "log in") or contains(., "Đăng nhập")) and not(ancestor::button)]',
+                        timeout=3
+                    )
+
+                if login_btn:
+                    login_btn.click()
+                    self._log("Clicked login button, waiting for result...")
+            except Exception as e:
+                self._log(f"Login button click skipped or failed (perhaps form already submitted via ENTER): {e}", logging.DEBUG)
 
             # Step 5: Wait and check result (with retry for slow loading)
             time.sleep(random.uniform(2.0, 3.5))
@@ -793,8 +833,8 @@ class FacebookAutomation:
                     self._log("Checkpoint detected after login", logging.WARNING)
                     return "2fa"
 
-                # Check success: redirected away from login page
-                if "facebook.com" in current_url and "login" not in current_url:
+                # Check success: Check if we are no longer logged out
+                if not self.check_logged_out():
                     self._log("Login successful!")
                     return "success"
 

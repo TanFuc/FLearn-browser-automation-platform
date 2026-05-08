@@ -283,7 +283,8 @@ class BotOrchestrator:
         self,
         account: Account,
         account_logger: Optional[Callable[[str], None]] = None,
-        task_config: Optional[TaskConfig] = None
+        task_config: Optional[TaskConfig] = None,
+        skip_login: bool = False
     ) -> TaskResult:
         """
         Process a single account with daily limits and database tracking.
@@ -292,6 +293,7 @@ class BotOrchestrator:
             account: Account to process.
             account_logger: Optional per-account log callback.
             task_config: Optional task configuration (uses self.task_config if not provided).
+            skip_login: If True, completely skip the login check and assume logged in.
 
         Returns:
             TaskResult with outcome.
@@ -357,71 +359,41 @@ class BotOrchestrator:
             on_log=account_logger
         )
 
-        # Required flow with selectable mode:
-        # - always_login_before_task=True: always login before task.
-        # - always_login_before_task=False: login only when session is expired.
-        from utils.crypto import decrypt_password, has_credentials
-        always_login = bool(getattr(settings, "always_login_before_task", True))
-        email = None
-        password = None
-
-        # Step 1: always open Facebook home first to establish session context.
-        self._log(f"[FLOW] B1: Mở fb.com cho {account.debugger_address}...")
-        try:
-            driver.get("https://fb.com/")
-            time.sleep(1.5)
-        except Exception as e:
-            error_msg = f"Không thể mở fb.com: {e}"
-            self._log(f"[ERROR] {error_msg}", logging.ERROR)
-            account.set_error(error_msg)
-            result = TaskResult(account=account, error=error_msg)
-            if self._on_account_complete:
-                try:
-                    self._on_account_complete(account, result)
-                except Exception:
-                    pass
-            return result
-
         login_result = "success"
-        if always_login:
-            if not has_credentials(account):
-                error_msg = (
-                    f"Missing imported Facebook credentials for {account.debugger_address}. "
-                    f"Please save email/password before running."
-                )
-                self._log(f"[ERROR] {error_msg}", logging.ERROR)
-                account.set_login_failed("Missing imported credentials")
-                result = TaskResult(account=account, error=error_msg)
-                if self._on_account_complete:
-                    try:
-                        self._on_account_complete(account, result)
-                    except Exception:
-                        pass
-                return result
-
-            try:
-                email = account.fb_email
-                password = decrypt_password(account.fb_password_enc)
-            except Exception as e:
-                error_msg = f"Credential decryption failed for {account.debugger_address}: {e}"
-                self._log(f"[ERROR] {error_msg}", logging.ERROR)
-                account.set_login_failed("Credential decryption failed")
-                result = TaskResult(account=account, error=error_msg)
-                if self._on_account_complete:
-                    try:
-                        self._on_account_complete(account, result)
-                    except Exception:
-                        pass
-                return result
-
-            self._log(f"[FLOW] B2: Bắt đầu đăng nhập bắt buộc cho {account.debugger_address}...")
-            login_result = automation.perform_login(email, password)
+        
+        if skip_login:
+            self._log(f"[FLOW] Bỏ qua kiểm tra đăng nhập theo yêu cầu người dùng cho {account.debugger_address}.")
         else:
-            self._log(f"[FLOW] B2: Kiểm tra session hiện tại cho {account.debugger_address}...")
-            if automation.check_logged_out():
+            # Required flow with selectable mode:
+            # - always_login_before_task=True: always login before task.
+            # - always_login_before_task=False: login only when session is expired.
+            from utils.crypto import decrypt_password, has_credentials
+            always_login = bool(getattr(settings, "always_login_before_task", True))
+            email = None
+            password = None
+
+            # Step 1: always open Facebook home first to establish session context.
+            self._log(f"[FLOW] B1: Mở fb.com cho {account.debugger_address}...")
+            try:
+                driver.get("https://fb.com/")
+                time.sleep(1.5)
+            except Exception as e:
+                error_msg = f"Không thể mở fb.com: {e}"
+                self._log(f"[ERROR] {error_msg}", logging.ERROR)
+                account.set_error(error_msg)
+                result = TaskResult(account=account, error=error_msg)
+                if self._on_account_complete:
+                    try:
+                        self._on_account_complete(account, result)
+                    except Exception:
+                        pass
+                return result
+
+            if always_login:
                 if not has_credentials(account):
                     error_msg = (
-                        f"Session đã hết hạn nhưng chưa có credential import cho {account.debugger_address}."
+                        f"Missing imported Facebook credentials for {account.debugger_address}. "
+                        f"Please save email/password before running."
                     )
                     self._log(f"[ERROR] {error_msg}", logging.ERROR)
                     account.set_login_failed("Missing imported credentials")
@@ -448,10 +420,44 @@ class BotOrchestrator:
                             pass
                     return result
 
-                self._log(f"[FLOW] Session đã hết hạn, bắt đầu đăng nhập lại cho {account.debugger_address}...")
+                self._log(f"[FLOW] B2: Bắt đầu đăng nhập bắt buộc cho {account.debugger_address}...")
                 login_result = automation.perform_login(email, password)
             else:
-                self._log(f"[FLOW] Session còn hiệu lực, bỏ qua bước đăng nhập cho {account.debugger_address}.")
+                self._log(f"[FLOW] B2: Kiểm tra session hiện tại cho {account.debugger_address}...")
+                if automation.check_logged_out():
+                    if not has_credentials(account):
+                        error_msg = (
+                            f"Session đã hết hạn nhưng chưa có credential import cho {account.debugger_address}."
+                        )
+                        self._log(f"[ERROR] {error_msg}", logging.ERROR)
+                        account.set_login_failed("Missing imported credentials")
+                        result = TaskResult(account=account, error=error_msg)
+                        if self._on_account_complete:
+                            try:
+                                self._on_account_complete(account, result)
+                            except Exception:
+                                pass
+                        return result
+
+                    try:
+                        email = account.fb_email
+                        password = decrypt_password(account.fb_password_enc)
+                    except Exception as e:
+                        error_msg = f"Credential decryption failed for {account.debugger_address}: {e}"
+                        self._log(f"[ERROR] {error_msg}", logging.ERROR)
+                        account.set_login_failed("Credential decryption failed")
+                        result = TaskResult(account=account, error=error_msg)
+                        if self._on_account_complete:
+                            try:
+                                self._on_account_complete(account, result)
+                            except Exception:
+                                pass
+                        return result
+
+                    self._log(f"[FLOW] Session đã hết hạn, bắt đầu đăng nhập lại cho {account.debugger_address}...")
+                    login_result = automation.perform_login(email, password)
+                else:
+                    self._log(f"[FLOW] Session còn hiệu lực, bỏ qua bước đăng nhập cho {account.debugger_address}.")
 
         if login_result != "success":
             if login_result == "2fa":
@@ -565,7 +571,8 @@ class BotOrchestrator:
         self,
         group_num: int,
         accounts: List[Account],
-        account_loggers: Dict[str, Callable[[str], None]] = None
+        account_loggers: Dict[str, Callable[[str], None]] = None,
+        skip_login: bool = False
     ) -> List[TaskResult]:
         """
         Process a small group of accounts sequentially with proper browser management.
@@ -577,6 +584,7 @@ class BotOrchestrator:
             group_num: Group number for logging.
             accounts: Accounts in this group (typically 2).
             account_loggers: Optional per-account log callbacks.
+            skip_login: Skip login phase.
 
         Returns:
             List of TaskResults.
@@ -616,7 +624,9 @@ class BotOrchestrator:
                     future = executor.submit(
                         self._process_account,
                         account,
-                        logger_callback
+                        logger_callback,
+                        None,
+                        skip_login
                     )
                     futures[future] = account
 
@@ -647,7 +657,8 @@ class BotOrchestrator:
         self,
         batch_num: int,
         accounts: List[Account],
-        account_loggers: Dict[str, Callable[[str], None]] = None
+        account_loggers: Dict[str, Callable[[str], None]] = None,
+        skip_login: bool = False
     ) -> BatchResult:
         """
         Process a batch of accounts using sequential group processing.
@@ -659,6 +670,7 @@ class BotOrchestrator:
             batch_num: Batch number.
             accounts: Accounts in this batch.
             account_loggers: Optional per-account log callbacks.
+            skip_login: Skip login phase.
 
         Returns:
             BatchResult with batch outcome.
@@ -704,7 +716,7 @@ class BotOrchestrator:
 
             # Process this group
             group_results = self._process_sequential_group(
-                group_num, group, account_loggers
+                group_num, group, account_loggers, skip_login
             )
 
             # Collect results
@@ -779,7 +791,8 @@ class BotOrchestrator:
         wait_for_schedule: bool = True,
         task_config: Optional[TaskConfig] = None,
         skip_error_accounts: bool = True,
-        retry_checkpoint: bool = False
+        retry_checkpoint: bool = False,
+        skip_login: bool = False
     ) -> List[BatchResult]:
         """
         Run the bot across all accounts in batches.
@@ -792,6 +805,7 @@ class BotOrchestrator:
             task_config: Optional task configuration for all accounts.
             skip_error_accounts: Skip accounts with ERROR status (default: True).
             retry_checkpoint: Also retry accounts with CHECKPOINT status (default: False).
+            skip_login: Skip login phase.
 
         Returns:
             List of BatchResults.
@@ -885,7 +899,7 @@ class BotOrchestrator:
                     break
 
                 # Process batch
-                result = self._process_batch(batch_num, batch, account_loggers)
+                result = self._process_batch(batch_num, batch, account_loggers, skip_login)
                 all_results.append(result)
 
                 # Save progress
@@ -948,7 +962,8 @@ class BotOrchestrator:
         self,
         accounts: List[Account] = None,
         batch_size: int = None,
-        account_loggers: Dict[str, Callable[[str], None]] = None
+        account_loggers: Dict[str, Callable[[str], None]] = None,
+        skip_login: bool = False
     ) -> threading.Thread:
         """
         Run the bot asynchronously in a background thread.
@@ -957,13 +972,19 @@ class BotOrchestrator:
             accounts: Accounts to process.
             batch_size: Accounts per batch.
             account_loggers: Optional per-account log callbacks.
+            skip_login: Skip login phase.
 
         Returns:
             The background thread.
         """
         thread = threading.Thread(
             target=self.run,
-            args=(accounts, batch_size, account_loggers),
+            kwargs={
+                'accounts': accounts,
+                'batch_size': batch_size,
+                'account_loggers': account_loggers,
+                'skip_login': skip_login
+            },
             daemon=True
         )
         thread.start()
@@ -974,7 +995,8 @@ class BotOrchestrator:
         accounts: List[Account] = None,
         batch_size: int = None,
         account_loggers: Dict[str, Callable[[str], None]] = None,
-        on_loop_complete: Optional[Callable[[int, List[BatchResult]], None]] = None
+        on_loop_complete: Optional[Callable[[int, List[BatchResult]], None]] = None,
+        skip_login: bool = False
     ) -> None:
         """
         Run the bot in a loop at configured intervals.
@@ -986,6 +1008,7 @@ class BotOrchestrator:
             batch_size: Accounts per batch.
             account_loggers: Optional per-account log callbacks.
             on_loop_complete: Callback after each loop iteration (run_number, results).
+            skip_login: Skip login phase.
         """
         if not settings.auto_loop_enabled:
             self._log("Auto loop is disabled in settings")
@@ -1019,7 +1042,8 @@ class BotOrchestrator:
                 accounts=accounts,
                 batch_size=batch_size,
                 account_loggers=account_loggers,
-                wait_for_schedule=True
+                wait_for_schedule=True,
+                skip_login=skip_login
             )
 
             # Callback for loop completion
@@ -1066,7 +1090,8 @@ class BotOrchestrator:
         accounts: List[Account] = None,
         batch_size: int = None,
         account_loggers: Dict[str, Callable[[str], None]] = None,
-        on_loop_complete: Optional[Callable[[int, List[BatchResult]], None]] = None
+        on_loop_complete: Optional[Callable[[int, List[BatchResult]], None]] = None,
+        skip_login: bool = False
     ) -> threading.Thread:
         """
         Run the auto-loop in a background thread.
@@ -1076,13 +1101,20 @@ class BotOrchestrator:
             batch_size: Accounts per batch.
             account_loggers: Optional per-account log callbacks.
             on_loop_complete: Callback after each loop iteration.
+            skip_login: Skip login phase.
 
         Returns:
             The background thread.
         """
         thread = threading.Thread(
             target=self.run_loop,
-            args=(accounts, batch_size, account_loggers, on_loop_complete),
+            kwargs={
+                'accounts': accounts,
+                'batch_size': batch_size,
+                'account_loggers': account_loggers,
+                'on_loop_complete': on_loop_complete,
+                'skip_login': skip_login
+            },
             daemon=True
         )
         thread.start()

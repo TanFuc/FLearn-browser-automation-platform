@@ -39,10 +39,11 @@ const worker = new Worker('invite-queue', async job => {
   if (!account) throw new Error('Account not found');
 
   // Insert task into DB
+  const scheduleId = payload.scheduleId || null;
   const taskRes = await db.query(
-    `INSERT INTO tasks (account_id, type, payload, status, started_at) 
-     VALUES ($1, $2, $3, 'running', NOW()) RETURNING id`,
-    [accountId, taskType || 'invite', payload]
+    `INSERT INTO tasks (account_id, type, payload, status, started_at, schedule_id) 
+     VALUES ($1, $2, $3, 'running', NOW(), $4) RETURNING id`,
+    [accountId, taskType || 'invite', payload, scheduleId]
   );
   const taskId = taskRes.rows[0].id;
 
@@ -69,14 +70,17 @@ const worker = new Worker('invite-queue', async job => {
 
     emitLog(accountId, `🚀 Chạy job cho account: ${accountId}`, 'system');
     
+    let result;
     if (taskType === 'unfollow') {
         emitLog(accountId, `🚀 Bắt đầu Hủy Theo Dõi (Limit: ${payload.maxUnfollow || 'Tất cả'})`);
-        await autoUnfollowTask(page, context, account, payload, emitLog, incrementStats);
+        result = await autoUnfollowTask(page, context, account, payload, emitLog, incrementStats);
     } else {
         emitLog(accountId, `Điều hướng tới: ${payload.url}`);
         await page.goto(payload.url, { waitUntil: 'domcontentloaded' });
-        await autoInviteTask(page, context, account, payload.url, emitLog, incrementStats);
+        result = await autoInviteTask(page, context, account, payload.url, emitLog, incrementStats);
     }
+    
+    const summary = result ? `Thành công: ${result.successCount} lượt, ${result.scrollsDone} lần cuộn.` : 'Hoàn thành.';
 
     await db.query(
       `UPDATE accounts 
@@ -85,7 +89,7 @@ const worker = new Worker('invite-queue', async job => {
       [accountId]
     );
     
-    await db.query(`UPDATE tasks SET status = 'completed', finished_at = NOW() WHERE id = $1`, [taskId]);
+    await db.query(`UPDATE tasks SET status = 'completed', result_summary = $1, finished_at = NOW() WHERE id = $2`, [summary, taskId]);
 
   } catch (err) {
     await db.query(
@@ -109,6 +113,19 @@ const worker = new Worker('invite-queue', async job => {
     connection,
     concurrency: parseInt(process.env.MAX_CONCURRENCY || 5)
 });
+
+const { runDailyTrendResearch } = require('./research-service');
+
+const researchWorker = new Worker('research-queue', async job => {
+    try {
+        workerEvents.emit('cron_status', { status: 'running', message: '[V4] Daily product trend research started...' });
+        await runDailyTrendResearch();
+        workerEvents.emit('cron_status', { status: 'success', time: new Date().toISOString() });
+    } catch (err) {
+        workerEvents.emit('cron_status', { status: 'error', message: err.message });
+        throw err;
+    }
+}, { connection, concurrency: 1 });
 
 worker.on('completed', job => {
   console.log(`✅ Job done: ${job.id}`);

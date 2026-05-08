@@ -274,25 +274,19 @@ class Account(BaseModel):
         data = {
             "debugger_address": self.debugger_address,
             "group_url": self.group_url,
+            "group_urls": self.group_urls,
             "proxy": self.proxy.address if self.proxy else None,
-            "status": self.status.value
+            "status": self.status.value,
+            "invites_sent": self.invites_sent,
+            "error_message": self.error_message,
+            "label": self.label,
+            "notes": self.notes,
+            "fb_email": self.fb_email,
+            "fb_password_enc": self.fb_password_enc,
+            "login_attempts": self.login_attempts,
+            "last_run": self.last_run.isoformat() if self.last_run else None,
+            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None
         }
-        # Only include optional fields if they have values
-        if self.group_urls:
-            data["group_urls"] = self.group_urls
-        if self.label:
-            data["label"] = self.label
-        if self.notes:
-            data["notes"] = self.notes
-        # Auto-login credentials (password is already encrypted)
-        if self.fb_email:
-            data["fb_email"] = self.fb_email
-        if self.fb_password_enc:
-            data["fb_password_enc"] = self.fb_password_enc
-        if self.login_attempts > 0:
-            data["login_attempts"] = self.login_attempts
-        if self.last_login_at:
-            data["last_login_at"] = self.last_login_at.isoformat()
         return data
 
     @classmethod

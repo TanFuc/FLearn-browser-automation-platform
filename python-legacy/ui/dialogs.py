@@ -56,7 +56,8 @@ class AccountDialog:
     """
     Modal dialog for adding or editing an account.
 
-    Provides input fields for debugger address, group URL, and proxy.
+    Provides input fields for debugger address, group URL, proxy,
+    and Facebook credentials.
     Returns an Account object on successful save.
     """
 
@@ -81,7 +82,7 @@ class AccountDialog:
         # Create dialog window
         self.top = tk.Toplevel(parent)
         self.top.title(f"{'Sửa' if self.is_edit else 'Thêm'} {title}")
-        self.top.geometry("500x220")
+        self.top.geometry("500x350")
         self.top.transient(parent)
         self.top.grab_set()
         self.top.resizable(False, False)
@@ -89,13 +90,16 @@ class AccountDialog:
         # Center on parent
         self.top.update_idletasks()
         x = parent.winfo_rootx() + (parent.winfo_width() - 500) // 2
-        y = parent.winfo_rooty() + (parent.winfo_height() - 220) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - 350) // 2
         self.top.geometry(f"+{x}+{y}")
 
         self._create_widgets()
 
         # Focus on first entry
-        self.addr_entry.focus_set()
+        if not self.is_edit:
+            self.addr_entry.focus_set()
+        else:
+            self.url_entry.focus_set()
 
         # Bind Enter key
         self.top.bind("<Return>", lambda e: self._on_save())
@@ -166,6 +170,39 @@ class AccountDialog:
             side="left", padx=(5, 0)
         )
 
+        # FB Email
+        row += 1
+        ttk.Label(main_frame, text="Email Facebook:").grid(
+            row=row, column=0, sticky="e", padx=(0, 10), pady=8
+        )
+        email_frame = ttk.Frame(main_frame)
+        email_frame.grid(row=row, column=1, sticky="ew", pady=8)
+        
+        default_email = self.account.fb_email if self.account else ""
+        self.email_var = tk.StringVar(value=default_email)
+        self.email_entry = ttk.Entry(email_frame, textvariable=self.email_var, width=45)
+        self.email_entry.pack(side="left", fill="x", expand=True)
+
+        # FB Password
+        row += 1
+        ttk.Label(main_frame, text="Mật khẩu Facebook:").grid(
+            row=row, column=0, sticky="e", padx=(0, 10), pady=8
+        )
+        pass_frame = ttk.Frame(main_frame)
+        pass_frame.grid(row=row, column=1, sticky="ew", pady=8)
+        
+        default_pass = ""
+        if self.account and self.account.fb_password_enc:
+            from utils.crypto import decrypt_password
+            try:
+                default_pass = decrypt_password(self.account.fb_password_enc)
+            except Exception:
+                default_pass = ""
+                
+        self.pass_var = tk.StringVar(value=default_pass)
+        self.pass_entry = ttk.Entry(pass_frame, textvariable=self.pass_var, width=45, show="*")
+        self.pass_entry.pack(side="left", fill="x", expand=True)
+
         # Separator
         row += 1
         ttk.Separator(main_frame, orient="horizontal").grid(
@@ -208,6 +245,8 @@ class AccountDialog:
         addr = self.addr_var.get().strip()
         url = self.url_var.get().strip() or None
         proxy_str = self.proxy_var.get().strip()
+        email = self.email_var.get().strip() or None
+        password = self.pass_var.get().strip()
 
         # Validate address
         if not addr:
@@ -244,16 +283,33 @@ class AccountDialog:
                 self.proxy_entry.focus_set()
                 return
 
+        # Encrypt password
+        from utils.crypto import encrypt_password
+        password_enc = None
+        if password:
+            try:
+                password_enc = encrypt_password(password)
+            except Exception as e:
+                show_error("Lỗi", f"Không thể mã hóa mật khẩu: {e}", parent=self.top)
+                return
+
         # Create or update account
         if self.is_edit:
             self.account.group_url = url
             self.account.proxy = proxy
+            self.account.fb_email = email
+            if password_enc:
+                self.account.fb_password_enc = password_enc
+            elif not password:
+                self.account.fb_password_enc = None
             self.result = self.account
         else:
             self.result = Account(
                 debugger_address=addr,
                 group_url=url,
-                proxy=proxy
+                proxy=proxy,
+                fb_email=email,
+                fb_password_enc=password_enc
             )
 
         self.top.destroy()

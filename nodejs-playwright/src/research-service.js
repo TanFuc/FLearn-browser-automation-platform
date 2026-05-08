@@ -1,206 +1,260 @@
 /**
- * Research Service
- * - Checks DB cache first (24h TTL)
- * - Calls Gemini only when data is stale/missing
- * - Stores results to PostgreSQL for reuse
+ * Product Trend Research Service V4.0.1
  */
 const db = require('./db');
-const { callGemini, incrementCacheHit } = require('./gemini');
+const { callGemini, incrementCacheHit, getQuota } = require('./gemini');
+const crypto = require('crypto');
 
-const SEED_TOPICS = ['Skincare', 'Home Appliances', 'Fitness', 'Fashion', 'Mother and Baby'];
+const DEFAULT_CATEGORIES = ['Skincare', 'Gia dụng', 'Fitness', 'Thời trang', 'Mẹ & bé', 'Điện tử', 'Sức khỏe', 'Thú cưng', 'Đồ chơi', 'Nhà cửa'];
+const inFlight = new Map();
 
-// ─── Cache helpers ─────────────────────────────────────────────────────────
+function withInFlight(key, fn) {
+    if (inFlight.has(key)) return inFlight.get(key);
+    const promise = fn().finally(() => inFlight.delete(key));
+    inFlight.set(key, promise);
+    return promise;
+}
 
-async function getCached(topic, pageType) {
+function shouldUseLite(quota) {
+    return !!(quota && quota.request_count >= quota.soft_cap);
+}
+
+function extractList(data, preferredKeys = []) {
+    if (Array.isArray(data)) return data;
+    if (!data || typeof data !== 'object') return [];
+    for (const key of preferredKeys) {
+        if (Array.isArray(data[key])) return data[key];
+    }
+    const values = Object.values(data);
+    const arrayValue = values.find(value => Array.isArray(value));
+    return arrayValue || [];
+}
+
+function validateData(items, requiredFields) {
+    if (!Array.isArray(items)) return [];
+    return items.filter(item => {
+        if (!item || typeof item !== 'object') return false;
+        return requiredFields.every(field => item[field] !== undefined && item[field] !== null);
+    });
+}
+
+function renderPrompt(template, variables = {}) {
+    let output = template || '';
+    Object.entries(variables).forEach(([key, value]) => {
+        const pattern = new RegExp(`\\{\\{\\s*${key}\\s*\\}}`, 'g');
+        output = output.replace(pattern, String(value ?? ''));
+    });
+    return output;
+}
+
+async function getPromptText(pageType, variables = {}) {
     const r = await db.query(
-        `SELECT data FROM cached_research
-         WHERE topic = $1 AND page_type = $2 AND expires_at > NOW()`,
-        [topic, pageType]
+        `SELECT prompt_text FROM research_prompts
+         WHERE page_type = $1 AND is_active = TRUE
+         ORDER BY updated_at DESC LIMIT 1`,
+        [pageType]
     );
-    return r.rows[0]?.data || null;
+    const row = r.rows[0];
+    if (!row?.prompt_text) throw new Error(`No active prompt configured for ${pageType}.`);
+    return renderPrompt(row.prompt_text, variables);
 }
 
-async function setCache(topic, pageType, data) {
-    await db.query(
-        `INSERT INTO cached_research (topic, page_type, data, expires_at)
-         VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')
-         ON CONFLICT (topic, page_type)
-         DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at, created_at = NOW()`,
-        [topic, pageType, JSON.stringify(data)]
-    );
-}
-
-// ─── Page 1: MMO / Affiliate Intelligence ──────────────────────────────────
-
-async function researchMMO(topics = SEED_TOPICS) {
-    const cacheKey = topics.join(',');
-    const cached = await getCached(cacheKey, 'mmo');
-    if (cached) { await incrementCacheHit(); return cached; }
-
-    const prompt = `You are an expert MMO and affiliate marketing analyst. Research these niches and return a JSON array of opportunities.
-
-Niches: ${topics.join(', ')}
-
-Return ONLY a JSON array. Each item must have these exact fields:
-{
-  "title": "short opportunity title",
-  "category": "niche name",
-  "trend_score": 1-100,
-  "monetization_score": 1-100,
-  "competition_score": 1-100,
-  "content_angle": "suggested content angle",
-  "traffic_source": "main traffic source",
-  "monetization_model": "how to monetize",
-  "summary": "2-3 sentence summary"
-}
-
-Generate 2-3 items per niche. Focus on 2025 trends. Return strict JSON only, no markdown.`;
-
-    const data = await callGemini(prompt, { endpoint: 'mmo' });
-    const results = Array.isArray(data) ? data : (data.items || data.opportunities || []);
-
-    // Store to research_results
-    await db.query(`DELETE FROM research_results WHERE page_type = 'mmo'`);
-    for (const item of results) {
-        await db.query(
-            `INSERT INTO research_results (topic, page_type, title, category, data, trend_score, monetization_score, competition_score)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [item.category || 'general', 'mmo', item.title, item.category, JSON.stringify(item),
-             item.trend_score || 0, item.monetization_score || 0, item.competition_score || 0]
-        );
+// Server-side generated_at injection (patch #4: never trust AI timestamps)
+function injectServerTimestamp(items) {
+    const now = new Date().toISOString();
+    if (Array.isArray(items)) {
+        return items.map(item => ({ ...item, generated_at: now, schema_version: 'V4.0.1' }));
     }
-    await setCache(cacheKey, 'mmo', results);
-    return results;
-}
-
-// ─── Page 2: AI Tool Intelligence ──────────────────────────────────────────
-
-async function researchAITools() {
-    const cached = await getCached('ai_tools', 'ai_tools');
-    if (cached) { await incrementCacheHit(); return cached; }
-
-    const prompt = `You are an AI industry analyst. Provide a current snapshot of the AI tools market in 2025.
-
-Return ONLY a JSON array of AI tools and market signals. Each item must have:
-{
-  "tool_name": "tool name",
-  "tool_type": "code|video|writing|automation|image|other",
-  "use_case": "primary use case",
-  "best_value_reason": "why it's good value",
-  "discount_or_launch_status": "new_launch|on_discount|established|deprecated",
-  "market_signal": "brief market insight",
-  "price_level": "free|freemium|paid|enterprise",
-  "summary": "2-3 sentence summary",
-  "is_best_value": true|false,
-  "is_new_noteworthy": true|false
-}
-
-Include at least 3 tools for each type: code, video, writing, automation. Return strict JSON array only.`;
-
-    const data = await callGemini(prompt, { endpoint: 'ai_tools' });
-    const results = Array.isArray(data) ? data : (data.items || data.tools || []);
-
-    await db.query(`DELETE FROM research_results WHERE page_type = 'ai_tools'`);
-    for (const item of results) {
-        await db.query(
-            `INSERT INTO research_results (topic, page_type, title, category, data)
-             VALUES ($1, $2, $3, $4, $5)`,
-            ['ai_tools', 'ai_tools', item.tool_name, item.tool_type, JSON.stringify(item)]
-        );
+    if (items && typeof items === 'object') {
+        return { ...items, generated_at: now, schema_version: 'V4.0.1' };
     }
-    await setCache('ai_tools', 'ai_tools', results);
-    return results;
+    return items;
 }
 
-// ─── Page 3: AI Suggestions ────────────────────────────────────────────────
-
-async function researchSuggestions(topics = SEED_TOPICS) {
-    const cacheKey = topics.join(',');
-    const cached = await getCached(cacheKey, 'suggestions');
-    if (cached) { await incrementCacheHit(); return cached; }
-
-    const prompt = `You are an AI business strategy advisor. Based on these niches and the current 2025 market, provide concrete actionable recommendations.
-
-Niches: ${topics.join(', ')}
-
-Return ONLY a JSON array. Each item must have:
-{
-  "recommendation_title": "short title",
-  "recommendation_text": "detailed recommendation",
-  "confidence_score": 1-100,
-  "urgency_score": 1-100,
-  "roi_score": 1-100,
-  "reasoning_summary": "why this matters now",
-  "next_action": "first concrete step to take",
-  "topic": "related niche"
+function hash(text) {
+    return crypto.createHash('md5').update(String(text || '')).digest('hex');
 }
 
-Generate 8-12 diverse recommendations covering: niches, tools, content ideas, affiliate offers, traffic methods. Return strict JSON array only.`;
+// ─── Trend Research API ──────────────────────────────────────────────
 
-    const data = await callGemini(prompt, { endpoint: 'suggestions' });
-    const results = Array.isArray(data) ? data : (data.items || data.recommendations || []);
+async function getProductTrends(options = {}) {
+    const market = options.market || 'vn';
+    const categories = options.categories || DEFAULT_CATEGORIES;
+    const window = options.window || 'last_7_days';
+    const limit = options.limit || 8;
+    
+    const categoriesStr = Array.isArray(categories) ? categories.join(',') : categories;
+    const marketHash = hash(market);
+    const categoryHash = hash(categoriesStr);
+    const windowHash = hash(window);
+    
+    const cacheKey = `trends:${market}:${categoriesStr}:${window}`;
+    return withInFlight(cacheKey, async () => {
+        const prompt = await getPromptText('overview', {
+            MARKET: market,
+            LANGUAGE: 'Vietnamese',
+            CATEGORIES: categoriesStr,
+            SOURCE_WINDOW: window,
+            LIMIT: limit,
+            MODE: 'overview'
+        });
+        
+        const quota = await getQuota();
+        const useLite = options.useLite ?? shouldUseLite(quota);
+        const modelVersion = useLite ? 'gemini-2.5-flash-lite' : 'gemini-2.5-flash';
+        const promptHash = hash(prompt + modelVersion);
+        const modelHash = hash(modelVersion);
 
-    await db.query(`DELETE FROM ai_suggestions`);
-    for (const item of results) {
-        await db.query(
-            `INSERT INTO ai_suggestions (recommendation_title, recommendation_text, confidence_score, urgency_score, roi_score, reasoning_summary, next_action, topic)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [item.recommendation_title, item.recommendation_text,
-             item.confidence_score || 0, item.urgency_score || 0, item.roi_score || 0,
-             item.reasoning_summary, item.next_action, item.topic]
+        // Check cache
+        const cacheRes = await db.query(
+            `SELECT data, expires_at < NOW() as is_stale FROM cached_product_trends
+             WHERE market_hash = $1 AND category_hash = $2 AND source_window_hash = $3
+               AND prompt_hash = $4 AND model_hash = $5`,
+            [marketHash, categoryHash, windowHash, promptHash, modelHash]
         );
-    }
-    await setCache(cacheKey, 'suggestions', results);
-    return results;
+        
+        if (cacheRes.rows.length > 0) {
+            const row = cacheRes.rows[0];
+            if (!row.is_stale) {
+                await incrementCacheHit();
+                return { data: row.data, is_stale: false, schema_version: 'V4.0.1' };
+            }
+        }
+
+        let aiData;
+        try {
+            aiData = await callGemini(prompt, { endpoint: 'product_trends', useLite });
+        } catch (err) {
+            console.warn('[Research] Trend AI error, fallback to DB:', err.message);
+            const fallback = await getTrendsFromDB(market, categoriesStr);
+            return { data: fallback, is_stale: true, schema_version: 'V4.0.1' };
+        }
+        
+        const results = extractList(aiData, ['items', 'products', 'trends', 'data']);
+        const validResults = validateData(results, ['id', 'category', 'product_name', 'trend_score', 'confidence_score', 'summary']);
+        let bounded = validResults.filter(i => i.confidence_score >= 70).slice(0, limit);
+        
+        if (bounded.length > 0) {
+            // Server-side timestamp and schema injection (Patch #4 & #7)
+            bounded = injectServerTimestamp(bounded);
+
+            // Store to cache
+            await db.query(
+                `INSERT INTO cached_product_trends (market_hash, category_hash, source_window_hash, prompt_hash, model_hash, data, expires_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '24 hours')
+                 ON CONFLICT (market_hash, category_hash, source_window_hash, prompt_hash, model_hash)
+                 DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at, created_at = NOW()`,
+                [marketHash, categoryHash, windowHash, promptHash, modelHash, JSON.stringify(bounded)]
+            );
+            
+            // Store to main tables
+            for (const item of bounded) {
+                const summaryData = {
+                    trend_score: item.trend_score,
+                    confidence_score: item.confidence_score,
+                    growth_signal: item.growth_signal,
+                    summary: item.summary,
+                    generated_at: item.generated_at,
+                    schema_version: item.schema_version
+                };
+                await db.query(
+                    `INSERT INTO product_trend_results (product_id, market, category, raw_data, summary_data, model_name, source_window, schema_version)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     ON CONFLICT (product_id) DO UPDATE SET
+                     raw_data = EXCLUDED.raw_data, summary_data = EXCLUDED.summary_data, schema_version = EXCLUDED.schema_version, created_at = NOW()`,
+                    [item.id, market, item.category || 'Other', JSON.stringify(item), JSON.stringify(summaryData), modelVersion, window, item.schema_version]
+                );
+            }
+            return { data: bounded, is_stale: false, schema_version: 'V4.0.1' };
+        } else {
+            // fallback if empty
+            const fallback = await getTrendsFromDB(market, categoriesStr);
+            return { data: fallback, is_stale: true, schema_version: 'V4.0.1' };
+        }
+    });
 }
 
-// ─── Batch daily research job ───────────────────────────────────────────────
+// ─── Deep Dive & Opportunity ──────────────────────────────────────────────
 
-async function runDailyResearch() {
-    console.log('[Research] Starting daily research job...');
+async function getProductDetail(productId, type = 'deep_dive') {
+    // type can be 'deep_dive' or 'opportunity'
+    const cacheKey = `${type}:${productId}`;
+    return withInFlight(cacheKey, async () => {
+        // Fetch product base info
+        const prodRes = await db.query(`SELECT raw_data, category FROM product_trend_results WHERE product_id = $1`, [productId]);
+        if (prodRes.rows.length === 0) return null;
+        
+        const baseProduct = prodRes.rows[0].raw_data;
+        const category = prodRes.rows[0].category;
+
+        // check if detail already in DB
+        const detailRes = await db.query(`SELECT detail_data FROM product_trend_details WHERE product_id = $1 AND type = $2`, [productId, type]);
+        if (detailRes.rows.length > 0) {
+            return detailRes.rows[0].detail_data;
+        }
+
+        const promptTemplate = type === 'deep_dive' ? 'deep_dive' : 'opportunity';
+        const prompt = await getPromptText(promptTemplate, {
+            PRODUCT_ID: productId,
+            PRODUCT_NAME: baseProduct.product_name,
+            CATEGORY: category
+        });
+
+        const quota = await getQuota();
+        const useLite = shouldUseLite(quota);
+        let aiData;
+        try {
+            aiData = await callGemini(prompt, { endpoint: type, useLite });
+        } catch (err) {
+            console.error(`[Research] ${type} error:`, err.message);
+            return null;
+        }
+
+        const results = extractList(aiData, ['items', 'data', 'recommendations']);
+        // For deep_dive we expect 1 object, opportunity might return array
+        let finalData = results.length > 0 ? results[0] : (Array.isArray(aiData) ? aiData[0] : aiData);
+
+        if (finalData && typeof finalData === 'object') {
+            // Server-side timestamp and schema injection (Patch #4 & #7)
+            finalData = injectServerTimestamp(finalData);
+
+            await db.query(
+                `INSERT INTO product_trend_details (product_id, type, detail_data, schema_version)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (product_id, type) DO UPDATE SET detail_data = EXCLUDED.detail_data, schema_version = EXCLUDED.schema_version`,
+                [productId, type, JSON.stringify(finalData), finalData.schema_version]
+            );
+            return finalData;
+        }
+        return null;
+    });
+}
+
+async function runDailyTrendResearch() {
+    console.log('[Research] Starting V4 daily trend research job...');
     await db.query(`UPDATE quota_state SET last_cron_run = NOW() WHERE id = 1`);
-
-    const topicsRes = await db.query(`SELECT name FROM research_topics WHERE is_active = TRUE ORDER BY id`);
-    const topics = topicsRes.rows.map(r => r.name);
-    if (topics.length === 0) topics.push(...SEED_TOPICS);
-
     try {
-        console.log('[Research] Running MMO research...');
-        await researchMMO(topics);
-        console.log('[Research] Running AI Tools research...');
-        await researchAITools();
-        console.log('[Research] Running Suggestions...');
-        await researchSuggestions(topics);
-        console.log('[Research] Daily job complete ✅');
-    } catch (err) {
+        const res = await getProductTrends({ market: 'vn', categories: DEFAULT_CATEGORIES, limit: 10 });
+        console.log(`[Research] Fetched ${res.data.length} trends.`);
+    } catch(err) {
         console.error('[Research] Daily job error:', err.message);
     }
 }
 
-// ─── Read from DB (fast path, no AI) ───────────────────────────────────────
-
-async function getMMOFromDB() {
+async function getTrendsFromDB(market, categoriesStr) {
+    const categories = categoriesStr.split(',').map(s => s.trim());
     const r = await db.query(
-        `SELECT data FROM research_results WHERE page_type = 'mmo' ORDER BY created_at DESC LIMIT 50`
+        `SELECT raw_data FROM product_trend_results WHERE market = $1 AND category = ANY($2) ORDER BY created_at DESC LIMIT 20`,
+        [market, categories]
     );
-    return r.rows.map(row => row.data);
+    return r.rows.map(row => row.raw_data);
 }
 
-async function getAIToolsFromDB() {
-    const r = await db.query(
-        `SELECT data FROM research_results WHERE page_type = 'ai_tools' ORDER BY created_at DESC LIMIT 50`
-    );
-    return r.rows.map(row => row.data);
-}
-
-async function getSuggestionsFromDB() {
-    const r = await db.query(
-        `SELECT * FROM ai_suggestions ORDER BY roi_score DESC, confidence_score DESC LIMIT 30`
-    );
-    return r.rows;
-}
+// ─── Export ────────────────────────────────────────────────────────────────
 
 module.exports = {
-    researchMMO, researchAITools, researchSuggestions,
-    runDailyResearch, getMMOFromDB, getAIToolsFromDB, getSuggestionsFromDB,
+    getProductTrends,
+    getProductDetail,
+    runDailyTrendResearch,
+    SEED_TOPICS: DEFAULT_CATEGORIES
 };

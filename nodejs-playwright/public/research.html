@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Research Dashboard — FAuto</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="research.css">
 </head>
 <body>
@@ -18,7 +19,7 @@
         <p>Intelligence Dashboard</p>
     </div>
     <div class="nav-section">Nghiên Cứu</div>
-    <div class="nav-item active" data-page="mmo" onclick="switchPage('mmo',this)">
+    <div class="nav-item" data-page="mmo" onclick="switchPage('mmo',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
         <span>MMO / Affiliate</span>
     </div>
@@ -30,10 +31,18 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         <span>Gợi Ý AI</span>
     </div>
+    <div class="nav-item active" data-page="trends" onclick="switchPage('trends',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span>🛒 Product Trends</span>
+    </div>
     <div class="nav-section">Hệ Thống</div>
     <div class="nav-item" data-page="quota" onclick="switchPage('quota',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         <span>Quota Monitor</span>
+    </div>
+    <div class="nav-item" data-page="prompts" onclick="switchPage('prompts',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        <span>Prompt Manager</span>
     </div>
     <div class="back-link" onclick="window.location='/'">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
@@ -58,10 +67,10 @@
         </div>
     </div>
 
-    <div id="alertBanner"></div>
+    <div id="researchAlertBanner"></div>
 
     <!-- ═══ PAGE 1: MMO ═══ -->
-    <div id="page-mmo" class="page-tabs active">
+    <div id="page-mmo" class="page-tabs" style="display:none;">
         <div class="page-header">
             <div class="page-title">
                 <h1>⚡ MMO / Affiliate Intelligence</h1>
@@ -75,6 +84,7 @@
 
         <!-- Top cards -->
         <div class="cards-grid" id="mmoTopCards"></div>
+        <div id="mmoGroupSections" class="group-sections"></div>
 
         <!-- Table -->
         <div class="table-wrap">
@@ -122,6 +132,7 @@
 
         <!-- Highlights -->
         <div class="cards-grid" id="aiTopCards"></div>
+        <div id="aiGroupSections" class="group-sections"></div>
 
         <!-- Table -->
         <div class="table-wrap">
@@ -185,6 +196,7 @@
                 <p>Theo dõi sử dụng API Gemini, bảo vệ free-tier</p>
             </div>
             <div class="header-actions">
+                <button class="btn btn-outline btn-sm" id="btnTestGemini" onclick="testGemini()">🧪 Test Gemini</button>
                 <button class="btn btn-danger btn-sm" onclick="resetQuota()">⚠ Reset Quota</button>
                 <button class="btn btn-primary btn-sm" onclick="runDailyJob()">▶ Run Daily Job</button>
             </div>
@@ -206,7 +218,113 @@
         </div>
     </div>
 
+    <!-- ═══ PAGE 5: PROMPTS ═══ -->
+    <div id="page-prompts" class="page-tabs">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>🧩 Prompt Manager</h1>
+                <p>Chinh sua prompt, chon variant active, luu truc tiep vao database.</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" id="btnReloadPrompts" onclick="loadPrompts()">↻ Reload</button>
+            </div>
+        </div>
+        <div class="prompt-grid">
+            <div class="prompt-card">
+                <h3>Tao / Cap nhat Prompt</h3>
+                <form id="promptForm">
+                    <label for="promptPageType">Page Type</label>
+                    <select id="promptPageType" required>
+                        <option value="mmo">mmo</option>
+                        <option value="ai_tools">ai_tools</option>
+                        <option value="suggestions">suggestions</option>
+                        <option value="test">test</option>
+                    </select>
+
+                    <label for="promptVariant">Variant Name</label>
+                    <input type="text" id="promptVariant" placeholder="vd: v1" required>
+
+                    <label for="promptText">Prompt Text</label>
+                    <textarea id="promptText" rows="10" placeholder="Nhap prompt o day" required></textarea>
+                    <div class="prompt-hint">Placeholder ho tro: {{TOPICS}} (tu dong thay the).</div>
+
+                    <label class="prompt-checkbox">
+                        <input type="checkbox" id="promptSetActive">
+                        Dat lam active sau khi luu
+                    </label>
+
+                    <button type="submit" class="btn btn-primary">Luu Prompt</button>
+                </form>
+            </div>
+            <div class="prompt-card">
+                <h3>Danh sach Prompt</h3>
+                <div id="promptList" class="prompt-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ PAGE V4: PRODUCT TRENDS ═══ -->
+    <div id="page-trends" class="page-tabs active">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>🛒 Product Trend Intelligence <span style="font-size:0.7rem;font-weight:400;opacity:0.6;font-family:monospace">V4.0.1</span></h1>
+                <p id="v4MetaInfo">Chọn bộ lọc và nhấn Refresh để tải xu hướng.</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-primary btn-sm" id="v4RefreshBtn">🔄 Refresh</button>
+            </div>
+        </div>
+
+        <div class="v4-filter-bar">
+            <div class="v4-filter-row">
+                <select class="filter-select" id="v4MarketFilter">
+                    <option value="vn">🇻🇳 Vietnam</option>
+                    <option value="global">🌍 Global</option>
+                </select>
+                <select class="filter-select" id="v4WindowFilter">
+                    <option value="last_7_days">7 ngày qua</option>
+                    <option value="last_30_days">30 ngày qua</option>
+                </select>
+                <select class="filter-select" id="v4LimitFilter">
+                    <option value="8">Limit: 8</option>
+                    <option value="12">Limit: 12</option>
+                    <option value="20">Limit: 20</option>
+                </select>
+                <select class="filter-select" id="v4SortFilter">
+                    <option value="trend_score">Sắp xếp: Trend</option>
+                    <option value="confidence_score">Sắp xếp: Độ tin cậy</option>
+                </select>
+                <input type="text" id="v4CustomCategory" class="v4-custom-input" placeholder="Tùy chỉnh (vd: Đồ câu...)">
+            </div>
+            <div id="v4CategoryFilters" class="v4-cat-filters">
+                <label><input type="checkbox" value="Skincare" checked> Skincare</label>
+                <label><input type="checkbox" value="Gia dụng" checked> Gia dụng</label>
+                <label><input type="checkbox" value="Fitness" checked> Fitness</label>
+                <label><input type="checkbox" value="Thời trang" checked> Thời trang</label>
+                <label><input type="checkbox" value="Mẹ & bé" checked> Mẹ & bé</label>
+                <label><input type="checkbox" value="Điện tử"> Điện tử</label>
+                <label><input type="checkbox" value="Sức khỏe"> Sức khỏe</label>
+                <label><input type="checkbox" value="Thú cưng"> Thú cưng</label>
+                <label><input type="checkbox" value="Đồ chơi"> Đồ chơi</label>
+                <label><input type="checkbox" value="Nhà cửa"> Nhà cửa</label>
+            </div>
+        </div>
+
+        <div id="v4TrendGrid" class="v4-grid"></div>
+    </div>
+
 </main>
+</div>
+
+<!-- V4 Detail Modal -->
+<div id="v4DetailModal" class="v4-modal-overlay" onclick="if(event.target===this)TrendV4.closeModal()">
+    <div class="v4-modal">
+        <div class="v4-modal-header">
+            <h2 id="v4ModalTitle">Chi tiết sản phẩm</h2>
+            <button class="v4-modal-close" onclick="TrendV4.closeModal()">✕</button>
+        </div>
+        <div id="v4ModalBody" class="v4-modal-body"></div>
+    </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>

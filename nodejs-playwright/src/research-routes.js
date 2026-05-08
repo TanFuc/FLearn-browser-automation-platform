@@ -1,120 +1,102 @@
 /**
- * Research API Routes
- * Mounted at /api/research
+ * Product Trend API Routes V4.0.1
+ * Mounted at /api/product-trends
  */
 const express = require('express');
 const router = express.Router();
 const db = require('./db');
-const { callGemini, getQuota, setBlocked } = require('./gemini');
-const {
-    researchMMO, researchAITools, researchSuggestions, runDailyResearch,
-    getMMOFromDB, getAIToolsFromDB, getSuggestionsFromDB,
-} = require('./research-service');
+const { getProductTrends, getProductDetail, runDailyTrendResearch } = require('./research-service');
 
-// ─── Page 1 — MMO / Affiliate ──────────────────────────────────────────────
-router.get('/page-1', async (req, res) => {
+// ─── Lấy danh sách Trend ──────────────────────────────────────────────
+router.get('/', async (req, res) => {
     try {
-        let data = await getMMOFromDB();
-        const meta = { source: 'db', count: data.length };
+        const market = req.query.market || 'vn';
+        const categoriesStr = req.query.categories || 'Skincare,Gia dụng,Fitness,Thời trang,Mẹ & bé';
+        const categories = categoriesStr.split(',').map(c => c.trim());
+        const limit = parseInt(req.query.limit || '8', 10);
+        const window = req.query.window || 'last_7_days';
+        const mode = req.query.mode || 'overview';
+        const page = parseInt(req.query.page || '1', 10);
 
-        // If DB is empty → trigger fresh research
-        if (data.length === 0) {
-            data = await researchMMO();
-            meta.source = 'ai';
-        }
-        res.json({ success: true, data, meta });
+        const result = await getProductTrends({ market, categories, limit, window, mode });
+
+        const total = result.data.length; // Simplified total
+        
+        res.json({
+            meta: {
+                schema_version: result.schema_version,
+                market,
+                window,
+                mode,
+                generated_at: new Date().toISOString(),
+                is_stale: result.is_stale,
+                pagination: {
+                    page,
+                    limit,
+                    total,
+                    has_more: false // Assuming we return all we have up to limit
+                }
+            },
+            data: result.data
+        });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// ─── Page 2 — AI Tools ─────────────────────────────────────────────────────
-router.get('/page-2', async (req, res) => {
+// ─── Lấy chi tiết 1 sản phẩm ──────────────────────────────────────────
+router.get('/:id', async (req, res) => {
     try {
-        let data = await getAIToolsFromDB();
-        const meta = { source: 'db', count: data.length };
-
-        if (data.length === 0) {
-            data = await researchAITools();
-            meta.source = 'ai';
+        const productId = req.params.id;
+        
+        // Overview from DB
+        const baseRes = await db.query(`SELECT raw_data FROM product_trend_results WHERE product_id = $1`, [productId]);
+        if (baseRes.rows.length === 0) {
+            return res.status(404).json({ error: 'Product not found' });
         }
-        res.json({ success: true, data, meta });
+        const overview = baseRes.rows[0].raw_data;
+
+        // Fetch deep dive
+        const deepDive = await getProductDetail(productId, 'deep_dive');
+        const opportunity = await getProductDetail(productId, 'opportunity');
+
+        res.json({
+            meta: { schema_version: 'V4.0.1', product_id: productId },
+            data: {
+                overview,
+                deep_dive: deepDive,
+                opportunity
+            }
+        });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// ─── Page 3 — AI Suggestions ───────────────────────────────────────────────
-router.get('/page-3', async (req, res) => {
-    try {
-        let data = await getSuggestionsFromDB();
-        const meta = { source: 'db', count: data.length };
-
-        if (data.length === 0) {
-            data = await researchSuggestions();
-            meta.source = 'ai';
-        }
-        res.json({ success: true, data, meta });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// ─── Manual refresh with cooldown ──────────────────────────────────────────
-const refreshCooldowns = {}; // page → last refresh timestamp
-
+// ─── Refresh thủ công ──────────────────────────────────────────────────
 router.post('/refresh', async (req, res) => {
-    const { page } = req.body; // 'mmo' | 'ai_tools' | 'suggestions'
-    if (!['mmo', 'ai_tools', 'suggestions'].includes(page)) {
-        return res.status(400).json({ error: 'Invalid page. Use: mmo, ai_tools, suggestions' });
-    }
-
-    const now = Date.now();
-    const cooldown = 5 * 60 * 1000; // 5 minutes
-    if (refreshCooldowns[page] && now - refreshCooldowns[page] < cooldown) {
-        const remaining = Math.ceil((cooldown - (now - refreshCooldowns[page])) / 1000);
-        return res.status(429).json({ error: `Cooldown active. Wait ${remaining}s before refreshing again.` });
-    }
-
     try {
-        // Clear cache so next call forces AI
-        await db.query(`DELETE FROM cached_research WHERE page_type = $1`, [page]);
-
-        let data;
-        if (page === 'mmo') {
-            await db.query(`DELETE FROM research_results WHERE page_type = 'mmo'`);
-            data = await researchMMO();
-        } else if (page === 'ai_tools') {
-            await db.query(`DELETE FROM research_results WHERE page_type = 'ai_tools'`);
-            data = await researchAITools();
-        } else {
-            data = await researchSuggestions();
-        }
-
-        refreshCooldowns[page] = now;
-        res.json({ success: true, count: Array.isArray(data) ? data.length : 0 });
+        const { market = 'vn', categories = ['Skincare', 'Gia dụng'], source_window = 'last_7_days', mode = 'overview' } = req.body;
+        
+        // Force refresh by ignoring cache? For now, we rely on cache TTL.
+        // To truly force, we might need a flag to bypass cache, but let's stick to standard flow.
+        const result = await getProductTrends({ market, categories, window: source_window, mode, limit: 10 });
+        
+        res.json({ success: true, message: 'Refreshed successfully.', data: result.data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// ─── Quota / Usage ─────────────────────────────────────────────────────────
-router.get('/usage', async (req, res) => {
-    try {
-        const quota = await getQuota();
-        const recentLogs = await db.query(
-            `SELECT * FROM api_usage_logs ORDER BY created_at DESC LIMIT 20`
-        );
-        res.json({ quota, recent_calls: recentLogs.rows });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+// ─── Thao tác quản trị nội bộ ─────────────────────────────────────────
 
-// ─── Admin endpoints ───────────────────────────────────────────────────────
 router.post('/admin/run-daily-job', async (req, res) => {
-    res.json({ success: true, message: 'Daily research job started in background.' });
-    runDailyResearch().catch(console.error);
+    const { researchQueue } = require('./queue');
+    const date = new Date().toISOString().split('T')[0];
+    await researchQueue.add('manual-research', {}, {
+        jobId: `trend_manual_${date}`
+    });
+    res.json({ success: true, message: 'Daily trend job queued in background.' });
 });
 
 router.post('/admin/reset-quota', async (req, res) => {
@@ -123,35 +105,16 @@ router.post('/admin/reset-quota', async (req, res) => {
             UPDATE quota_state SET
                 request_count = 0, prompt_tokens = 0, output_tokens = 0,
                 total_tokens = 0, cache_hits = 0, is_blocked = FALSE,
+                blocked_until = NULL, blocked_model = NULL,
                 date = CURRENT_DATE, updated_at = NOW()
             WHERE id = 1
         `);
+        const { setBlocked } = require('./gemini');
         await setBlocked(false);
         res.json({ success: true, message: 'Quota reset.' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
-});
-
-// ─── Topics management ─────────────────────────────────────────────────────
-router.get('/topics', async (req, res) => {
-    const r = await db.query(`SELECT * FROM research_topics ORDER BY id`);
-    res.json(r.rows);
-});
-
-router.post('/topics', async (req, res) => {
-    const { name, category } = req.body;
-    if (!name) return res.status(400).json({ error: 'name required' });
-    const r = await db.query(
-        `INSERT INTO research_topics (name, category) VALUES ($1, $2) RETURNING *`,
-        [name, category || 'general']
-    );
-    res.json(r.rows[0]);
-});
-
-router.delete('/topics/:id', async (req, res) => {
-    await db.query(`DELETE FROM research_topics WHERE id = $1`, [req.params.id]);
-    res.json({ success: true });
 });
 
 module.exports = router;

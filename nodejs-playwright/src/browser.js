@@ -65,31 +65,61 @@ async function getAccountProfile(accountId) {
 }
 
 async function createOrLoadContext(accountId, proxyString = null, headless = false) {
-    const userDataDir = require('path').join(config.PROFILES_DIR, accountId);
-    const profile = await getAccountProfile(accountId);
-
-    // Parse proxy string
-    let proxyConfig = undefined;
-    if (proxyString) {
+    const path = require('path');
+    const userDataDir = path.join(config.PROFILES_DIR, accountId);
+    
+    // Tự động xóa file Lock của Chrome nếu tồn tại (Sửa lỗi "Existing browser session")
+    const lockFile = path.join(userDataDir, 'SingletonLock');
+    if (fs.existsSync(lockFile)) {
         try {
-            const url = new URL(proxyString);
-            proxyConfig = { server: `${url.protocol}//${url.hostname}:${url.port}` };
-            if (url.username) proxyConfig.username = decodeURIComponent(url.username);
-            if (url.password) proxyConfig.password = decodeURIComponent(url.password);
-        } catch(e) {
-            console.error(`[${accountId}] Lỗi parse proxy: ${proxyString}`);
+            fs.unlinkSync(lockFile);
+            console.log(`[${accountId}] Đã xóa file SingletonLock để giải phóng Profile.`);
+        } catch (e) {
+            // Nếu không xóa được, có thể tiến hành giết process (nâng cao)
         }
     }
+
+    const profile = await getAccountProfile(accountId);
+
+    // Parse proxy string - Hỗ trợ các định dạng phổ biến
+    let proxyConfig = undefined;
+    if (proxyString && proxyString.trim() !== "") {
+        try {
+            let p = proxyString.trim();
+            if (!p.startsWith('http')) p = 'http://' + p;
+            
+            const url = new URL(p);
+            proxyConfig = { server: `${url.protocol}//${url.hostname}${url.port ? ':' + url.port : ''}` };
+            if (url.username) proxyConfig.username = decodeURIComponent(url.username);
+            if (url.password) proxyConfig.password = decodeURIComponent(url.password);
+            
+            console.log(`[${accountId}] Sử dụng Proxy: ${proxyConfig.server}`);
+        } catch(e) {
+            // Thử parse định dạng ip:port:user:pass
+            const parts = proxyString.split(':');
+            if (parts.length === 4) {
+                proxyConfig = {
+                    server: `http://${parts[0]}:${parts[1]}`,
+                    username: parts[2],
+                    password: parts[3]
+                };
+                console.log(`[${accountId}] Sử dụng Proxy (định dạng ip:port:user:pass): ${proxyConfig.server}`);
+            } else {
+                console.error(`[${accountId}] Lỗi định dạng proxy: ${proxyString}`);
+            }
+        }
+    }
+
+    console.log(`[${accountId}] Đang khởi tạo trình duyệt với Profile: ${userDataDir}`);
 
     const context = await chromium.launchPersistentContext(userDataDir, {
         headless,
         userAgent:         profile.userAgent,
-        viewport:          profile.viewport,
+        viewport:          null,
         screen:            { width: profile.screenWidth, height: profile.screenHeight },
         timezoneId:        profile.timezoneId,
         locale:            profile.locale,
         colorScheme:       'light',
-        deviceScaleFactor: profile.deviceScaleFactor,
         proxy:             proxyConfig,
         args: [
             '--disable-blink-features=AutomationControlled',
@@ -100,64 +130,16 @@ async function createOrLoadContext(accountId, proxyString = null, headless = fal
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-software-rasterizer',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-site-isolation-trials',
             `--window-size=${profile.viewport.width},${profile.viewport.height}`,
-            '--excludeSwitches=enable-automation',
-            '--disable-extensions-except=',
-            '--disable-component-extensions-with-background-pages',
         ],
         ignoreDefaultArgs: ['--enable-automation'],
     });
 
-    // Inject stealth overrides into every page context
-    await context.addInitScript((p) => {
-        Object.defineProperty(navigator, 'webdriver',           { get: () => undefined });
-        Object.defineProperty(navigator, 'platform',            { get: () => p.platform });
-        Object.defineProperty(navigator, 'languages',           { get: () => ['vi-VN', 'vi', 'en-US', 'en'] });
-        Object.defineProperty(navigator, 'language',            { get: () => 'vi-VN' });
-        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-        Object.defineProperty(navigator, 'deviceMemory',        { get: () => 8 });
-
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => Object.assign([
-                { name: 'Chrome PDF Plugin',  filename: 'internal-pdf-viewer',              description: 'Portable Document Format' },
-                { name: 'Chrome PDF Viewer',  filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                { name: 'Native Client',      filename: 'internal-nacl-plugin',             description: '' },
-            ], { length: 3 }),
-        });
-
-        Object.defineProperty(screen, 'width',       { get: () => p.screenWidth });
-        Object.defineProperty(screen, 'height',      { get: () => p.screenHeight });
-        Object.defineProperty(screen, 'availWidth',  { get: () => p.screenWidth });
-        Object.defineProperty(screen, 'availHeight', { get: () => p.screenHeight - 40 });
-        Object.defineProperty(screen, 'colorDepth',  { get: () => p.colorDepth });
-        Object.defineProperty(screen, 'pixelDepth',  { get: () => p.colorDepth });
-
-        const origQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (params) =>
-            params.name === 'notifications'
-                ? Promise.resolve({ state: Notification.permission })
-                : origQuery(params);
-
-        // Remove ChromeDriver artifact keys
-        ['cdc_adoQpoasnfa76pfcZLmcfl_Array',
-         'cdc_adoQpoasnfa76pfcZLmcfl_Promise',
-         'cdc_adoQpoasnfa76pfcZLmcfl_Symbol'].forEach(k => delete window[k]);
-    }, profile);
-
     const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
 
-    await page.setExtraHTTPHeaders({
-        'Accept-Language':           'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Sec-Ch-Ua':                 '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        'Sec-Ch-Ua-Mobile':          '?0',
-        'Sec-Ch-Ua-Platform':        profile.platform === 'MacIntel' ? '"macOS"' : '"Windows"',
-        'Upgrade-Insecure-Requests': '1',
-    });
+    // Thiết lập timeout mặc định
+    page.setDefaultTimeout(60000);
+    page.setDefaultNavigationTimeout(60000);
 
     return { context, page };
 }

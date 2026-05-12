@@ -9,7 +9,6 @@ const runTaskForm = document.getElementById('run-task-form');
 const settingsForm = document.getElementById('settings-form');
 const addAccountForm = document.getElementById('add-account-form');
 const btnClearLogs = document.getElementById('btnClearLogs');
-const toast = document.getElementById('toast');
 
 // Stats Elements
 const statQueued = document.getElementById('stat-queued');
@@ -45,10 +44,10 @@ navItems.forEach(item => {
         e.preventDefault();
         const targetId = item.getAttribute('data-tab');
         console.log('[App] Tab clicked:', targetId);
-        
+
         navItems.forEach(n => n.classList.remove('active'));
         item.classList.add('active');
-        
+
         tabPanes.forEach(t => {
             t.classList.remove('active');
             t.style.display = 'none';
@@ -102,16 +101,78 @@ navItems.forEach(item => {
 });
 
 // ─── Schedule Management ──────────────────────────────────────────────────
+function getScheduleFilters() {
+    return {
+        date: document.getElementById('scheduleDateFilter')?.value || '',
+        type: document.getElementById('scheduleTypeFilter')?.value || 'all',
+        status: document.getElementById('scheduleStatusFilter')?.value || 'all'
+    };
+}
+
+window.clearScheduleFilters = () => {
+    const date = document.getElementById('scheduleDateFilter');
+    const type = document.getElementById('scheduleTypeFilter');
+    const status = document.getElementById('scheduleStatusFilter');
+    if (date) date.value = '';
+    if (type) type.value = 'all';
+    if (status) status.value = 'all';
+    loadSchedules();
+};
+
+function renderScheduleSummary(payload) {
+    const el = document.getElementById('scheduleSummaryCards');
+    if (!el || !payload) return;
+    const s = payload.summary || {};
+    const sch = payload.schedules || {};
+    el.innerHTML = `
+        <div class="card" style="padding:12px;"><p style="font-size:0.72rem;color:var(--text-muted);">Lịch đang hoạt động</p><b>${sch.active_schedules || 0}</b></div>
+        <div class="card" style="padding:12px;"><p style="font-size:0.72rem;color:var(--text-muted);">Lượt chạy</p><b>${s.task_runs || 0}</b></div>
+        <div class="card" style="padding:12px;"><p style="font-size:0.72rem;color:var(--text-muted);">Thành công</p><b style="color:var(--success);">${s.completed || 0}</b></div>
+        <div class="card" style="padding:12px;"><p style="font-size:0.72rem;color:var(--text-muted);">Thất bại</p><b style="color:var(--error);">${s.failed || 0}</b></div>
+    `;
+}
+
+function scheduleStatusLabel(status) {
+    return {
+        active: 'Đang hoạt động',
+        completed: 'Đã hoàn thành',
+        cancelled: 'Đã hủy',
+        failed: 'Thất bại'
+    }[status] || status || 'Không rõ';
+}
+
+function taskTypeLabel(type) {
+    return {
+        invite: 'Kết bạn',
+        unfollow: 'Hủy theo dõi',
+        warmup: 'Nuôi nick'
+    }[type] || type || 'Không rõ';
+}
+
 window.loadSchedules = async () => {
     try {
-        const res = await fetch('/api/automation/schedules');
-        const schedules = await res.json();
+        const filters = getScheduleFilters();
+        const qs = new URLSearchParams();
+        if (filters.date) qs.set('date', filters.date);
+        if (filters.type !== 'all') qs.set('type', filters.type);
+        if (filters.status !== 'all') qs.set('status', filters.status);
+
+        const [scheduleRes, summaryRes] = await Promise.all([
+            fetch('/api/automation/schedules?' + qs.toString()),
+            fetch('/api/automation/summary?' + qs.toString())
+        ]);
+        const scheduleJson = await scheduleRes.json();
+        const summaryJson = await summaryRes.json().catch(() => null);
+        if (!scheduleRes.ok || !scheduleJson.success) throw new Error(scheduleJson.error || 'Lỗi tải lịch hẹn');
+        if (summaryRes.ok && summaryJson?.success) renderScheduleSummary(summaryJson);
+
+        const schedules = scheduleJson.data || [];
         const tbody = document.getElementById('schedulesTableBody');
         if (!tbody) return;
         tbody.innerHTML = '';
 
         if (schedules.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; opacity:0.6; padding:20px;">Chưa có lịch hẹn nào được tạo.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; opacity:0.6; padding:20px;">Chưa có lịch hẹn nào phù hợp bộ lọc.</td></tr>';
             return;
         }
 
@@ -119,46 +180,32 @@ window.loadSchedules = async () => {
             const tr = document.createElement('tr');
             const lastRun = s.last_run ? new Date(s.last_run).toLocaleString('vi-VN') : 'Chưa chạy';
             const createdAt = new Date(s.created_at).toLocaleString('vi-VN');
-            
-            let typeBadge = `<span class="badge" style="background:rgba(99,102,241,0.1);color:#818cf8;border:1px solid rgba(99,102,241,0.2)">${s.task_type}</span>`;
-            if (s.task_type === 'unfollow') typeBadge = `<span class="badge" style="background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2)">${s.task_type}</span>`;
+            const limit = s.max_runs ? `${s.run_count || 0}/${s.max_runs}` : `${s.run_count || 0}/không giới hạn`;
+            const statusColor = s.status === 'active' ? 'var(--success)' : (s.status === 'completed' ? 'var(--primary)' : 'var(--error)');
+            let typeBadge = `<span class="badge" style="background:rgba(99,102,241,0.1);color:#818cf8;border:1px solid rgba(99,102,241,0.2)">${taskTypeLabel(s.task_type)}</span>`;
+            if (s.task_type === 'unfollow') typeBadge = `<span class="badge" style="background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2)">${taskTypeLabel(s.task_type)}</span>`;
+            if (s.task_type === 'warmup') typeBadge = `<span class="badge" style="background:rgba(16,185,129,0.1);color:#34d399;border:1px solid rgba(16,185,129,0.2)">${taskTypeLabel(s.task_type)}</span>`;
+            const scheduleLabel = s.schedule_type === 'none'
+                ? 'Chạy ngay'
+                : (s.schedule_type === 'time' ? `Hằng ngày lúc ${s.schedule_value}` : `Lặp mỗi ${s.schedule_value} giờ`);
 
             tr.innerHTML = `
-                <td>
-                    <div style="font-size:0.7rem; opacity:0.6;">#${s.id.slice(0,8)}</div>
-                    ${typeBadge}
-                </td>
-                <td>
-                    <div style="font-size:0.85rem;">${s.account_ids.length} tài khoản</div>
-                    <div style="font-size:0.7rem; opacity:0.6;">${s.account_ids.join(', ')}</div>
-                </td>
-                <td>
-                    <div style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.85rem;" title="${s.group_url || 'N/A'}">
-                        ${s.group_url ? `<a href="${s.group_url}" target="_blank">${s.group_url}</a>` : 'N/A'}
-                    </div>
-                </td>
-                <td>
-                    <div style="font-size:0.85rem; font-weight:600;">${s.schedule_type === 'none' ? 'Chạy ngay' : (s.schedule_type === 'time' ? 'Hàng ngày @ ' + s.schedule_value : 'Lặp lại mỗi ' + s.schedule_value + ' giờ')}</div>
-                    <div style="font-size:0.7rem; opacity:0.6;">Tạo: ${createdAt}</div>
-                </td>
-                <td>
-                    <div style="font-size:0.85rem;">${s.total_runs} lượt</div>
-                    <div style="font-size:0.7rem; opacity:0.6;">Cuối: ${lastRun}</div>
-                </td>
-                <td>
-                    <span class="status-badge online" style="font-size:0.7rem; padding:2px 6px;">${s.status}</span>
-                </td>
-                <td>
-                    <button class="btn btn-outline btn-sm" onclick="viewScheduleHistory('${s.id}')">Lịch Sử</button>
-                </td>
+                <td><div style="font-size:0.7rem; opacity:0.6;">#${s.id.slice(0,8)}</div>${typeBadge}</td>
+                <td><div style="font-size:0.85rem;">${(s.account_ids || []).length} tài khoản</div><div style="font-size:0.7rem; opacity:0.6;">${(s.account_ids || []).join(', ')}</div></td>
+                <td><div style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.85rem;" title="${s.group_url || 'N/A'}">${s.group_url ? `<a href="${s.group_url}" target="_blank">${s.group_url}</a>` : 'N/A'}</div></td>
+                <td><div style="font-size:0.85rem; font-weight:600;">${scheduleLabel}</div><div style="font-size:0.7rem; opacity:0.6;">Tạo: ${createdAt}</div></td>
+                <td><b>${limit}</b><br><small>${s.success_count || 0} ok / ${s.failed_count || 0} fail</small></td>
+                <td><div style="font-size:0.85rem;">${s.total_tasks || 0} task</div><div style="font-size:0.7rem; opacity:0.6;">Cuối: ${lastRun}</div></td>
+                <td><span class="status-badge" style="background:${statusColor}; color:#fff; font-size:0.7rem; padding:2px 6px;">${scheduleStatusLabel(s.status)}</span></td>
+                <td><div style="display:flex; gap:5px;"><button class="btn btn-outline btn-sm" onclick="viewScheduleHistory('${s.id}')">Lịch sử</button><button class="btn btn-sm" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:var(--error);" onclick="cancelSchedule('${s.id}')">Hủy</button></div></td>
             `;
             tbody.appendChild(tr);
         });
     } catch (err) {
         console.error('Lỗi tải lịch:', err);
+        showToast(err.message || 'Lỗi tải lịch hẹn');
     }
 };
-
 window.viewScheduleHistory = async (id) => {
     const section = document.getElementById('scheduleHistorySection');
     const tbody = document.getElementById('historyTableBody');
@@ -172,7 +219,8 @@ window.viewScheduleHistory = async (id) => {
 
     try {
         const res = await fetch(`/api/automation/history?scheduleId=${id}`);
-        const history = await res.json();
+        const historyJson = await res.json();
+        const history = historyJson.data || historyJson;
         tbody.innerHTML = '';
 
         if (history.length === 0) {
@@ -184,9 +232,9 @@ window.viewScheduleHistory = async (id) => {
             const tr = document.createElement('tr');
             const start = new Date(h.started_at).toLocaleString('vi-VN');
             const duration = h.finished_at ? Math.round((new Date(h.finished_at) - new Date(h.started_at)) / 1000) + 's' : 'Đang chạy...';
-            
+
             let statusCls = h.status === 'completed' ? 'success' : (h.status === 'failed' ? 'error' : 'warning');
-            
+
             tr.innerHTML = `
                 <td style="font-size:0.85rem;">${start}</td>
                 <td><b>${h.account_id}</b> <br><small>${h.account_name || ''}</small></td>
@@ -206,6 +254,29 @@ window.viewScheduleHistory = async (id) => {
 window.closeHistory = () => {
     document.getElementById('scheduleHistorySection').style.display = 'none';
 };
+
+window.cancelSchedule = async (id) => {
+    const ok = await showConfirm({
+        title: 'Hủy lịch hẹn',
+        message: 'Bạn có chắc chắn muốn hủy lịch hẹn này không? Các lượt chạy lặp lại trong tương lai sẽ dừng lại.',
+        confirmText: 'Hủy lịch',
+        cancelText: 'Giữ lại'
+    });
+    if (!ok) return;
+    try {
+        const res = await fetch(`/api/automation/schedules/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            showToast('Đã hủy lịch hẹn thành công.');
+            loadSchedules();
+        } else {
+            showToast('Lỗi: ' + data.error);
+        }
+    } catch (err) {
+        showToast('Lỗi khi kết nối server.');
+    }
+};
+
 
 // Load configuration on mount
 fetch('/api/config')
@@ -251,11 +322,15 @@ window.toggleTaskTypeUI = () => {
     const groupUrlContainer = document.getElementById('groupUrlContainer');
     const groupUrlInput = document.getElementById('groupUrl');
     const unfollowOptionsContainer = document.getElementById('unfollowOptionsContainer');
-    
+
     if (type === 'unfollow') {
         groupUrlContainer.style.display = 'none';
         groupUrlInput.removeAttribute('required');
         unfollowOptionsContainer.style.display = 'block';
+    } else if (type === 'warmup') {
+        groupUrlContainer.style.display = 'none';
+        groupUrlInput.removeAttribute('required');
+        unfollowOptionsContainer.style.display = 'none';
     } else {
         groupUrlContainer.style.display = 'block';
         groupUrlInput.setAttribute('required', 'required');
@@ -269,7 +344,7 @@ function renderAccountsTable(accounts) {
     tbody.innerHTML = '';
 
     const activeAccounts = (accounts || []).filter(acc => !acc.deleted_at);
-    
+
     if (!activeAccounts || activeAccounts.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #94a3b8;">Chưa có tài khoản nào. Vui lòng thêm mới.</td></tr>';
         return;
@@ -334,16 +409,16 @@ function loadAccounts() {
             const optionsContainer = document.getElementById('multiselect-options');
             if (!optionsContainer) return;
             optionsContainer.innerHTML = '';
-            
+
             accounts.forEach(acc => {
                 const label = document.createElement('label');
                 label.className = 'custom-checkbox multiselect-option';
-                
+
                 const input = document.createElement('input');
                 input.type = 'checkbox';
                 input.value = acc.id;
                 if (selectedAccountIds.includes(acc.id)) input.checked = true;
-                
+
                 input.addEventListener('change', (e) => {
                     if (e.target.checked) {
                         if (!selectedAccountIds.includes(acc.id)) selectedAccountIds.push(acc.id);
@@ -355,19 +430,19 @@ function loadAccounts() {
                     }
                     updateMultiselectText();
                 });
-                
+
                 const checkmark = document.createElement('span');
                 checkmark.className = 'checkmark';
-                
+
                 const text = document.createElement('span');
                 text.className = 'checkbox-label';
                 const displayName = acc.name ? `${acc.id} - ${acc.name}` : acc.id;
                 text.textContent = `${displayName} (${acc.status})`;
-                
+
                 label.appendChild(input);
                 label.appendChild(checkmark);
                 label.appendChild(text);
-                
+
                 optionsContainer.appendChild(label);
             });
             updateMultiselectText();
@@ -430,18 +505,30 @@ function resetAccountForm() {
     if (cancelBtn) cancelBtn.style.display = 'none';
 }
 
-window.softDeleteAccount = (id) => {
-    if (!confirm(`Xóa mềm tài khoản "${id}"?`)) return;
+window.softDeleteAccount = async (id) => {
+    const ok = await showConfirm({
+        title: 'Xóa mềm tài khoản',
+        message: `Bạn có muốn xóa mềm tài khoản "${id}" không?`,
+        confirmText: 'Xóa mềm',
+        cancelText: 'Hủy'
+    });
+    if (!ok) return;
     fetch(`/api/accounts/${id}`, { method: 'DELETE' })
-        .then(() => { showToast(`Đã xóa mềm: ${id}`); loadAccounts(); loadDeletedAccounts(); })
-        .catch(() => showToast('Lỗi khi xóa!'));
+        .then(() => { showToast(`Đã xóa mềm: ${id}`, 'success'); loadAccounts(); loadDeletedAccounts(); })
+        .catch(() => showToast('Lỗi khi xóa!', 'error'));
 };
 
-window.hardDeleteAccount = (id) => {
-    if (!confirm(`XÓA CỨNG "${id}"?`)) return;
+window.hardDeleteAccount = async (id) => {
+    const ok = await showConfirm({
+        title: 'Xóa cứng tài khoản',
+        message: `Thao tác này sẽ xóa vĩnh viễn tài khoản "${id}". Bạn chắc chắn muốn tiếp tục?`,
+        confirmText: 'Xóa vĩnh viễn',
+        cancelText: 'Hủy'
+    });
+    if (!ok) return;
     fetch(`/api/accounts/${id}/hard`, { method: 'DELETE' })
-        .then(() => { showToast(`Đã xóa cứng: ${id}`); loadDeletedAccounts(); })
-        .catch(() => showToast('Lỗi khi xóa cứng!'));
+        .then(() => { showToast(`Đã xóa cứng: ${id}`, 'success'); loadDeletedAccounts(); })
+        .catch(() => showToast('Lỗi khi xóa cứng!', 'error'));
 };
 
 window.restoreAccount = (id) => {
@@ -498,14 +585,6 @@ function loadDeletedAccounts() {
 loadAccounts();
 loadDeletedAccounts();
 
-function showToast(message) {
-    toast.innerText = message;
-    toast.classList.add('show');
-    setTimeout(() => {
-        toast.classList.remove('show');
-    }, 3000);
-}
-
 settingsForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const config = {
@@ -533,19 +612,23 @@ window.toggleScheduleUI = () => {
     const timeInput = document.getElementById('scheduleTime');
     const intervalInput = document.getElementById('scheduleInterval');
     const btnSubmit = document.getElementById('btnSubmitRun');
-    
+    const hint = document.getElementById('scheduleHint');
+
     if (type === 'time') {
         timeInput.style.display = 'block';
         intervalInput.style.display = 'none';
         btnSubmit.textContent = 'Hẹn Giờ Bắt Đầu';
+        if (hint) hint.textContent = 'Lịch sẽ chạy hằng ngày theo giờ Việt Nam (Asia/Ho_Chi_Minh).';
     } else if (type === 'interval') {
         timeInput.style.display = 'none';
         intervalInput.style.display = 'block';
         btnSubmit.textContent = 'Tạo Lịch Chạy Lặp Lại';
+        if (hint) hint.textContent = 'Bot sẽ chạy lặp lại theo khoảng cách giờ đã nhập.';
     } else {
         timeInput.style.display = 'none';
         intervalInput.style.display = 'none';
         btnSubmit.textContent = 'Bắt Đầu';
+        if (hint) hint.textContent = 'Bot sẽ chạy lập tức nếu chọn "Chạy ngay".';
     }
 };
 
@@ -558,41 +641,50 @@ runTaskForm.addEventListener('submit', (e) => {
     const scheduleType = document.getElementById('scheduleType').value;
     const scheduleTime = document.getElementById('scheduleTime').value;
     const scheduleInterval = document.getElementById('scheduleInterval').value;
-    
+    const maxRuns = document.getElementById('scheduleMaxRuns')?.value || '';
+
     if (accountIds.length === 0) {
         showToast('Chọn ít nhất 1 tài khoản!');
         return;
     }
-    
+
     if (scheduleType === 'time' && !scheduleTime) {
         showToast('Vui lòng chọn giờ bắt đầu!');
         return;
     }
-    
+
     if (scheduleType === 'interval' && (!scheduleInterval || scheduleInterval < 1)) {
         showToast('Vui lòng nhập khoảng cách giờ hợp lệ!');
         return;
     }
-    
+
     fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            accountId: accountIds, 
-            groupUrl, 
-            taskType, 
+        body: JSON.stringify({
+            accountId: accountIds,
+            groupUrl,
+            taskType,
             maxUnfollow,
             scheduleType,
             scheduleTime,
-            scheduleInterval
+            scheduleInterval,
+            maxRuns
         })
-    }).then(() => {
+    }).then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(data.error || 'Không thể đưa tác vụ vào hàng đợi');
+        }
         if (scheduleType === 'none') {
             showToast('Đã đưa vào hàng đợi!');
             document.getElementById('control-buttons').style.display = 'flex';
         } else {
             showToast('Đã thiết lập lịch hẹn giờ thành công!');
         }
+        loadSchedules();
+    }).catch((err) => {
+        showToast(err.message || 'Lỗi khi khởi chạy tác vụ');
     });
 });
 
@@ -633,18 +725,18 @@ document.getElementById('generate-id-btn').addEventListener('click', () => {
 function addLog(message, type = 'info', timestamp = null, options = {}) {
     if (!liveLogsContainer || !logsContainer) return;
     const { toLive = true, toFull = true } = options;
-    
+
     let timeStr = timestamp ? new Date(timestamp).toLocaleTimeString('vi-VN', { hour12: false }) : new Date().toLocaleTimeString('vi-VN', { hour12: false });
-    
+
     const el = document.createElement('div');
     el.className = `log-line ${type}`;
     el.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="log-msg">${message}</span>`;
-    
+
     if (toFull) {
         logsContainer.appendChild(el);
         if (autoScrollLogs) logsContainer.scrollTop = logsContainer.scrollHeight;
     }
-    
+
     if (toLive) {
         const liveEl = el.cloneNode(true);
         liveLogsContainer.appendChild(liveEl);

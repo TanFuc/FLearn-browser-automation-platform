@@ -21,24 +21,32 @@
     <div class="nav-section">Nghiên Cứu</div>
     <div class="nav-item" data-page="mmo" onclick="switchPage('mmo',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-        <span>MMO / Affiliate</span>
+        <span>MMO / Tiếp thị liên kết (Affiliate)</span>
     </div>
     <div class="nav-item" data-page="ai" onclick="switchPage('ai',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
-        <span>AI Tools Market</span>
+        <span>Thị trường công cụ AI (AI Tools Market)</span>
     </div>
     <div class="nav-item" data-page="suggest" onclick="switchPage('suggest',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-        <span>Gợi Ý AI</span>
+        <span>Gợi ý AI (AI Suggestions)</span>
     </div>
     <div class="nav-item active" data-page="trends" onclick="switchPage('trends',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        <span>🛒 Product Trends</span>
+        <span>Xu hướng sản phẩm (Product Trends)</span>
+    </div>
+    <div class="nav-item" data-page="affvid" onclick="switchPage('affvid',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/></svg>
+        <span>AFF VID</span>
+    </div>
+    <div class="nav-item" data-page="uppost" onclick="switchPage('uppost',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H5.17L4 17.17z"/><path d="M8 8h8M8 12h5"/></svg>
+        <span>UP POST</span>
     </div>
     <div class="nav-section">Hệ Thống</div>
     <div class="nav-item" data-page="quota" onclick="switchPage('quota',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        <span>Quota Monitor</span>
+        <span>Theo dõi quota (Quota Monitor)</span>
     </div>
     <div class="nav-item" data-page="prompts" onclick="switchPage('prompts',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
@@ -55,13 +63,13 @@
 
     <!-- Quota status bar (always visible) -->
     <div class="quota-bar" id="quotaBar">
-        <div class="quota-item">Requests hôm nay: <span id="qReq">—</span></div>
+        <div class="quota-item">Yêu cầu hôm nay (Requests): <span id="qReq">—</span></div>
         <div class="quota-item">Soft cap: <span id="qSoft">20</span></div>
         <div class="quota-item">Hard cap: <span id="qHard">30</span></div>
         <div class="quota-item">Tokens: <span id="qTokens">—</span></div>
         <div class="quota-item">Cache hits: <span id="qCache">—</span></div>
         <div class="progress-wrap">
-            <span style="font-size:0.78rem;color:var(--muted);">Quota:</span>
+            <span style="font-size:0.78rem;color:var(--muted);">Hạn mức (Quota):</span>
             <div class="progress-bar"><div class="progress-fill" id="quotaFill" style="width:0%"></div></div>
             <span id="quotaPct" style="font-size:0.78rem;">0%</span>
         </div>
@@ -73,15 +81,16 @@
     <div id="page-mmo" class="page-tabs" style="display:none;">
         <div class="page-header">
             <div class="page-title">
-                <h1>⚡ MMO / Affiliate Intelligence</h1>
-                <p id="mmoUpdated">Đang tải dữ liệu...</p>
+                <h1>⚡ MMO / Tiếp thị liên kết (Affiliate Intelligence)</h1>
+                <p id="mmoUpdated">Đang tải dữ liệu (Loading data)...</p>
             </div>
             <div class="header-actions">
-                <button class="btn btn-outline btn-sm" onclick="exportCSV('mmo')">⬇ Export CSV</button>
-                <button class="btn btn-primary btn-sm" id="mmoRefreshBtn" onclick="refreshPage('mmo')">↺ Refresh AI</button>
+                <button class="btn btn-outline btn-sm" onclick="exportCSV('mmo')">⬇ Xuất CSV (Export CSV)</button>
+                <button class="btn btn-primary btn-sm" id="mmoRefreshBtn" onclick="refreshPage('mmo')">↺ Làm mới AI (Refresh AI)</button>
             </div>
         </div>
 
+        <div class="daily-summary" id="dailySummary-mmo"></div>
         <!-- Top cards -->
         <div class="cards-grid" id="mmoTopCards"></div>
         <div id="mmoGroupSections" class="group-sections"></div>
@@ -89,27 +98,26 @@
         <!-- Table -->
         <div class="table-wrap">
             <div class="table-toolbar">
-                <input class="search-input" id="mmoSearch" placeholder="🔍 Tìm cơ hội..." oninput="filterMMO()">
+                <input class="search-input" id="mmoSearch" placeholder="🔍 Tìm cơ hội (Search opportunities)..." oninput="filterMMO()">
                 <select class="filter-select" id="mmoCategoryFilter" onchange="filterMMO()">
-                    <option value="">Tất cả Niche</option>
+                    <option value="">Tất cả ngách (All niches)</option>
                 </select>
                 <select class="filter-select" id="mmoSortFilter" onchange="filterMMO()">
-                    <option value="trend">Sắp xếp: Trend</option>
-                    <option value="monetization">Sắp xếp: Monetization</option>
-                    <option value="competition">Sắp xếp: Competition</option>
+                    <option value="trend">Sắp xếp: Xu hướng (Trend)</option>
+                    <option value="monetization">Sắp xếp: Kiếm tiền (Monetize)</option>
+                    <option value="competition">Sắp xếp: Cạnh tranh (Competition)</option>
                 </select>
                 <span id="mmoCount" style="font-size:0.8rem;color:var(--muted);margin-left:auto;"></span>
             </div>
             <div style="overflow-x:auto;">
                 <table>
                     <thead><tr>
-                        <th>Cơ Hội</th>
-                        <th>Niche</th>
-                        <th onclick="sortMMO('trend')">Trend ↕</th>
-                        <th onclick="sortMMO('monetization')">Monetize ↕</th>
-                        <th onclick="sortMMO('competition')">Cạnh Tranh ↕</th>
-                        <th>Traffic</th>
-                        <th>Mô Hình</th>
+                        <th>Cơ hội (Opportunity)</th>
+                        <th>Ngách (Niche)</th>
+                        <th onclick="sortMMO('trend')">Xu hướng (Trend) ↕</th>
+                        <th onclick="sortMMO('monetization')">Kiếm tiền (Monetize) ↕</th>
+                        <th onclick="sortMMO('competition')">Cạnh tranh (Competition) ↕</th>
+                        <th>Mô hình (Model)</th>
                     </tr></thead>
                     <tbody id="mmoTableBody"></tbody>
                 </table>
@@ -130,6 +138,7 @@
             </div>
         </div>
 
+        <div class="daily-summary" id="dailySummary-ai"></div>
         <!-- Highlights -->
         <div class="cards-grid" id="aiTopCards"></div>
         <div id="aiGroupSections" class="group-sections"></div>
@@ -185,7 +194,111 @@
                 <button class="btn btn-primary btn-sm" id="suggestRefreshBtn" onclick="refreshPage('suggestions')">↺ Refresh AI</button>
             </div>
         </div>
+        <div class="daily-summary" id="dailySummary-suggest"></div>
         <div id="suggestList"></div>
+    </div>
+
+    <div id="page-uppost" class="page-tabs" style="display:none;">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>UP POST</h1>
+                <p id="upPostUpdated">Biến AFF VID/research thành bài đăng riêng cho từng nền tảng.</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="showResearchGuide('uppost')">Hướng dẫn (Guide)</button>
+                <button class="btn btn-primary btn-sm" onclick="loadUpPostSources()">Tải source</button>
+            </div>
+        </div>
+        <div class="daily-summary" id="dailySummary-uppost"></div>
+        <div class="stage-flow">
+            <div class="stage-card"><b>Stage 1</b><span>Chọn source (Source)</span></div>
+            <div class="stage-card"><b>Stage 2</b><span>Chọn platform (Platforms)</span></div>
+            <div class="stage-card"><b>Stage 3</b><span>Setup lịch (Schedule)</span></div>
+            <div class="stage-card"><b>Stage 4</b><span>Queue publish</span></div>
+        </div>
+        <div class="uppost-layout">
+            <div class="uppost-panel">
+                <div class="table-toolbar">
+                    <select class="filter-select" id="upPostSourceType" onchange="loadUpPostSources()">
+                        <option value="aff_vid">AFF VID</option>
+                        <option value="research">Research result</option>
+                    </select>
+                    <button class="btn btn-outline btn-sm" onclick="loadUpPostVariants()">Drafts</button>
+                </div>
+                <div class="uppost-platforms">
+                    <label><input type="checkbox" value="threads" checked> Threads</label>
+                    <label><input type="checkbox" value="facebook" checked> Facebook</label>
+                    <label><input type="checkbox" value="tiktok_caption" checked> TikTok caption</label>
+                    <label><input type="checkbox" value="facebook_video" checked> Facebook video</label>
+                </div>
+                <div class="flow-config-grid">
+                    <label>Giờ đăng (Scheduled time)<input type="datetime-local" id="upPostScheduledTime"></label>
+                    <label>Campaign tag<input type="text" id="upPostCampaignTag" placeholder="vd: may-viral-test"></label>
+                    <label>Post type<select id="upPostPostType"><option value="">Auto</option><option value="text">Text</option><option value="caption">Caption</option><option value="video_post">Video post</option></select></label>
+                    <label>Tone<select id="upPostTone"><option value="rõ ràng, có CTA">Rõ ràng, có CTA</option><option value="ngắn, tò mò">Ngắn, tò mò</option><option value="review thực tế">Review thực tế</option></select></label>
+                    <label>CTA<select id="upPostCtaType"><option value="engagement_or_click">Engagement/click</option><option value="comment_keyword">Comment keyword</option><option value="affiliate_click">Affiliate click</option></select></label>
+                </div>
+                <div id="upPostSourceList" class="uppost-list"></div>
+            </div>
+            <div class="uppost-panel">
+                <div class="uppost-output-head">
+                    <b>Post variants JSON</b>
+                    <button class="btn btn-outline btn-sm" onclick="enqueueUpPostVariants()">Đưa vào queue</button>
+                </div>
+                <pre id="upPostOutput" class="uppost-output">Chọn source content để sinh post variants.</pre>
+            </div>
+        </div>
+    </div>
+
+    <div id="page-affvid" class="page-tabs" style="display:none;">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>AFF VID</h1>
+                <p id="affVidUpdated">Biến dữ liệu Product Trends thành video affiliate ngắn.</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="showResearchGuide('affvid')">Hướng dẫn (Guide)</button>
+                <button class="btn btn-primary btn-sm" onclick="loadAffVidCandidates()">Tải sản phẩm</button>
+            </div>
+        </div>
+        <div class="daily-summary" id="dailySummary-affvid"></div>
+        <div class="stage-flow">
+            <div class="stage-card"><b>Stage 1</b><span>Chọn product (Source)</span></div>
+            <div class="stage-card"><b>Stage 2</b><span>Setup video</span></div>
+            <div class="stage-card"><b>Stage 3</b><span>Generate JSON</span></div>
+            <div class="stage-card"><b>Stage 4</b><span>Export n8n</span></div>
+        </div>
+        <div class="affvid-layout">
+            <div class="affvid-panel">
+                <div class="table-toolbar">
+                    <select class="filter-select" id="affVidWindowFilter" onchange="loadAffVidCandidates()">
+                        <option value="today">Hôm nay</option>
+                        <option value="last_3_days">3 ngày qua</option>
+                        <option value="last_7_days">7 ngày qua</option>
+                    </select>
+                    <select class="filter-select" id="affVidPlatformFilter" onchange="renderAffVidCandidates()">
+                        <option value="TikTok">TikTok</option>
+                        <option value="Facebook Reels">Facebook Reels</option>
+                        <option value="Instagram Reels">Instagram Reels</option>
+                    </select>
+                </div>
+                <div class="flow-config-grid">
+                    <label>Độ dài (Duration)<select id="affVidDuration"><option value="20-30s">20-30s</option><option value="30-45s" selected>30-45s</option><option value="45-60s">45-60s</option></select></label>
+                    <label>Tone<select id="affVidTone"><option value="review thực tế">Review thực tế</option><option value="tò mò, viral">Tò mò, viral</option><option value="giải thích nhanh">Giải thích nhanh</option></select></label>
+                    <label>CTA<select id="affVidCtaType"><option value="affiliate_click">Affiliate click</option><option value="comment_keyword">Comment keyword</option><option value="save_share">Save/share</option></select></label>
+                    <label>Creator persona<input type="text" id="affVidPersona" value="reviewer tiếng Việt"></label>
+                    <label>Affiliate URL<input type="url" id="affVidAffiliateUrl" placeholder="https://..."></label>
+                </div>
+                <div id="affVidCandidateList" class="affvid-list"></div>
+            </div>
+            <div class="affvid-panel">
+                <div class="affvid-output-head">
+                    <b>Video plan JSON</b>
+                    <button class="btn btn-outline btn-sm" onclick="copyAffVidPlan()">Copy JSON</button>
+                </div>
+                <pre id="affVidOutput" class="affvid-output">Chọn một sản phẩm từ research để sinh video plan.</pre>
+            </div>
+        </div>
     </div>
 
     <!-- ═══ PAGE 4: QUOTA ═══ -->
@@ -238,6 +351,8 @@
                         <option value="mmo">mmo</option>
                         <option value="ai_tools">ai_tools</option>
                         <option value="suggestions">suggestions</option>
+                        <option value="aff_vid">aff_vid</option>
+                        <option value="up_post">up_post</option>
                         <option value="test">test</option>
                     </select>
 
@@ -275,6 +390,7 @@
             </div>
         </div>
 
+        <div class="daily-summary" id="dailySummary-trends"></div>
         <div class="v4-filter-bar">
             <div class="v4-filter-row">
                 <select class="filter-select" id="v4MarketFilter">
@@ -282,8 +398,9 @@
                     <option value="global">🌍 Global</option>
                 </select>
                 <select class="filter-select" id="v4WindowFilter">
+                    <option value="today">Hôm nay</option>
+                    <option value="last_3_days">3 ngày qua</option>
                     <option value="last_7_days">7 ngày qua</option>
-                    <option value="last_30_days">30 ngày qua</option>
                 </select>
                 <select class="filter-select" id="v4LimitFilter">
                     <option value="8">Limit: 8</option>
@@ -297,11 +414,12 @@
                 <input type="text" id="v4CustomCategory" class="v4-custom-input" placeholder="Tùy chỉnh (vd: Đồ câu...)">
             </div>
             <div id="v4CategoryFilters" class="v4-cat-filters">
-                <label><input type="checkbox" value="Skincare" checked> Skincare</label>
-                <label><input type="checkbox" value="Gia dụng" checked> Gia dụng</label>
-                <label><input type="checkbox" value="Fitness" checked> Fitness</label>
-                <label><input type="checkbox" value="Thời trang" checked> Thời trang</label>
-                <label><input type="checkbox" value="Mẹ & bé" checked> Mẹ & bé</label>
+                <label><input type="checkbox" value="all" checked> Tất cả (All)</label>
+                <label><input type="checkbox" value="Skincare"> Skincare</label>
+                <label><input type="checkbox" value="Gia dụng"> Gia dụng</label>
+                <label><input type="checkbox" value="Fitness"> Fitness</label>
+                <label><input type="checkbox" value="Thời trang"> Thời trang</label>
+                <label><input type="checkbox" value="Mẹ & bé"> Mẹ & bé</label>
                 <label><input type="checkbox" value="Điện tử"> Điện tử</label>
                 <label><input type="checkbox" value="Sức khỏe"> Sức khỏe</label>
                 <label><input type="checkbox" value="Thú cưng"> Thú cưng</label>
@@ -310,6 +428,7 @@
             </div>
         </div>
 
+        <div id="v4TrendStats" class="v4-trend-stats"></div>
         <div id="v4TrendGrid" class="v4-grid"></div>
     </div>
 
@@ -328,6 +447,7 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="toast.js"></script>
 <script src="research.js"></script>
 </body>
 </html>

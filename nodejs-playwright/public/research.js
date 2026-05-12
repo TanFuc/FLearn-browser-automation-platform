@@ -1,8 +1,16 @@
 // Research Dashboard JS
 let mmoData = [], aiData = [], suggestData = [];
+let mmoMeta = null, aiMeta = null, suggestMeta = null;
+let affVidCandidates = [];
+let affVidCurrentPlan = null;
+let affVidMeta = null;
+let upPostSources = [];
+let upPostCurrent = null;
+let upPostMeta = null;
 let mmoSort = { col: 'trend', dir: -1 };
 let dailyUsageCache = { page: 1, limit: 7, total_days: 0, totals: null, daily: [] };
 let selectedDailyDay = null;
+let dateAvailabilityCache = null;
 let cooldownState = null;
 let cooldownTimer = null;
 
@@ -14,7 +22,12 @@ window.switchPage = function(page, el) {
     if (target) { target.classList.add('active'); target.style.display = 'block'; }
     if (el) el.classList.add('active');
     if (page === 'trends') { initTrendV4(); }
-    if (page === 'mmo') { /* lazy load handled below */ }
+    if (page === 'mmo') { loadMMO(); }
+    if (page === 'ai') { loadAI(); }
+    if (page === 'suggest') { loadSuggestions(); }
+    if (page === 'affvid') { loadAffVidCandidates(); }
+    if (page === 'uppost') { loadUpPostSources(); }
+    if (page === 'quota') { loadQuota(); }
 };
 
 // Auto-show trends page on standalone load
@@ -34,7 +47,7 @@ function switchResearchTab(page) {
         p.style.display = 'none';
     });
 
-    const buttons = ['mmo', 'ai', 'suggest', 'trends', 'quota', 'prompts'];
+    const buttons = ['mmo', 'ai', 'suggest', 'trends', 'affvid', 'uppost', 'quota', 'prompts'];
     buttons.forEach(b => {
         const btn = document.getElementById('rtab-' + b);
         if (btn) {
@@ -55,17 +68,19 @@ function switchResearchTab(page) {
         targetBtn.classList.add('btn-primary');
     }
 
-    if (page === 'mmo' && mmoData.length === 0) loadMMO();
-    if (page === 'ai' && aiData.length === 0) loadAI();
-    if (page === 'suggest' && suggestData.length === 0) loadSuggestions();
+    if (page === 'mmo') loadMMO();
+    if (page === 'ai') loadAI();
+    if (page === 'suggest') loadSuggestions();
     if (page === 'trends') initTrendV4();
+    if (page === 'affvid') loadAffVidCandidates();
+    if (page === 'uppost') loadUpPostSources();
     if (page === 'quota') {
         loadQuota();
         loadDailyUsage(dailyUsageCache.page || 1).catch(() => {});
     }
     if (page === 'prompts') loadPrompts();
 
-    if (['mmo', 'ai', 'suggest'].includes(page)) {
+    if (['mmo', 'ai', 'suggest', 'trends', 'affvid', 'uppost'].includes(page)) {
         if (dailyUsageCache.daily?.length) {
             renderDailySummaryAll();
         } else {
@@ -91,11 +106,21 @@ function priceColor(p) {
     return map[p] || 'muted';
 }
 function statusBadge(s) {
-    const map = { new_launch: ['success','🆕 New'], on_discount: ['warning','💰 Discount'], established: ['info','✅ Stable'], deprecated: ['error','⚠ Deprecated'] };
+    const map = {
+        new_launch: ['success','New launch'],
+        on_discount: ['warning','Discount'],
+        major_update: ['info','Major update'],
+        viral: ['success','Viral'],
+        established: ['info','Stable'],
+        deprecated: ['error','Deprecated']
+    };
     const [type, label] = map[s] || ['muted', s];
     return badge(label, type);
 }
 function showAlert(msg, type = 'warning') {
+    if (window.AppToast?.show) {
+        window.AppToast.show(msg, type === 'error' ? 'error' : type === 'success' ? 'success' : type === 'warning' ? 'warning' : 'info');
+    }
     const banner = document.getElementById('researchAlertBanner') || document.getElementById('alertBanner');
     if (!banner) return;
     banner.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
@@ -105,6 +130,17 @@ function showAlert(msg, type = 'warning') {
 function formatDay(d) {
     const date = new Date(d);
     return isNaN(date) ? d : date.toLocaleDateString('vi-VN');
+}
+
+function dayKey(d) {
+    if (!d) return '';
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const date = new Date(d);
+    if (isNaN(date)) return String(d).slice(0, 10);
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
 }
 
 function formatNumber(v) {
@@ -118,13 +154,115 @@ function formatTime(ts) {
 }
 
 function getLatestDay() {
-    return dailyUsageCache.daily?.[0]?.day || null;
+    return getDailyDays()[0] || null;
+}
+
+function getDailyDays() {
+    const seen = new Set();
+    const days = [];
+    (dailyUsageCache.daily || []).forEach(row => {
+        const day = dayKey(row.day);
+        if (!day || seen.has(day)) return;
+        seen.add(day);
+        days.push(day);
+    });
+    return days;
+}
+
+function getDailyAggregate(day) {
+    const rows = (dailyUsageCache.daily || []).filter(row => dayKey(row.day) === dayKey(day));
+    if (rows.length === 0) return null;
+    return rows.reduce((acc, row) => ({
+        day: row.day,
+        requests: (acc.requests || 0) + Number(row.requests || 0),
+        prompt_tokens: (acc.prompt_tokens || 0) + Number(row.prompt_tokens || 0),
+        output_tokens: (acc.output_tokens || 0) + Number(row.output_tokens || 0),
+        total_tokens: (acc.total_tokens || 0) + Number(row.total_tokens || 0),
+        cache_hits: (acc.cache_hits || 0) + Number(row.cache_hits || 0)
+    }), { day });
 }
 
 function getSelectedDay() {
-    const available = (dailyUsageCache.daily || []).map(d => String(d.day));
-    if (selectedDailyDay && available.includes(String(selectedDailyDay))) return selectedDailyDay;
+    const available = getDailyDays().map(d => dayKey(d));
+    if (selectedDailyDay && available.includes(dayKey(selectedDailyDay))) return dayKey(selectedDailyDay);
     return getLatestDay();
+}
+
+function getSelectedResearchDate() {
+    return selectedDailyDay ? dayKey(selectedDailyDay) : '';
+}
+
+function withResearchDate(url) {
+    const date = getSelectedResearchDate();
+    if (!date) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}date=${encodeURIComponent(date)}`;
+}
+
+async function ensureDailyUsageLoaded() {
+    if (dailyUsageCache.daily?.length) return;
+    await loadDailyUsage(1).catch(err => console.warn('[Research] Daily usage preload failed:', err.message));
+}
+
+async function loadDateAvailability() {
+    const date = getSelectedResearchDate();
+    const url = date ? `/api/research/date-availability?date=${encodeURIComponent(date)}` : '/api/research/date-availability';
+    const res = await fetch(url);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Loi tai date availability');
+    dateAvailabilityCache = json;
+    return json;
+}
+
+function metaDateLabel(meta) {
+    const mode = meta?.date_mode === 'selected' ? 'Ngay chon (Selected date)' : 'Moi nhat co du lieu (Latest available)';
+    const date = meta?.resolved_date || meta?.date || meta?.requested_date || '';
+    return `${mode}: ${date ? formatDay(date) : '--'}`;
+}
+
+function emptyMetaHtml(title, meta, refreshText = 'Refresh AI') {
+    const nearest = meta?.available_dates?.[0];
+    const switchBtn = nearest && nearest !== meta?.requested_date
+        ? `<button class="btn btn-outline btn-sm" onclick="selectResearchDate('${nearest}')">Chuyen sang ${formatDay(nearest)}</button>`
+        : '';
+    return `<div class="empty-state">
+        <h3>${title}</h3>
+        <p>${meta?.empty_reason || 'Khong co du lieu cho bo loc hien tai.'}</p>
+        <p>${metaDateLabel(meta)}</p>
+        <div class="empty-actions">${switchBtn}<span>${refreshText}</span></div>
+    </div>`;
+}
+
+window.selectResearchDate = function selectResearchDate(day) {
+    selectedDailyDay = day ? dayKey(day) : null;
+    renderDailySummaryAll();
+    renderDailyUsage();
+    reloadResearchDataForSelectedDate();
+};
+
+function currentTabKey() {
+    if (document.getElementById('rpage-mmo')?.classList.contains('active') || document.getElementById('page-mmo')?.classList.contains('active')) return 'mmo';
+    if (document.getElementById('rpage-ai')?.classList.contains('active') || document.getElementById('page-ai')?.classList.contains('active')) return 'ai';
+    if (document.getElementById('rpage-suggest')?.classList.contains('active') || document.getElementById('page-suggest')?.classList.contains('active')) return 'suggest';
+    if (document.getElementById('rpage-trends')?.classList.contains('active') || document.getElementById('page-trends')?.classList.contains('active')) return 'trends';
+    if (document.getElementById('rpage-affvid')?.classList.contains('active') || document.getElementById('page-affvid')?.classList.contains('active')) return 'affvid';
+    if (document.getElementById('rpage-uppost')?.classList.contains('active') || document.getElementById('page-uppost')?.classList.contains('active')) return 'uppost';
+    if (document.getElementById('rpage-quota')?.classList.contains('active') || document.getElementById('page-quota')?.classList.contains('active')) return 'quota';
+    return null;
+}
+
+function reloadResearchDataForSelectedDate() {
+    mmoData = [];
+    aiData = [];
+    suggestData = [];
+    const tab = currentTabKey();
+    if (tab === 'mmo') return loadMMO();
+    if (tab === 'ai') return loadAI();
+    if (tab === 'suggest') return loadSuggestions();
+    if (tab === 'trends' && window.TrendV4) return TrendV4.load(false);
+    if (tab === 'affvid') return loadAffVidCandidates();
+    if (tab === 'uppost') return loadUpPostSources();
+    if (tab === 'quota') return loadQuota();
 }
 
 function renderCooldownStatus(state) {
@@ -180,20 +318,23 @@ function renderDailySummary(targetId, latest, totals) {
         el.innerHTML = '<div class="daily-summary-empty">Chưa có dữ liệu thống kê theo ngày.</div>';
         return;
     }
-    const selectedDay = getSelectedDay();
-    const options = (dailyUsageCache.daily || []).map(d => {
-        const val = String(d.day);
-        const selected = val === String(selectedDay) ? 'selected' : '';
-        return `<option value="${val}" ${selected}>${formatDay(d.day)}</option>`;
+    const selectedDay = getSelectedResearchDate();
+    const options = getDailyDays().map(day => {
+        const val = dayKey(day);
+        const selected = val === dayKey(selectedDay) ? 'selected' : '';
+        return `<option value="${val}" ${selected}>${formatDay(day)}</option>`;
     }).join('');
-    const dayToShow = dailyUsageCache.daily.find(d => String(d.day) === String(selectedDay)) || latest;
+    const dayToShow = getDailyAggregate(selectedDay) || latest;
     el.innerHTML = `
         <div class="daily-controls">
-            <label for="dailySelect">Chọn ngày</label>
-            <select class="daily-day-select" data-daily-select="${targetId}">${options}</select>
+            <label for="dailySelect">Chọn ngày (Date)</label>
+            <select class="daily-day-select" data-daily-select="${targetId}">
+                <option value="" ${selectedDay ? '' : 'selected'}>Tự động mới nhất theo page (Auto latest per page)</option>
+                ${options}
+            </select>
         </div>
         <div class="daily-card">
-            <div class="daily-label">Hôm nay</div>
+            <div class="daily-label">${selectedDay ? 'Ngày đang chọn' : 'Usage mới nhất'}</div>
             <div class="daily-value">${formatNumber(dayToShow.requests)}</div>
             <div class="daily-sub">${formatDay(dayToShow.day)}</div>
         </div>
@@ -221,6 +362,9 @@ function renderDailySummaryAll() {
     renderDailySummary('dailySummary-mmo', latest, dailyUsageCache.totals);
     renderDailySummary('dailySummary-ai', latest, dailyUsageCache.totals);
     renderDailySummary('dailySummary-suggest', latest, dailyUsageCache.totals);
+    renderDailySummary('dailySummary-trends', latest, dailyUsageCache.totals);
+    renderDailySummary('dailySummary-affvid', latest, dailyUsageCache.totals);
+    renderDailySummary('dailySummary-uppost', latest, dailyUsageCache.totals);
 }
 
 function renderDailyUsage() {
@@ -277,22 +421,24 @@ function updateQuotaBar(q) {
 // ─── Load MMO (Page 1) ────────────────────────────────────────────────────
 window.loadMMO = async function loadMMO() {
     console.log('[Research] Loading MMO data...');
+    await ensureDailyUsageLoaded();
     const tableBody = document.getElementById('mmoTableBody');
     const updatedLabel = document.getElementById('mmoUpdated');
     
-    if (tableBody) renderSkeleton('mmoTableBody', 6, 7);
-    if (updatedLabel) updatedLabel.textContent = '⏳ Đang tải dữ liệu từ server...';
+    if (tableBody) renderSkeleton('mmoTableBody', 6, 6);
+    if (updatedLabel) updatedLabel.textContent = 'Đang tải dữ liệu (Loading data) từ server...';
 
     try {
-        const res = await fetch('/api/research/page-1');
+        const res = await fetch(withResearchDate('/api/research/page-1'));
         const json = await res.json();
         if (!json.success) {
-            if (updatedLabel) updatedLabel.textContent = '❌ Lỗi tải dữ liệu';
+            if (updatedLabel) updatedLabel.textContent = 'Lỗi tải dữ liệu (Data load error)';
             return showAlert(json.error, 'error');
         }
         mmoData = json.data || [];
+        mmoMeta = json.meta || null;
         console.log('[Research] MMO data received:', mmoData);
-        if (updatedLabel) updatedLabel.textContent = `${mmoData.length} cơ hội · Nguồn: ${json.meta?.source || 'DB'} · ${new Date().toLocaleString('vi-VN')}`;
+        if (updatedLabel) updatedLabel.textContent = `${mmoData.length} cơ hội (opportunities) · ${metaDateLabel(json.meta)} · Nguồn (Source): ${json.meta?.source || 'DB'}`;
         renderMMOTopCards();
         renderGroupSections('mmoGroupSections', mmoData, 'category');
         renderMMOTable();
@@ -300,15 +446,15 @@ window.loadMMO = async function loadMMO() {
         console.log('[Research] MMO data loaded:', mmoData.length);
     } catch (e) { 
         console.error('[Research] MMO Load Error:', e);
-        if (updatedLabel) updatedLabel.textContent = '❌ Lỗi kết nối server';
-        showAlert('Lỗi tải dữ liệu MMO: ' + e.message, 'error'); 
+        if (updatedLabel) updatedLabel.textContent = 'Lỗi kết nối server (Server connection error)';
+        showAlert('Lỗi tải dữ liệu MMO (MMO data load error): ' + e.message, 'error');
     }
 }
 
 function fillMMOFilters() {
     const cats = [...new Set(mmoData.map(d => d.category).filter(Boolean))];
     const sel = document.getElementById('mmoCategoryFilter');
-    sel.innerHTML = '<option value="">Tất cả Niche</option>' + cats.map(c => `<option value="${c}">${c}</option>`).join('');
+    sel.innerHTML = '<option value="">Tất cả ngách (All niches)</option>' + cats.map(c => `<option value="${c}">${c}</option>`).join('');
 }
 
 function renderMMOTopCards() {
@@ -319,11 +465,11 @@ function renderMMOTopCards() {
             <h3>${item.title || '—'}</h3>
             <p>${item.summary || ''}</p>
             <div class="score-row">
-                <div class="score-item">Trend <span class="sv">${item.trend_score||0}</span></div>
-                <div class="score-item">Monetize <span class="sv">${item.monetization_score||0}</span></div>
-                <div class="score-item">Cạnh tranh <span class="sv">${item.competition_score||0}</span></div>
+                <div class="score-item">Xu hướng (Trend) <span class="sv">${item.trend_score||0}</span></div>
+                <div class="score-item">Kiếm tiền (Monetize) <span class="sv">${item.monetization_score||0}</span></div>
+                <div class="score-item">Cạnh tranh (Competition) <span class="sv">${item.competition_score||0}</span></div>
             </div>
-            <p style="font-size:0.78rem;color:var(--muted);margin-top:10px;">💰 ${item.monetization_model || '—'}</p>
+            <p style="font-size:0.78rem;color:var(--muted);margin-top:10px;">Mô hình (Model): ${item.monetization_model || '—'}</p>
         </div>`).join('');
 }
 
@@ -357,7 +503,7 @@ function renderGroupSections(containerId, data, groupKey, labelMap) {
             <section class="group-section">
                 <div class="group-header">
                     <h3>${label}</h3>
-                    <span>${items.length} mục</span>
+                    <span>${items.length} mục (items)</span>
                 </div>
                 <div class="group-grid">${cards}</div>
             </section>
@@ -380,16 +526,15 @@ function getFilteredMMO() {
 
 function renderMMOTable(data) {
     data = data || getFilteredMMO();
-    document.getElementById('mmoCount').textContent = `${data.length} kết quả`;
-    if (!data.length) { document.getElementById('mmoTableBody').innerHTML = `<tr><td colspan="7"><div class="empty-state"><h3>Không có dữ liệu</h3><p>Nhấn Refresh AI để tải</p></div></td></tr>`; return; }
+    document.getElementById('mmoCount').textContent = `${data.length} kết quả (results)`;
+    if (!data.length) { document.getElementById('mmoTableBody').innerHTML = `<tr><td colspan="6">${emptyMetaHtml('Không có dữ liệu MMO (No MMO data)', mmoMeta, 'Nhấn Refresh AI để tạo dữ liệu mới.')}</td></tr>`; return; }
     document.getElementById('mmoTableBody').innerHTML = data.map(d => `
         <tr>
-            <td><b>${d.title||'—'}</b><br><span style="font-size:0.75rem;color:var(--muted)">${d.content_angle||''}</span></td>
+            <td><b>${d.title||'—'}</b><br><span style="font-size:0.75rem;color:var(--muted)">${d.content_angle||''}</span>${d.traffic_source ? `<br><span style="font-size:0.75rem;color:var(--muted)">Nguồn traffic (Traffic source): ${d.traffic_source}</span>` : ''}</td>
             <td>${badge(d.category||'—','primary')}</td>
             <td>${scoreBar(d.trend_score||0)}</td>
             <td>${scoreBar(d.monetization_score||0)}</td>
             <td>${scoreBar(d.competition_score||0)}</td>
-            <td><span style="font-size:0.8rem">${d.traffic_source||'—'}</span></td>
             <td><span style="font-size:0.8rem">${d.monetization_model||'—'}</span></td>
         </tr>`).join('');
 }
@@ -399,13 +544,15 @@ function sortMMO(col) { mmoSort = { col, dir: -1 }; renderMMOTable(); }
 
 // ─── Load AI Tools (Page 2) ───────────────────────────────────────────────
 window.loadAI = async function loadAI() {
+    await ensureDailyUsageLoaded();
     renderSkeleton('aiTableBody', 8, 7);
     try {
-        const res = await fetch('/api/research/page-2');
+        const res = await fetch(withResearchDate('/api/research/page-2'));
         const json = await res.json();
         if (!json.success) return showAlert(json.error, 'error');
         aiData = json.data || [];
-        document.getElementById('aiUpdated').textContent = `${aiData.length} công cụ · ${new Date().toLocaleString('vi-VN')}`;
+        aiMeta = json.meta || null;
+        document.getElementById('aiUpdated').textContent = `${aiData.length} công cụ (tools) · ${metaDateLabel(json.meta)}`;
         renderAITopCards();
         renderGroupSections('aiGroupSections', aiData, 'tool_type', {
             code: 'Code',
@@ -453,7 +600,7 @@ function getFilteredAI() {
 function renderAITable(data) {
     data = data || getFilteredAI();
     document.getElementById('aiCount').textContent = `${data.length} công cụ`;
-    if (!data.length) { document.getElementById('aiTableBody').innerHTML = `<tr><td colspan="7"><div class="empty-state"><h3>Không có dữ liệu</h3></div></td></tr>`; return; }
+    if (!data.length) { document.getElementById('aiTableBody').innerHTML = `<tr><td colspan="7">${emptyMetaHtml('Không có dữ liệu AI Market (No AI Market data)', aiMeta, 'Nhấn Refresh AI để tạo dữ liệu mới.')}</td></tr>`; return; }
     document.getElementById('aiTableBody').innerHTML = data.map(d => `
         <tr>
             <td><b>${d.tool_name||'—'}</b>
@@ -472,20 +619,22 @@ function filterAI() { renderAITable(); }
 
 // ─── Load Suggestions (Page 3) ────────────────────────────────────────────
 window.loadSuggestions = async function loadSuggestions() {
+    await ensureDailyUsageLoaded();
     document.getElementById('suggestList').innerHTML = '<div class="empty-state">⏳ Đang tải...</div>';
     try {
-        const res = await fetch('/api/research/page-3');
+        const res = await fetch(withResearchDate('/api/research/page-3'));
         const json = await res.json();
         if (!json.success) return showAlert(json.error, 'error');
         suggestData = json.data || [];
-        document.getElementById('suggestUpdated').textContent = `${suggestData.length} gợi ý · ${new Date().toLocaleString('vi-VN')}`;
+        suggestMeta = json.meta || null;
+        document.getElementById('suggestUpdated').textContent = `${suggestData.length} gợi ý (suggestions) · ${metaDateLabel(json.meta)}`;
         renderSuggestions();
     } catch (e) { showAlert('Lỗi: ' + e.message, 'error'); }
 }
 
 function renderSuggestions() {
     if (!suggestData.length) {
-        document.getElementById('suggestList').innerHTML = `<div class="empty-state"><h3>Chưa có gợi ý</h3><p>Nhấn Refresh AI để tạo gợi ý mới</p></div>`;
+        document.getElementById('suggestList').innerHTML = emptyMetaHtml('Chưa có gợi ý (No suggestions)', suggestMeta, 'Nhấn Refresh AI để tạo gợi ý mới.');
         return;
     }
     const byTopic = {};
@@ -531,12 +680,279 @@ function renderSuggestions() {
     document.getElementById('suggestList').innerHTML = sections;
 }
 
+// ─── AFF VID ────────────────────────────────────────────────────────────────
+function selectedAffVidPlatform() {
+    return document.getElementById('affVidPlatformFilter')?.value || 'TikTok';
+}
+
+function getAffVidSetup() {
+    return {
+        platform_targets: [selectedAffVidPlatform()],
+        video_duration: document.getElementById('affVidDuration')?.value || '30-45s',
+        tone: document.getElementById('affVidTone')?.value || 'review thực tế',
+        cta_type: document.getElementById('affVidCtaType')?.value || 'affiliate_click',
+        creator_persona: document.getElementById('affVidPersona')?.value || 'reviewer tiếng Việt',
+        affiliate_url: document.getElementById('affVidAffiliateUrl')?.value?.trim() || null,
+        language: 'vi'
+    };
+}
+
+window.loadAffVidCandidates = async function loadAffVidCandidates() {
+    const list = document.getElementById('affVidCandidateList');
+    const updated = document.getElementById('affVidUpdated');
+    if (!list) return;
+    await ensureDailyUsageLoaded();
+    list.innerHTML = '<div class="empty-state">Đang tải sản phẩm từ research...</div>';
+    const windowValue = document.getElementById('affVidWindowFilter')?.value || 'today';
+    const date = getSelectedResearchDate();
+    const dateParam = date ? `&date=${encodeURIComponent(date)}` : '';
+    try {
+        const res = await fetch(`/api/research/aff-vid/source-products?market=vn&window=${encodeURIComponent(windowValue)}&categories=all&limit=12${dateParam}`);
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || 'Không tải được sản phẩm AFF VID');
+        affVidCandidates = json.data || [];
+        affVidMeta = json.meta || null;
+        if (updated) updated.textContent = `${affVidCandidates.length} sản phẩm (products) · ${metaDateLabel(json.meta)} · Window: ${json.meta?.window || windowValue}`;
+        renderAffVidCandidates();
+    } catch (err) {
+        list.innerHTML = `<div class="empty-state"><h3>Lỗi tải AFF VID</h3><p>${err.message}</p></div>`;
+        showAlert(err.message, 'error');
+    }
+};
+
+window.renderAffVidCandidates = function renderAffVidCandidates() {
+    const list = document.getElementById('affVidCandidateList');
+    if (!list) return;
+    if (!affVidCandidates.length) {
+        list.innerHTML = emptyMetaHtml('Chưa có sản phẩm phù hợp (No suitable product)', affVidMeta, 'Hãy refresh Trends V4 hoặc đổi ngày/window.');
+        return;
+    }
+    list.innerHTML = affVidCandidates.map(item => `
+        <div class="affvid-item">
+            <div>
+                <b>${item.product_name || item.product_id}</b>
+                <p>${item.niche || 'General'} · ${item.angle_seed || 'Không có summary'}</p>
+                <div class="badge-row">
+                    ${badge(`Trend ${item.trend_score || 0}`, 'primary')}
+                    ${badge(`Tin cậy ${item.confidence_score || 0}`, 'success')}
+                    ${badge(`Ưu tiên ${item.priority_score || 0}`, 'muted')}
+                </div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="generateAffVidPlan('${item.product_id}')">Sinh video (Generate)</button>
+        </div>
+    `).join('');
+};
+
+window.generateAffVidPlan = async function generateAffVidPlan(productId) {
+    const out = document.getElementById('affVidOutput');
+    if (out) out.textContent = 'Đang gọi Gemini để sinh video plan JSON...';
+    try {
+        const res = await fetch('/api/research/aff-vid/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                product_id: productId,
+                ...getAffVidSetup()
+            })
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || 'Không sinh được video plan');
+        affVidCurrentPlan = json.data;
+        if (out) out.textContent = JSON.stringify(json.data, null, 2);
+        showAlert('Đã sinh video affiliate plan từ dữ liệu research.', 'success');
+    } catch (err) {
+        if (out) out.textContent = `Lỗi: ${err.message}`;
+        showAlert(err.message, 'error');
+    }
+};
+
+window.copyAffVidPlan = async function copyAffVidPlan() {
+    if (!affVidCurrentPlan) return showAlert('Chưa có video plan để copy.', 'warning');
+    await navigator.clipboard.writeText(JSON.stringify(affVidCurrentPlan, null, 2));
+    showAlert('Đã copy JSON video plan.', 'success');
+};
+
+window.showResearchGuide = function showResearchGuide(type) {
+    const guides = {
+        affvid: {
+            title: 'Hướng dẫn AFF VID (AFF VID Guide)',
+            steps: [
+                'Stage 1: Chọn ngày/window để lấy sản phẩm thật từ Trends V4.',
+                'Stage 2: Setup platform, độ dài video, tone, CTA và affiliate URL nếu có.',
+                'Stage 3: Bấm Sinh video để tạo hook, script, shot list, caption, hashtag.',
+                'Stage 4: Copy JSON hoặc dùng plan này làm source cho UP POST/n8n.'
+            ]
+        },
+        uppost: {
+            title: 'Hướng dẫn UP POST (UP POST Guide)',
+            steps: [
+                'Stage 1: Chọn source từ AFF VID hoặc Research result theo ngày.',
+                'Stage 2: Chọn từng nền tảng; hệ thống sẽ sinh biến thể riêng, không dùng một bài chung.',
+                'Stage 3: Setup giờ đăng, campaign tag, post type, tone và CTA.',
+                'Stage 4: Bấm Sinh post rồi đưa draft đạt yêu cầu vào publishing queue.'
+            ]
+        }
+    };
+    const guide = guides[type] || guides.affvid;
+    let modal = document.getElementById('researchGuideModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'researchGuideModal';
+        modal.className = 'research-guide-modal';
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = `
+        <div class="research-guide-backdrop" onclick="closeResearchGuide()"></div>
+        <div class="research-guide-card">
+            <div class="research-guide-head">
+                <h3>${guide.title}</h3>
+                <button class="btn btn-outline btn-sm" onclick="closeResearchGuide()">Đóng (Close)</button>
+            </div>
+            <ol>${guide.steps.map(step => `<li>${step}</li>`).join('')}</ol>
+        </div>`;
+    modal.style.display = 'block';
+};
+
+window.closeResearchGuide = function closeResearchGuide() {
+    const modal = document.getElementById('researchGuideModal');
+    if (modal) modal.style.display = 'none';
+};
+
+// ─── UP POST ────────────────────────────────────────────────────────────────
+function selectedUpPostPlatforms() {
+    const boxes = document.querySelectorAll('.uppost-platforms input[type="checkbox"]:checked');
+    return Array.from(boxes).map(box => box.value);
+}
+
+function getUpPostSetup() {
+    return {
+        scheduled_time: document.getElementById('upPostScheduledTime')?.value || null,
+        campaign_tag: document.getElementById('upPostCampaignTag')?.value?.trim() || null,
+        post_type: document.getElementById('upPostPostType')?.value || null,
+        tone: document.getElementById('upPostTone')?.value || 'rõ ràng, có CTA',
+        cta_type: document.getElementById('upPostCtaType')?.value || 'engagement_or_click'
+    };
+}
+
+window.loadUpPostSources = async function loadUpPostSources() {
+    const list = document.getElementById('upPostSourceList');
+    const updated = document.getElementById('upPostUpdated');
+    if (!list) return;
+    list.innerHTML = '<div class="empty-state">Đang tải source content...</div>';
+    const sourceType = document.getElementById('upPostSourceType')?.value || 'aff_vid';
+    const date = getSelectedResearchDate();
+    const dateParam = date ? `&date=${encodeURIComponent(date)}` : '';
+    try {
+        const res = await fetch(`/api/research/up-post/sources?source_type=${encodeURIComponent(sourceType)}&limit=20${dateParam}`);
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || 'Không tải được UP POST sources');
+        upPostSources = json.data || [];
+        upPostMeta = json.meta || null;
+        if (updated) updated.textContent = `${upPostSources.length} source · Loại (Type): ${sourceType} · ${metaDateLabel(json.meta)}`;
+        renderUpPostSources();
+    } catch (err) {
+        list.innerHTML = `<div class="empty-state"><h3>Lỗi tải UP POST</h3><p>${err.message}</p></div>`;
+        showAlert(err.message, 'error');
+    }
+};
+
+window.renderUpPostSources = function renderUpPostSources() {
+    const list = document.getElementById('upPostSourceList');
+    if (!list) return;
+    if (!upPostSources.length) {
+        list.innerHTML = emptyMetaHtml('Chưa có source (No source content)', upPostMeta, 'Hãy sinh AFF VID trước hoặc chọn Research result.');
+        return;
+    }
+    list.innerHTML = upPostSources.map(source => `
+        <div class="uppost-item">
+            <div>
+                <b>${source.title || source.source_content_id}</b>
+                <p>${source.summary || 'Không có summary'}</p>
+                <div class="badge-row">
+                    ${badge(source.source_type || 'source', 'primary')}
+                    ${source.product_id ? badge(source.product_id, 'muted') : ''}
+                </div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="generateUpPostVariants('${source.source_content_id}', '${source.source_type || 'aff_vid'}')">Sinh post (Generate)</button>
+        </div>
+    `).join('');
+};
+
+window.generateUpPostVariants = async function generateUpPostVariants(sourceContentId, sourceType = 'aff_vid') {
+    const out = document.getElementById('upPostOutput');
+    if (out) out.textContent = 'Đang gọi Gemini để sinh post variants theo platform...';
+    const platforms = selectedUpPostPlatforms();
+    if (!platforms.length) {
+        if (out) out.textContent = 'Hãy chọn ít nhất một nền tảng.';
+        return showAlert('Hãy chọn ít nhất một nền tảng.', 'warning');
+    }
+    try {
+        const res = await fetch('/api/research/up-post/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source_content_id: sourceContentId,
+                source_type: sourceType,
+                platforms,
+                ...getUpPostSetup()
+            })
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || 'Không sinh được post variants');
+        upPostCurrent = json.data;
+        if (out) out.textContent = JSON.stringify(json.data, null, 2);
+        showAlert('Đã sinh post variants theo từng nền tảng.', 'success');
+    } catch (err) {
+        if (out) out.textContent = `Lỗi: ${err.message}`;
+        showAlert(err.message, 'error');
+    }
+};
+
+window.loadUpPostVariants = async function loadUpPostVariants() {
+    const out = document.getElementById('upPostOutput');
+    try {
+        const date = getSelectedResearchDate();
+        const dateParam = date ? `&date=${encodeURIComponent(date)}` : '';
+        const res = await fetch(`/api/research/up-post/variants?status=draft&limit=20${dateParam}`);
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || 'Không tải được drafts');
+        upPostCurrent = {
+            posts: (json.data || []).map(row => row.post_data),
+            warnings: []
+        };
+        if (out) out.textContent = JSON.stringify(json.data || [], null, 2);
+    } catch (err) {
+        if (out) out.textContent = `Lỗi: ${err.message}`;
+        showAlert(err.message, 'error');
+    }
+};
+
+window.enqueueUpPostVariants = async function enqueueUpPostVariants() {
+    const posts = upPostCurrent?.posts || [];
+    if (!posts.length) return showAlert('Chưa có post variants để đưa vào queue.', 'warning');
+    const postIds = posts.map(post => post.post_id).filter(Boolean);
+    const res = await fetch('/api/research/up-post/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_ids: postIds })
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) return showAlert(json.error || 'Không enqueue được post', 'error');
+    showAlert(`Đã đưa ${json.data.length} post vào queue publishing.`, 'success');
+};
+
 // ─── Load Quota (Page 4) ──────────────────────────────────────────────────
 async function loadQuota() {
     try {
-        const res = await fetch('/api/research/usage');
+        await ensureDailyUsageLoaded();
+        const dateParam = getSelectedResearchDate() ? `?date=${encodeURIComponent(getSelectedResearchDate())}` : '';
+        const [res, overviewRes] = await Promise.all([
+            fetch(`/api/research/usage${dateParam}`),
+            fetch(`/api/research/overview${dateParam}`)
+        ]);
         const json = await res.json();
         const q = json.quota;
+        const overview = overviewRes.ok ? await overviewRes.json() : null;
         if (!q) return;
 
         updateQuotaBar(q);
@@ -545,28 +961,34 @@ async function loadQuota() {
         const quotaAlert = document.getElementById('quotaAlertFull');
         if (quotaAlert) {
             if (q.is_blocked) {
-                quotaAlert.innerHTML = `<div class="alert alert-error">🚫 Tài khoản đã đạt hard cap (${q.hard_cap}). Mọi AI request bị chặn cho đến ngày mai.</div>`;
+                quotaAlert.innerHTML = `<div class="alert alert-error">Tài khoản đã đạt giới hạn cứng (Hard cap) ${q.hard_cap}. Mọi yêu cầu AI (AI requests) bị chặn cho đến ngày mai.</div>`;
             } else if (q.request_count >= q.soft_cap) {
-                quotaAlert.innerHTML = `<div class="alert alert-warning">⚠️ Đạt soft cap! Hệ thống đang bảo vệ quota. Còn ${q.hard_cap - q.request_count} requests.</div>`;
+                quotaAlert.innerHTML = `<div class="alert alert-warning">Đạt giới hạn mềm (Soft cap). Hệ thống đang bảo vệ quota. Còn ${q.hard_cap - q.request_count} yêu cầu (requests).</div>`;
             } else {
-                quotaAlert.innerHTML = `<div class="alert alert-success">✅ Quota an toàn — ${q.request_count}/${q.hard_cap} requests đã dùng hôm nay.</div>`;
+                quotaAlert.innerHTML = `<div class="alert alert-success">Hạn mức an toàn (Quota safe) — ${q.request_count}/${q.hard_cap} yêu cầu (requests) đã dùng hôm nay.</div>`;
             }
         }
 
         const remaining = q.remaining_requests ?? Math.max((q.hard_cap || 0) - (q.request_count || 0), 0);
         const retryAfter = q.retry_after_seconds || 0;
         document.getElementById('usageGrid').innerHTML = [
-            { label: 'Requests hôm nay', val: q.request_count, sub: `/ ${q.hard_cap} hard cap`, color: pct >= 80 ? 'var(--error)' : pct >= 60 ? 'var(--warning)' : 'var(--success)' },
-            { label: 'Còn lại', val: remaining, sub: 'Requests còn lại' },
-            { label: 'Model hiện tại', val: q.last_model || '—', sub: 'Model dùng gần nhất' },
-            { label: 'Retry sau', val: retryAfter ? `${retryAfter}s` : '—', sub: 'Theo quota' },
-            { label: 'Prompt Tokens', val: (q.prompt_tokens||0).toLocaleString(), sub: 'Tổng hôm nay' },
-            { label: 'Output Tokens', val: (q.output_tokens||0).toLocaleString(), sub: 'Tổng hôm nay' },
-            { label: 'Total Tokens', val: (q.total_tokens||0).toLocaleString(), sub: 'Prompt + Output' },
-            { label: 'Cache Hits', val: q.cache_hits || 0, sub: 'Tiết kiệm API calls' },
-            { label: 'Soft Cap', val: q.soft_cap, sub: 'Giới hạn mềm/ngày' },
-            { label: 'Hard Cap', val: q.hard_cap, sub: 'Giới hạn cứng/ngày' },
-            { label: 'Trạng Thái', val: q.is_blocked ? '🚫 Blocked' : '✅ OK', sub: q.is_blocked ? 'API bị tạm khóa' : 'API hoạt động bình thường' },
+            { label: 'Yêu cầu hôm nay (Requests today)', val: q.request_count, sub: `/ ${q.hard_cap} giới hạn cứng (hard cap)`, color: pct >= 80 ? 'var(--error)' : pct >= 60 ? 'var(--warning)' : 'var(--success)' },
+            { label: 'Xu hướng sản phẩm (Product trends)', val: overview?.trends?.products || 0, sub: `${overview?.trends?.categories || 0} danh mục (categories) từ DB` },
+            { label: 'MMO / Affiliate', val: overview?.legacy?.mmo?.count || 0, sub: 'Cơ hội (opportunities) từ DB' },
+            { label: 'Công cụ AI (AI tools)', val: overview?.legacy?.ai_tools?.count || 0, sub: 'Công cụ (tools) từ DB' },
+            { label: 'Gợi ý (Suggestions)', val: overview?.legacy?.suggestions?.count || 0, sub: 'Chiến lược (strategies) từ DB' },
+            { label: 'Nhật ký API (API logs)', val: overview?.usage?.requests || 0, sub: 'Tổng lượt gọi (total calls)' },
+            { label: 'Xu hướng mới nhất (Latest trend)', val: overview?.trends?.latest_generated_at ? new Date(overview.trends.latest_generated_at).toLocaleDateString('vi-VN') : '--', sub: 'Lần cập nhật gần nhất (latest update)' },
+            { label: 'Còn lại (Remaining)', val: remaining, sub: 'Yêu cầu còn lại (requests left)' },
+            { label: 'Model hiện tại (Current model)', val: q.last_model || '—', sub: 'Model dùng gần nhất (latest model)' },
+            { label: 'Thử lại sau (Retry after)', val: retryAfter ? `${retryAfter}s` : '—', sub: 'Theo quota (quota based)' },
+            { label: 'Token prompt (Prompt tokens)', val: (q.prompt_tokens||0).toLocaleString(), sub: 'Tổng hôm nay (today total)' },
+            { label: 'Token đầu ra (Output tokens)', val: (q.output_tokens||0).toLocaleString(), sub: 'Tổng hôm nay (today total)' },
+            { label: 'Tổng token (Total tokens)', val: (q.total_tokens||0).toLocaleString(), sub: 'Prompt + Output' },
+            { label: 'Cache hit (Cache hits)', val: q.cache_hits || 0, sub: 'Tiết kiệm lượt gọi API (saved API calls)' },
+            { label: 'Giới hạn mềm (Soft cap)', val: q.soft_cap, sub: 'Theo ngày (per day)' },
+            { label: 'Giới hạn cứng (Hard cap)', val: q.hard_cap, sub: 'Theo ngày (per day)' },
+            { label: 'Trạng thái (Status)', val: q.is_blocked ? 'Blocked' : 'OK', sub: q.is_blocked ? 'API bị tạm khóa (blocked)' : 'API hoạt động bình thường (healthy)' },
         ].map(c => `
             <div class="usage-card">
                 <div class="u-label">${c.label}</div>
@@ -614,6 +1036,7 @@ document.addEventListener('change', (e) => {
         selectedDailyDay = e.target.value;
         renderDailySummaryAll();
         renderDailyUsage();
+        reloadResearchDataForSelectedDate();
     }
 });
 
@@ -643,7 +1066,13 @@ async function refreshPage(page) {
 
 // ─── Admin actions ────────────────────────────────────────────────────────
 async function resetQuota() {
-    if (!confirm('Reset quota về 0? Chỉ dùng cho mục đích test.')) return;
+    const ok = await showConfirm({
+        title: 'Reset quota',
+        message: 'Reset quota về 0? Chỉ dùng thao tác này cho mục đích test.',
+        confirmText: 'Reset quota',
+        cancelText: 'Hủy'
+    });
+    if (!ok) return;
     const r = await fetch('/api/research/admin/reset-quota', { method: 'POST' });
     const j = await r.json();
     showAlert(j.message, 'success');
@@ -777,7 +1206,13 @@ async function activatePrompt(id) {
 }
 
 async function deletePrompt(id) {
-    if (!confirm('Xoa prompt nay?')) return;
+    const ok = await showConfirm({
+        title: 'Xóa prompt',
+        message: 'Bạn có chắc chắn muốn xóa prompt này không?',
+        confirmText: 'Xóa prompt',
+        cancelText: 'Hủy'
+    });
+    if (!ok) return;
     await fetch(`/api/research/prompts/${id}`, { method: 'DELETE' });
     loadPrompts();
 }
@@ -908,8 +1343,8 @@ document.addEventListener('DOMContentLoaded', () => {
 const TrendV4 = {
     state: {
         market: 'vn',
-        categories: ['Skincare', 'Gia dụng', 'Fitness', 'Thời trang', 'Mẹ & bé'],
-        window: 'last_7_days',
+        categories: ['all'],
+        window: 'today',
         limit: 8,
         mode: 'overview',
         sortBy: 'trend_score',
@@ -934,14 +1369,22 @@ const TrendV4 = {
             }
         });
         const catCheckboxes = document.querySelectorAll('#v4CategoryFilters input[type="checkbox"]');
-        catCheckboxes.forEach(cb => cb.addEventListener('change', () => this.applyFilters()));
+        catCheckboxes.forEach(cb => cb.addEventListener('change', (e) => {
+            if (e.target.value === 'all' && e.target.checked) {
+                catCheckboxes.forEach(other => { if (other !== e.target) other.checked = false; });
+            } else if (e.target.checked) {
+                const allBox = document.querySelector('#v4CategoryFilters input[value="all"]');
+                if (allBox) allBox.checked = false;
+            }
+            this.applyFilters();
+        }));
         const refreshBtn = document.getElementById('v4RefreshBtn');
         if (refreshBtn) refreshBtn.addEventListener('click', () => this.load(true));
     },
 
     applyFilters() {
         const limit = parseInt(document.getElementById('v4LimitFilter')?.value || '8', 10);
-        const window = document.getElementById('v4WindowFilter')?.value || 'last_7_days';
+        const window = document.getElementById('v4WindowFilter')?.value || 'today';
         const sortBy = document.getElementById('v4SortFilter')?.value || 'trend_score';
         const market = document.getElementById('v4MarketFilter')?.value || 'vn';
         
@@ -956,7 +1399,7 @@ const TrendV4 = {
         }
 
         if (categories.length === 0) {
-            categories = ['Skincare', 'Gia dụng', 'Fitness', 'Thời trang', 'Mẹ & bé'];
+            categories = ['all'];
         }
 
         Object.assign(this.state, { limit, window, sortBy, market, categories });
@@ -966,11 +1409,19 @@ const TrendV4 = {
     async load(forceRefresh = false) {
         if (this.state.loading) return;
         this.state.loading = true;
+        await ensureDailyUsageLoaded();
         this.setLoadingState(true);
 
         try {
             const cats = this.state.categories.join(',');
-            const url = `/api/product-trends?market=${this.state.market}&categories=${encodeURIComponent(cats)}&limit=${this.state.limit}&window=${this.state.window}&mode=${this.state.mode}`;
+            const selectedDate = getSelectedResearchDate();
+            const today = dayKey(new Date());
+            const canForceRefresh = forceRefresh && (!selectedDate || selectedDate === today);
+            if (forceRefresh && selectedDate && selectedDate !== today) {
+                showAlert('Không refresh AI cho ngày quá khứ; đang đọc dữ liệu DB theo ngày đã chọn.', 'warning');
+            }
+            const dateParam = selectedDate ? `&date=${encodeURIComponent(selectedDate)}` : '';
+            const url = `/api/product-trends?market=${this.state.market}&categories=${encodeURIComponent(cats)}&limit=${this.state.limit}&window=${this.state.window}&mode=${this.state.mode}&forceFresh=${canForceRefresh ? 'true' : 'false'}${dateParam}`;
             const res = await fetch(url);
             const json = await res.json();
             if (!res.ok) throw new Error(json.error || 'Lỗi tải dữ liệu xu hướng');
@@ -978,6 +1429,7 @@ const TrendV4 = {
             this.state.data = json.data || [];
             this.state.pagination = json.meta?.pagination || {};
             this.state.is_stale = json.meta?.is_stale || false;
+            this.state.meta = json.meta || null;
             this.render();
         } catch (err) {
             this.renderError(err.message);
@@ -1031,6 +1483,14 @@ const TrendV4 = {
         return `<span class="v4-badge v4-badge-stale" title="Dữ liệu từ bộ nhớ đệm, AI đang được làm mới">📦 Cached</span>`;
     },
 
+    windowLabel(sourceWindow = this.state.window) {
+        return {
+            today: 'Hôm nay',
+            last_3_days: '3 ngày qua',
+            last_7_days: '7 ngày qua'
+        }[sourceWindow] || sourceWindow;
+    },
+
     scoreRing(val, label) {
         const color = val >= 70 ? '#22d3a5' : val >= 45 ? '#f59e0b' : '#ef4444';
         return `<div class="v4-score-ring" style="--ring-color:${color}">
@@ -1042,20 +1502,31 @@ const TrendV4 = {
     render() {
         const grid = document.getElementById('v4TrendGrid');
         const metaEl = document.getElementById('v4MetaInfo');
+        const statsEl = document.getElementById('v4TrendStats');
         if (!grid) return;
 
         const { data, pagination, is_stale, sortBy } = this.state;
         
         if (metaEl) {
-            metaEl.innerHTML = `<span>Hiển thị <b>${data.length}</b> sản phẩm</span> ${this.staleIndicator(is_stale)}`;
+            metaEl.innerHTML = `<span>Hiển thị <b>${data.length}</b> sản phẩm · ${metaDateLabel(this.state.meta)} · Khung: <b>${this.windowLabel()}</b></span> ${this.staleIndicator(is_stale)}`;
+        }
+
+        if (statsEl) {
+            const avg = key => data.length ? Math.round(data.reduce((sum, item) => sum + Number(item[key] || 0), 0) / data.length) : 0;
+            const exploding = data.filter(item => item.growth_signal === 'exploding').length;
+            const lowCompetition = data.filter(item => item.competition_level === 'low').length;
+            statsEl.innerHTML = `
+                <div class="v4-stat-card"><span>Khung lọc</span><b>${this.windowLabel()}</b></div>
+                <div class="v4-stat-card"><span>Sản phẩm</span><b>${data.length}</b></div>
+                <div class="v4-stat-card"><span>Trend TB</span><b>${avg('trend_score')}</b></div>
+                <div class="v4-stat-card"><span>Tin cậy TB</span><b>${avg('confidence_score')}</b></div>
+                <div class="v4-stat-card"><span>Bùng nổ</span><b>${exploding}</b></div>
+                <div class="v4-stat-card"><span>Cạnh tranh thấp</span><b>${lowCompetition}</b></div>
+            `;
         }
 
         if (!data.length) {
-            grid.innerHTML = `<div class="v4-empty">
-                <span class="v4-empty-icon">🔍</span>
-                <p>Chưa có dữ liệu xu hướng cho mục này.</p>
-                <p style="font-size:0.8rem; margin-top:8px;">Nhấn <b>Refresh AI</b> để bắt đầu quét thị trường.</p>
-            </div>`;
+            grid.innerHTML = emptyMetaHtml('Chưa có dữ liệu Trends V4 (No Trends V4 data)', this.state.meta, 'Nhấn Refresh AI để quét thị trường cho ngày/window này.');
             return;
         }
 
@@ -1066,7 +1537,7 @@ const TrendV4 = {
                 <div class="v4-card-header">
                     <div class="v4-card-title-group">
                         <h3 class="v4-card-name">${item.product_name || 'N/A'}</h3>
-                        <span class="v4-card-cat">${item.category || ''}${item.sub_category ? ' › ' + item.sub_category : ''}</span>
+                    <span class="v4-card-cat">${item.category || ''}${item.sub_category ? ' › ' + item.sub_category : ''} · ${this.windowLabel(item.source_window)}</span>
                     </div>
                     <div class="v4-card-badges">
                         ${this.growthBadge(item.growth_signal)}
@@ -1182,6 +1653,8 @@ const TrendV4 = {
     }
 };
 
+window.TrendV4 = TrendV4;
+
 // Init V4 when the trend tab is selected
 window.initTrendV4 = function() {
     if (!TrendV4._initialized) {
@@ -1189,4 +1662,3 @@ window.initTrendV4 = function() {
         TrendV4.init();
     }
 };
-

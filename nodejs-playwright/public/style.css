@@ -459,6 +459,8 @@ input[type="text"],
 input[type="password"], 
 input[type="url"], 
 input[type="number"], 
+input[type="date"],
+input[type="time"],
 select, 
 textarea {
     width: 100%;
@@ -471,6 +473,18 @@ textarea {
     font-size: 0.95rem;
     transition: var(--transition);
     appearance: none; /* Remove default arrow */
+    color-scheme: dark;
+}
+
+input[type="date"],
+input[type="time"] {
+    min-height: 44px;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) opacity(0.75);
+    cursor: pointer;
 }
 
 input::placeholder,

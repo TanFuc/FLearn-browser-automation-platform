@@ -15,58 +15,58 @@
 
 ---
 
-## 2. Công Nghệ Sử Dụng
+    ## 2. Công Nghệ Sử Dụng
 
-| Thành phần | Công nghệ | Vai trò |
-|---|---|---|
-| Runtime | **Node.js** | Nền tảng chạy server |
-| Web Framework | **Express v5** | HTTP API + serve frontend |
-| Trình duyệt | **Playwright (Chromium)** | Tự động hóa thao tác trên Facebook |
-| Hàng đợi | **BullMQ** | Quản lý job queue đa tài khoản |
-| Message broker | **Redis (ioredis)** | Backend cho BullMQ |
-| Cơ sở dữ liệu | **PostgreSQL (pg)** | Lưu tài khoản, logs, thống kê |
-| Real-time | **Socket.io** | Đẩy log & stats lên Dashboard ngay lập tức |
-| Frontend | HTML + Vanilla CSS + JS | Giao diện Web Dashboard |
+    | Thành phần | Công nghệ | Vai trò |
+    |---|---|---|
+    | Runtime | **Node.js** | Nền tảng chạy server |
+    | Web Framework | **Express v5** | HTTP API + serve frontend |
+    | Trình duyệt | **Playwright (Chromium)** | Tự động hóa thao tác trên Facebook |
+    | Hàng đợi | **BullMQ** | Quản lý job queue đa tài khoản |
+    | Message broker | **Redis (ioredis)** | Backend cho BullMQ |
+    | Cơ sở dữ liệu | **PostgreSQL (pg)** | Lưu tài khoản, logs, thống kê |
+    | Real-time | **Socket.io** | Đẩy log & stats lên Dashboard ngay lập tức |
+    | Frontend | HTML + Vanilla CSS + JS | Giao diện Web Dashboard |
 
----
+    ---
 
-## 3. Cấu Trúc Thư Mục
+    ## 3. Cấu Trúc Thư Mục
 
-```
-nodejs-playwright/
-├── src/                        # Mã nguồn backend
-│   ├── index.js                # Điểm khởi chạy duy nhất
-│   ├── server.js               # Express server + Socket.io + API
-│   ├── worker.js               # BullMQ Worker xử lý job
-│   ├── tasks.js                # Logic tự động hóa (Invite + Unfollow)
-│   ├── browser.js              # Khởi tạo Playwright + Fingerprint từ DB
-│   ├── queue.js                # Định nghĩa BullMQ queue
-│   ├── db.js                   # Kết nối PostgreSQL (pool)
-│   ├── config.js               # Đọc/ghi settings.json
-│   ├── state.js                # Biến trạng thái dừng/chạy
-│   ├── utils.js                # Hàm tiện ích (randomDelay...)
-│   └── init-db.js              # Script tạo bảng lần đầu
-│
-├── public/                     # Frontend Web Dashboard
-│   ├── index.html              # Giao diện chính
-│   ├── app.js                  # Logic frontend (Socket.io client, API calls)
-│   └── style.css               # CSS toàn bộ giao diện
-│
-├── profiles/                   # Profile Chromium của từng tài khoản (cookie/session)
-├── logs/                       # Log file (nếu có)
-│
-├── settings.json               # Cấu hình bot (delay, limit...) — tự động ghi
-├── .env                        # Biến môi trường (DB, Redis, Port)
-├── .env.example                # Mẫu file .env
-├── package.json                # Dependencies
-│
-├── migrate_fingerprint.js      # Migration: tạo ua_pool, viewport_pool, cột fingerprint
-├── migrate_delete_cols.js      # Migration: tạo cột name, deleted_at, hard_deleted_at
-├── init_logs.js                # Migration: tạo bảng logs
-└── check_schema.js             # Kiểm tra schema DB hiện tại
-```
+    ```
+    nodejs-playwright/
+    ├── src/                        # Mã nguồn backend
+    │   ├── index.js                # Điểm khởi chạy duy nhất
+    │   ├── server.js               # Express server + Socket.io + API
+    │   ├── worker.js               # BullMQ Worker xử lý job
+    │   ├── tasks.js                # Logic tự động hóa (Invite + Unfollow)
+    │   ├── browser.js              # Khởi tạo Playwright + Fingerprint từ DB
+    │   ├── queue.js                # Định nghĩa BullMQ queue
+    │   ├── db.js                   # Kết nối PostgreSQL (pool)
+    │   ├── config.js               # Đọc/ghi settings.json
+    │   ├── state.js                # Biến trạng thái dừng/chạy
+    │   ├── utils.js                # Hàm tiện ích (randomDelay...)
+    │   └── init-db.js              # Script tạo bảng lần đầu
+    │
+    ├── public/                     # Frontend Web Dashboard
+    │   ├── index.html              # Giao diện chính
+    │   ├── app.js                  # Logic frontend (Socket.io client, API calls)
+    │   └── style.css               # CSS toàn bộ giao diện
+    │
+    ├── profiles/                   # Profile Chromium của từng tài khoản (cookie/session)
+    ├── logs/                       # Log file (nếu có)
+    │
+    ├── settings.json               # Cấu hình bot (delay, limit...) — tự động ghi
+    ├── .env                        # Biến môi trường (DB, Redis, Port)
+    ├── .env.example                # Mẫu file .env
+    ├── package.json                # Dependencies
+    │
+    ├── migrate_fingerprint.js      # Migration: tạo ua_pool, viewport_pool, cột fingerprint
+    ├── migrate_delete_cols.js      # Migration: tạo cột name, deleted_at, hard_deleted_at
+    ├── init_logs.js                # Migration: tạo bảng logs
+    └── check_schema.js             # Kiểm tra schema DB hiện tại
+    ```
 
----
+    ---
 
 ## 4. Cơ Sở Dữ Liệu (PostgreSQL)
 
@@ -384,3 +384,15 @@ Xóa Mềm  →  deleted_at = NOW()  →  Tài khoản bị ẩn khỏi danh sá
 4. **2FA** — Tài khoản bật 2FA không thể dùng tính năng tự động đăng nhập, cần đăng nhập thủ công qua nút "Mở Trình Duyệt".
 5. **Concurrency** — Mặc định 5 job song song (`MAX_CONCURRENCY=5`). Tăng lên nếu server mạnh, giảm xuống nếu muốn an toàn hơn.
 6. **Redis + PostgreSQL** phải chạy trước khi `npm run start`.
+## AFF VID
+
+AFF VID chuyển dữ liệu AI Research/Product Trends thành video plan affiliate ngắn cho TikTok, Facebook Reels và Instagram Reels.
+
+- Docs: [docs/AFF_VID.md](docs/AFF_VID.md)
+- Plan triển khai: [docs/AFF_VID_IMPLEMENTATION_PLAN.md](docs/AFF_VID_IMPLEMENTATION_PLAN.md)
+## AFF VID / UP POST
+
+- AFF VID docs: [docs/AFF_VID.md](docs/AFF_VID.md)
+- AFF VID plan: [docs/AFF_VID_IMPLEMENTATION_PLAN.md](docs/AFF_VID_IMPLEMENTATION_PLAN.md)
+- UP POST docs: [docs/UP_POST.md](docs/UP_POST.md)
+- UP POST plan: [docs/UP_POST_IMPLEMENTATION_PLAN.md](docs/UP_POST_IMPLEMENTATION_PLAN.md)

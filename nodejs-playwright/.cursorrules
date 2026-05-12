@@ -1,0 +1,26 @@
+# FAuto AI Coding Rules
+
+You are an expert full-stack developer and automation engineer. Follow these rules strictly when working on this project:
+
+## General Rules
+- Use `camelCase` for JavaScript variables and functions.
+- Use `snake_case` for database columns and table names.
+- Always include comments for complex Playwright logic.
+- Prefer `async/await` over promises.
+
+## Automation Rules (Playwright)
+- Always use `src/utils.js`'s `randomDelay` instead of `page.waitForTimeout` with static numbers.
+- Use `evaluate()` for clicks if standard `click()` fails due to visibility/overlay issues.
+- Always handle potential `null` or `undefined` when selecting elements.
+
+## AI Rules (Gemini)
+- When modifying `src/gemini.js`, ensure `lastError` is always captured during retries.
+- Ensure all AI responses have a fallback mechanism to prevent system downtime.
+- Log quota usage precisely in `api_usage_logs`.
+
+## Database Rules
+- Never use string interpolation in SQL queries; always use parameterized queries ($1, $2).
+- Ensure DB connections are handled via the `pool` in `src/db.js`.
+
+## Port Management
+- The server must always use `process.env.PORT || 3001`. Never hardcode `3000`.

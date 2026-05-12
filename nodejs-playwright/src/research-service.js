@@ -7,6 +7,23 @@ const crypto = require('crypto');
 
 const DEFAULT_CATEGORIES = ['Skincare', 'Gia dụng', 'Fitness', 'Thời trang', 'Mẹ & bé', 'Điện tử', 'Sức khỏe', 'Thú cưng', 'Đồ chơi', 'Nhà cửa'];
 const inFlight = new Map();
+const TREND_WINDOWS = {
+    today: 'trong ngày hôm nay, ưu tiên tín hiệu mới nhất trong 24 giờ qua',
+    last_3_days: 'trong 3 ngày gần nhất, ưu tiên tín hiệu tăng tốc ngắn hạn',
+    last_7_days: 'trong 7 ngày gần nhất, ưu tiên xu hướng bền hơn trong tuần'
+};
+
+function normalizeTrendWindow(value) {
+    if (value === 'last_24h' || value === '24h' || value === 'today') return 'today';
+    if (value === '3_days' || value === 'last_3_days') return 'last_3_days';
+    if (value === '7_days' || value === 'last_7_days') return 'last_7_days';
+    return 'today';
+}
+
+function windowProductId(productId, window) {
+    const base = String(productId || 'product').replace(/(__today|__last_3_days|__last_7_days)$/g, '');
+    return `${base}__${window}`;
+}
 
 function withInFlight(key, fn) {
     if (inFlight.has(key)) return inFlight.get(key);
@@ -80,8 +97,9 @@ function hash(text) {
 async function getProductTrends(options = {}) {
     const market = options.market || 'vn';
     const categories = options.categories || DEFAULT_CATEGORIES;
-    const window = options.window || 'last_7_days';
+    const window = normalizeTrendWindow(options.window || 'today');
     const limit = options.limit || 8;
+    const forceFresh = !!(options.forceFresh || options.skipCache);
     
     const categoriesStr = Array.isArray(categories) ? categories.join(',') : categories;
     const marketHash = hash(market);
@@ -90,14 +108,26 @@ async function getProductTrends(options = {}) {
     
     const cacheKey = `trends:${market}:${categoriesStr}:${window}`;
     return withInFlight(cacheKey, async () => {
-        const prompt = await getPromptText('overview', {
+        let prompt = await getPromptText('overview', {
             MARKET: market,
             LANGUAGE: 'Vietnamese',
             CATEGORIES: categoriesStr,
             SOURCE_WINDOW: window,
+            WINDOW_DESCRIPTION: TREND_WINDOWS[window],
+            CURRENT_DATE: new Date().toISOString().slice(0, 10),
             LIMIT: limit,
             MODE: 'overview'
         });
+        prompt += `
+
+SOURCE WINDOW REQUIREMENT:
+- source_window must be exactly "${window}".
+- Current date is ${new Date().toISOString().slice(0, 10)}.
+- Analyze ${TREND_WINDOWS[window]}.
+- For "today", prioritize products with same-day spikes, newly viral posts, marketplace rank jumps, or search/social acceleration today.
+- For "last_3_days", prioritize products with acceleration in the last 72 hours.
+- For "last_7_days", prioritize products with reliable weekly momentum.
+- Do not reuse stale generic evergreen products unless they have a clear signal inside this source window.`;
         
         const quota = await getQuota();
         const useLite = options.useLite ?? shouldUseLite(quota);
@@ -113,7 +143,7 @@ async function getProductTrends(options = {}) {
             [marketHash, categoryHash, windowHash, promptHash, modelHash]
         );
         
-        if (cacheRes.rows.length > 0) {
+        if (!forceFresh && cacheRes.rows.length > 0) {
             const row = cacheRes.rows[0];
             if (!row.is_stale) {
                 await incrementCacheHit();
@@ -123,12 +153,13 @@ async function getProductTrends(options = {}) {
 
         let aiData;
         try {
-            aiData = await callGemini(prompt, { endpoint: 'product_trends', useLite });
+            aiData = await callGemini(prompt, { endpoint: 'product_trends', skipCache: forceFresh, useLite });
         } catch (err) {
-            console.warn('[Research] Trend AI error, fallback to DB:', err.message);
-            const fallback = await getTrendsFromDB(market, categoriesStr);
+            console.warn('[Research] Trend AI error, fallback to DB:', err ? err.message : 'Unknown error');
+            const fallback = await getTrendsFromDB(market, categoriesStr, window);
             return { data: fallback, is_stale: true, schema_version: 'V4.0.1' };
         }
+
         
         const results = extractList(aiData, ['items', 'products', 'trends', 'data']);
         const validResults = validateData(results, ['id', 'category', 'product_name', 'trend_score', 'confidence_score', 'summary']);
@@ -136,6 +167,12 @@ async function getProductTrends(options = {}) {
         
         if (bounded.length > 0) {
             // Server-side timestamp and schema injection (Patch #4 & #7)
+            bounded = bounded.map(item => ({
+                ...item,
+                canonical_id: item.id,
+                id: windowProductId(item.id, window),
+                source_window: window
+            }));
             bounded = injectServerTimestamp(bounded);
 
             // Store to cache
@@ -168,7 +205,7 @@ async function getProductTrends(options = {}) {
             return { data: bounded, is_stale: false, schema_version: 'V4.0.1' };
         } else {
             // fallback if empty
-            const fallback = await getTrendsFromDB(market, categoriesStr);
+            const fallback = await getTrendsFromDB(market, categoriesStr, window);
             return { data: fallback, is_stale: true, schema_version: 'V4.0.1' };
         }
     });
@@ -234,18 +271,31 @@ async function runDailyTrendResearch() {
     console.log('[Research] Starting V4 daily trend research job...');
     await db.query(`UPDATE quota_state SET last_cron_run = NOW() WHERE id = 1`);
     try {
-        const res = await getProductTrends({ market: 'vn', categories: DEFAULT_CATEGORIES, limit: 10 });
-        console.log(`[Research] Fetched ${res.data.length} trends.`);
+        const windows = ['today', 'last_3_days', 'last_7_days'];
+        for (const sourceWindow of windows) {
+            const res = await getProductTrends({
+                market: 'vn',
+                categories: DEFAULT_CATEGORIES,
+                window: sourceWindow,
+                limit: 10,
+                forceFresh: true
+            });
+            console.log(`[Research] Fetched ${res.data.length} ${sourceWindow} trends.`);
+        }
     } catch(err) {
         console.error('[Research] Daily job error:', err.message);
     }
 }
 
-async function getTrendsFromDB(market, categoriesStr) {
+async function getTrendsFromDB(market, categoriesStr, window = 'today') {
     const categories = categoriesStr.split(',').map(s => s.trim());
     const r = await db.query(
-        `SELECT raw_data FROM product_trend_results WHERE market = $1 AND category = ANY($2) ORDER BY created_at DESC LIMIT 20`,
-        [market, categories]
+        `SELECT raw_data
+         FROM product_trend_results
+         WHERE market = $1 AND category = ANY($2) AND source_window = $3
+         ORDER BY created_at DESC
+         LIMIT 20`,
+        [market, categories, normalizeTrendWindow(window)]
     );
     return r.rows.map(row => row.raw_data);
 }

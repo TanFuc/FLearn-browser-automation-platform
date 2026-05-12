@@ -35,7 +35,8 @@ async function addInviteJob(accountId, payload, customOpts = {}) {
 const researchQueue = new Queue('research-queue', { connection });
 
 async function addResearchJob() {
-  await researchQueue.add('daily-research', {}, {
+  await researchQueue.add('manual-research', {}, {
+    jobId: 'daily-manual-research',
     repeat: { pattern: '0 8 * * *' },
     attempts: 3,
     backoff: { type: 'exponential', delay: 10000 },

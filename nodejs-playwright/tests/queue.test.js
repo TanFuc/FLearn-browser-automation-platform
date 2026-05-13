@@ -1,7 +1,9 @@
 jest.mock('bullmq', () => {
     return {
         Queue: jest.fn().mockImplementation(() => ({
-            add: jest.fn().mockResolvedValue(true)
+            add: jest.fn().mockResolvedValue(true),
+            getRepeatableJobs: jest.fn().mockResolvedValue([]),
+            removeRepeatableByKey: jest.fn().mockResolvedValue(true)
         }))
     };
 });
@@ -33,7 +35,7 @@ describe('Queue Module', () => {
 
         expect(researchQueue.add).toHaveBeenCalledWith('manual-research', {}, expect.objectContaining({
             jobId: 'daily-manual-research',
-            repeat: { pattern: '0 8 * * *' },
+            repeat: { pattern: '0 8 * * *', tz: 'Asia/Ho_Chi_Minh' },
             attempts: 3,
             removeOnComplete: true
         }));

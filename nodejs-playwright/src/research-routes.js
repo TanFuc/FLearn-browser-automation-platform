@@ -7,6 +7,7 @@ const router = express.Router();
 const db = require('./db');
 const { getProductTrends, getProductDetail, runDailyTrendResearch } = require('./research-service');
 const { callGemini, getQuota } = require('./gemini');
+const upPostService = require('./up-post-service');
 const RESEARCH_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
 
 function localDateSql(column = 'created_at') {
@@ -461,31 +462,7 @@ async function ensureAffVideoTable() {
 }
 
 async function ensureUpPostTables() {
-    await ensureAffVideoTable();
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS up_post_variants (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            post_id TEXT UNIQUE NOT NULL,
-            source_content_id TEXT NOT NULL,
-            source_type TEXT NOT NULL,
-            platform TEXT NOT NULL,
-            post_data JSONB NOT NULL,
-            status TEXT DEFAULT 'draft',
-            queue_payload JSONB,
-            scheduled_time TIMESTAMP,
-            schema_version TEXT DEFAULT 'UP_POST_V1',
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-        )
-    `);
-    await db.query(`
-        CREATE INDEX IF NOT EXISTS idx_up_post_variants_source
-        ON up_post_variants(source_content_id, platform)
-    `);
-    await db.query(`
-        CREATE INDEX IF NOT EXISTS idx_up_post_variants_status
-        ON up_post_variants(status, scheduled_time)
-    `);
+    await upPostService.ensureUpPostTables();
 }
 
 function normalizeAffVideoCandidate(row) {
@@ -1624,9 +1601,9 @@ router.get('/up-post/sources', async (req, res) => {
     try {
         const requestedDate = req.query.date || null;
         const sourceType = req.query.source_type || 'aff_vid';
-        const dates = await getUpPostAvailableDates(sourceType);
+        const dates = await upPostService.getUpPostAvailableDates(sourceType);
         const resolvedDate = requestedDate || dates[0]?.day || null;
-        const sources = await loadUpPostSources({
+        const sources = await upPostService.loadUpPostSources({
             limit: parseInt(req.query.limit || '20', 10),
             sourceType,
             date: resolvedDate
@@ -1650,34 +1627,15 @@ router.get('/up-post/sources', async (req, res) => {
 
 router.get('/up-post/variants', async (req, res) => {
     try {
-        await ensureUpPostTables();
-        const params = [];
-        const where = [];
-        if (req.query.status) {
-            params.push(req.query.status);
-            where.push(`status = $${params.length}`);
-        }
-        if (req.query.platform) {
-            params.push(req.query.platform);
-            where.push(`platform = $${params.length}`);
-        }
-        if (req.query.source_content_id) {
-            params.push(req.query.source_content_id);
-            where.push(`source_content_id = $${params.length}`);
-        }
-        if (req.query.date) {
-            params.push(req.query.date);
-            where.push(`${localDateSql('created_at')} = $${params.length}`);
-        }
-        params.push(parseInt(req.query.limit || '30', 10));
-        const result = await db.query(`
-            SELECT id, post_id, source_content_id, source_type, platform, post_data, status, queue_payload, scheduled_time, schema_version, created_at
-            FROM up_post_variants
-            ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-            ORDER BY created_at DESC
-            LIMIT $${params.length}
-        `, params);
-        res.json({ success: true, data: result.rows });
+        const data = await upPostService.listUpPostVariants({
+            status: req.query.status || null,
+            platform: req.query.platform || null,
+            sourceContentId: req.query.source_content_id || null,
+            campaignTag: req.query.campaign_tag || null,
+            date: req.query.date || null,
+            limit: parseInt(req.query.limit || '30', 10)
+        });
+        res.json({ success: true, data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -1698,7 +1656,7 @@ router.post('/up-post/generate', async (req, res) => {
         if (!source_content_id) {
             return res.status(400).json({ success: false, error: 'source_content_id is required.' });
         }
-        const result = await generateUpPosts({
+        const result = await upPostService.generateUpPosts({
             sourceContentId: source_content_id,
             sourceType: source_type,
             platforms: Array.isArray(platforms) ? platforms : [platforms],
@@ -1713,20 +1671,11 @@ router.post('/up-post/generate', async (req, res) => {
 
 router.post('/up-post/enqueue', async (req, res) => {
     try {
-        await ensureUpPostTables();
         const { post_ids = [] } = req.body || {};
-        if (!Array.isArray(post_ids) || post_ids.length === 0) {
-            return res.status(400).json({ success: false, error: 'post_ids array is required.' });
-        }
-        const result = await db.query(`
-            UPDATE up_post_variants
-            SET status = 'queued', updated_at = NOW()
-            WHERE post_id = ANY($1)
-            RETURNING post_id, platform, queue_payload, status
-        `, [post_ids]);
-        res.json({ success: true, data: result.rows });
+        const data = await upPostService.enqueueUpPostVariants(post_ids);
+        res.json({ success: true, data });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(err.status || 500).json({ success: false, error: err.message });
     }
 });
 

@@ -33,11 +33,22 @@ async function addInviteJob(accountId, payload, customOpts = {}) {
 }
 
 const researchQueue = new Queue('research-queue', { connection });
+const RESEARCH_DAILY_PATTERN = '0 8 * * *';
+const APP_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
 
 async function addResearchJob() {
+  const repeatableJobs = await researchQueue.getRepeatableJobs().catch(() => []);
+  for (const job of repeatableJobs) {
+    const isDailyResearchJob = job.pattern === RESEARCH_DAILY_PATTERN;
+    const isStaleJob = job.name !== 'manual-research' || job.tz !== APP_TIMEZONE;
+    if (isDailyResearchJob && isStaleJob) {
+      await researchQueue.removeRepeatableByKey(job.key).catch(() => {});
+    }
+  }
+
   await researchQueue.add('manual-research', {}, {
     jobId: 'daily-manual-research',
-    repeat: { pattern: '0 8 * * *' },
+    repeat: { pattern: RESEARCH_DAILY_PATTERN, tz: APP_TIMEZONE },
     attempts: 3,
     backoff: { type: 'exponential', delay: 10000 },
     removeOnComplete: true,

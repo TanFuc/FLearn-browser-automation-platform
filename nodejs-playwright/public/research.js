@@ -758,7 +758,7 @@ window.generateAffVidPlan = async function generateAffVidPlan(productId) {
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(json.error || 'Không sinh được video plan');
         affVidCurrentPlan = json.data;
-        if (out) out.textContent = JSON.stringify(json.data, null, 2);
+        if (out) out.textContent = formatUpPostPreview(json.data);
         showAlert('Đã sinh video affiliate plan từ dữ liệu research.', 'success');
     } catch (err) {
         if (out) out.textContent = `Lỗi: ${err.message}`;
@@ -832,6 +832,46 @@ function getUpPostSetup() {
         tone: document.getElementById('upPostTone')?.value || 'rõ ràng, có CTA',
         cta_type: document.getElementById('upPostCtaType')?.value || 'engagement_or_click'
     };
+}
+
+function formatUpPostPreview(data) {
+    const posts = data?.posts || [];
+    const warnings = data?.warnings || [];
+    if (!posts.length) return JSON.stringify(data || {}, null, 2);
+    const lines = [
+        `UP POST ${data.schema_version || ''}`,
+        `Source: ${data.source_type || ''} / ${data.source_content_id || ''}`,
+        `Model: ${data.model_name || '--'}`,
+        ''
+    ];
+    if (warnings.length) {
+        lines.push('Warnings:');
+        warnings.forEach(w => lines.push(`- ${w}`));
+        lines.push('');
+    }
+    posts.forEach(post => {
+        const render = post.render_data || {};
+        lines.push(`=== ${String(post.platform || '').toUpperCase()} | ${post.status || 'draft'} | fit ${post.platform_fit_score ?? '--'} | confidence ${post.confidence_score ?? '--'} ===`);
+        lines.push(`Type: ${post.post_type || ''}`);
+        if (post.campaign_tag) lines.push(`Campaign: ${post.campaign_tag}`);
+        if (post.scheduled_time) lines.push(`Scheduled: ${post.scheduled_time}`);
+        lines.push(`Title: ${post.title || ''}`);
+        lines.push(`Hook: ${post.hook || ''}`);
+        lines.push('');
+        lines.push(render.preview_text || `${post.body || ''}\n\n${(post.hashtags || []).join(' ')}`.trim());
+        if ((post.shot_suggestions || []).length) {
+            lines.push('');
+            lines.push('Shot suggestions:');
+            post.shot_suggestions.forEach(s => lines.push(`- ${s}`));
+        }
+        if ((post.validation_warnings || []).length) {
+            lines.push('');
+            lines.push('Validation warnings:');
+            post.validation_warnings.forEach(w => lines.push(`- ${w}`));
+        }
+        lines.push('');
+    });
+    return lines.join('\n');
 }
 
 window.loadUpPostSources = async function loadUpPostSources() {
@@ -913,14 +953,14 @@ window.loadUpPostVariants = async function loadUpPostVariants() {
     try {
         const date = getSelectedResearchDate();
         const dateParam = date ? `&date=${encodeURIComponent(date)}` : '';
-        const res = await fetch(`/api/research/up-post/variants?status=draft&limit=20${dateParam}`);
+        const res = await fetch(`/api/research/up-post/variants?limit=20${dateParam}`);
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(json.error || 'Không tải được drafts');
         upPostCurrent = {
-            posts: (json.data || []).map(row => row.post_data),
+            posts: (json.data || []).map(row => ({ ...(row.post_data || {}), status: row.status, render_data: row.render_data })),
             warnings: []
         };
-        if (out) out.textContent = JSON.stringify(json.data || [], null, 2);
+        if (out) out.textContent = formatUpPostPreview(upPostCurrent);
     } catch (err) {
         if (out) out.textContent = `Lỗi: ${err.message}`;
         showAlert(err.message, 'error');

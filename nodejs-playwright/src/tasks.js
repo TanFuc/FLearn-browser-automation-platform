@@ -123,6 +123,7 @@ async function autoInviteTask(page, context, account, targetUrl, emitLog, increm
     const { getBotState } = require('./state');
 
     for (let scrollNum = 0; scrollNum < config.maxScrolls; scrollNum++) {
+        if (page.isClosed()) break;
         // Kiểm tra STOP
         if (getBotState().isStopped) {
             emitLog(accountId, "Chiến dịch đã bị DỪNG HẲN bởi người dùng.", 'warning');
@@ -246,42 +247,52 @@ async function autoInviteTask(page, context, account, targetUrl, emitLog, increm
     return { successCount: invitesSent, scrollsDone: scrollsDone };
 }
 
-async function autoUnfollowTask(page, context, account, jobData, emitLog, incrementStats) {
+/**
+ * Hàm lõi dùng chung cho cả 2 task unfollow.
+ * Chạy logic bỏ theo dõi trên một URL cụ thể.
+ */
+async function _runUnfollowOnUrl(page, account, targetUrl, targetName, limit, emitLog, incrementStats) {
     const accountId = account.id;
     const config = getSettings();
-    let unfollowsDone = 0;
-    let scrollsDone = 0;
-    const limit = jobData.maxUnfollow || 0;
-
-    const targetUrls = [
-        { url: 'https://www.facebook.com/me/friends', name: 'danh sách bạn bè' },
-        { url: 'https://www.facebook.com/me/following', name: 'danh sách đang theo dõi' }
-    ];
-
     const { getBotState } = require('./state');
     const processedLabels = new Set();
+    let unfollowsDone = 0;
+    let scrollsDone = 0;
 
-    for (const target of targetUrls) {
-        if (limit > 0 && unfollowsDone >= limit) break;
+    emitLog(accountId, `Điều hướng tới ${targetName} để bắt đầu hủy theo dõi...`);
+    await page.goto(targetUrl);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+
+    let pageText = await page.evaluate(() => document.body.innerText).catch(() => "");
+    const isLoggedOut = pageText.includes('incorrect password') || page.url().includes('/login');
+    if (isLoggedOut) {
+        await autoLogin(page, account, emitLog);
+        await page.goto(targetUrl);
+        await page.waitForLoadState('networkidle').catch(() => {});
+        await page.waitForTimeout(2000);
+    }
+
+    emitLog(accountId, `Kiểm tra an toàn: Tốt. Bắt đầu kịch bản Bỏ Theo Dõi trên ${targetName}...`, 'system');
+
+    for (let scrollNum = 0; scrollNum < config.maxScrolls; scrollNum++) {
+        if (getBotState().isStopped) break;
+        while (getBotState().isPaused) {
+            if (getBotState().isStopped) break;
+            await new Promise(r => setTimeout(r, 1000));
+        }
         if (getBotState().isStopped) break;
 
-        emitLog(accountId, `Điều hướng tới ${target.name} để bắt đầu hủy theo dõi...`);
-        await page.goto(target.url);
-        await page.waitForLoadState('networkidle').catch(() => {});
-        await page.waitForTimeout(3000);
-
-        let pageText = await page.evaluate(() => document.body.innerText).catch(() => "");
-        const isLoggedOut = pageText.includes('incorrect password') || page.url().includes('/login');
-        if (isLoggedOut) {
-            await autoLogin(page, account, emitLog);
-            await page.goto(target.url);
-            await page.waitForLoadState('networkidle').catch(() => {});
-            await page.waitForTimeout(2000);
+        if (limit > 0 && unfollowsDone >= limit) {
+            emitLog(accountId, `Đã đạt giới hạn hủy theo dõi: ${limit}`);
+            break;
         }
 
-        emitLog(accountId, `Kiểm tra an toàn: Tốt. Bắt đầu kịch bản Bỏ Theo Dõi trên ${target.name}...`, 'system');
+        const moreOptionsButtons = page.locator('div[aria-label^="Lựa chọn khác cho "], div[aria-label^="More options for "], div[aria-label="Đang theo dõi"], div[aria-label="Following"]');
+        const count = await moreOptionsButtons.count();
+        emitLog(accountId, `[${targetName}] [Scroll ${scrollNum + 1}] Tìm thấy ${count} đối tượng trên màn hình`);
 
-        for (let scrollNum = 0; scrollNum < config.maxScrolls; scrollNum++) {
+        for (let i = 0; i < count; i++) {
             if (getBotState().isStopped) break;
             while (getBotState().isPaused) {
                 if (getBotState().isStopped) break;
@@ -289,88 +300,101 @@ async function autoUnfollowTask(page, context, account, jobData, emitLog, increm
             }
             if (getBotState().isStopped) break;
 
-            if (limit > 0 && unfollowsDone >= limit) {
-                emitLog(accountId, `Đã đạt giới hạn hủy theo dõi: ${limit}`);
-                break;
-            }
+            if (limit > 0 && unfollowsDone >= limit) break;
 
-            const moreOptionsButtons = page.locator('div[aria-label^="Lựa chọn khác cho "], div[aria-label^="More options for "], div[aria-label="Đang theo dõi"], div[aria-label="Following"]');
-            const count = await moreOptionsButtons.count();
-            emitLog(accountId, `[${target.name}] [Scroll ${scrollNum + 1}] Tìm thấy ${count} đối tượng trên màn hình`);
+            const btn = moreOptionsButtons.nth(i);
+            if (!(await btn.isVisible().catch(() => false))) continue;
 
-            let processedThisScroll = 0;
+            let label = await btn.getAttribute('aria-label').catch(() => null);
+            if (!label) continue;
 
-            for (let i = 0; i < count; i++) {
-                if (getBotState().isStopped) break;
-                while (getBotState().isPaused) {
-                    if (getBotState().isStopped) break;
-                    await new Promise(r => setTimeout(r, 1000));
-                }
-                if (getBotState().isStopped) break;
-
-                if (limit > 0 && unfollowsDone >= limit) break;
-
-                const btn = moreOptionsButtons.nth(i);
-                if (!(await btn.isVisible().catch(() => false))) continue;
-
-                let label = await btn.getAttribute('aria-label').catch(() => null);
-                if (!label) continue;
-                
-                if (label === 'Đang theo dõi' || label === 'Following') {
-                    const parentText = await btn.evaluate(node => {
-                        let curr = node;
-                        for (let j = 0; j < 3; j++) {
-                            if (curr.parentElement) curr = curr.parentElement;
-                        }
-                        return curr.innerText || "";
-                    }).catch(() => "");
-                    label = `${label}_${parentText.substring(0, 20)}`;
-                }
-
-                if (processedLabels.has(label)) continue;
-                processedLabels.add(label);
-
-                await btn.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
-                await randomDelay(400, 800);
-
-                try {
-                    await btn.evaluate(node => node.click());
-                    await randomDelay(500, 1000);
-
-                    const unfollowItem = page.locator('div[role="menuitem"]:has-text("Bỏ theo dõi"), div[role="menuitem"]:has-text("Unfollow")').first();
-                    const followItem = page.locator('div[role="menuitem"]:has-text("Theo dõi"), div[role="menuitem"]:has-text("Follow")').first();
-
-                    await page.waitForTimeout(500);
-
-                    if (await unfollowItem.isVisible().catch(() => false)) {
-                        await unfollowItem.evaluate(node => node.click());
-                        unfollowsDone++;
-                        processedThisScroll++;
-                        let logName = label.replace('Lựa chọn khác cho ', '').replace('More options for ', '').replace('Đang theo dõi_', '').replace('Following_', '');
-                        emitLog(accountId, `✓ Đã BỎ THEO DÕI: ${logName} (#${unfollowsDone})`, 'success');
-                        incrementStats('unfollow');
-
-                        await randomDelay(config.delayMin, config.delayMax);
-                    } else if (await followItem.isVisible().catch(() => false)) {
-                        await page.keyboard.press('Escape');
-                    } else {
-                        await page.keyboard.press('Escape');
+            if (label === 'Đang theo dõi' || label === 'Following') {
+                const parentText = await btn.evaluate(node => {
+                    let curr = node;
+                    for (let j = 0; j < 3; j++) {
+                        if (curr.parentElement) curr = curr.parentElement;
                     }
-                } catch (err) {
-                    emitLog(accountId, `Lỗi khi xử lý hủy theo dõi: ${err.message}`, 'error');
-                }
+                    return curr.innerText || "";
+                }).catch(() => "");
+                label = `${label}_${parentText.substring(0, 20)}`;
             }
 
-            const scrollAmount = Math.floor(Math.random() * 300) + 600;
-            await page.evaluate((y) => window.scrollBy({ top: y, behavior: 'smooth' }), scrollAmount).catch(() => {});
-            scrollsDone++;
+            if (processedLabels.has(label)) continue;
+            processedLabels.add(label);
 
-            await randomDelay(config.scrollPauseMin, config.scrollPauseMax);
+            await btn.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
+            await randomDelay(400, 800);
+
+            try {
+                await btn.evaluate(node => node.click());
+                await randomDelay(500, 1000);
+
+                const unfollowItem = page.locator('div[role="menuitem"]:has-text("Bỏ theo dõi"), div[role="menuitem"]:has-text("Unfollow")').first();
+                const followItem = page.locator('div[role="menuitem"]:has-text("Theo dõi"), div[role="menuitem"]:has-text("Follow")').first();
+
+                await page.waitForTimeout(500);
+
+                if (await unfollowItem.isVisible().catch(() => false)) {
+                    await unfollowItem.evaluate(node => node.click());
+                    unfollowsDone++;
+                    let logName = label.replace('Lựa chọn khác cho ', '').replace('More options for ', '').replace('Đang theo dõi_', '').replace('Following_', '');
+                    emitLog(accountId, `✓ Đã BỎ THEO DÕI: ${logName} (#${unfollowsDone})`, 'success');
+                    incrementStats('unfollow');
+                    await randomDelay(config.delayMin, config.delayMax);
+                } else if (await followItem.isVisible().catch(() => false)) {
+                    await page.keyboard.press('Escape');
+                } else {
+                    await page.keyboard.press('Escape');
+                }
+            } catch (err) {
+                emitLog(accountId, `Lỗi khi xử lý hủy theo dõi: ${err.message}`, 'error');
+            }
         }
+
+        const scrollAmount = Math.floor(Math.random() * 300) + 600;
+        await page.evaluate((y) => window.scrollBy({ top: y, behavior: 'smooth' }), scrollAmount).catch(() => {});
+        scrollsDone++;
+
+        await randomDelay(config.scrollPauseMin, config.scrollPauseMax);
     }
 
-    emitLog(accountId, `Hoàn thành. Số lượt bỏ theo dõi: ${unfollowsDone}, Số lần cuộn: ${scrollsDone}`);
-    return { successCount: unfollowsDone, scrollsDone: scrollsDone };
+    return { unfollowsDone, scrollsDone };
+}
+
+/**
+ * Hủy theo dõi từ danh sách BẠN BÈ (/friends)
+ */
+async function autoUnfollowFriendsTask(page, context, account, jobData, emitLog, incrementStats) {
+    const accountId = account.id;
+    const limit = jobData.maxUnfollow || 0;
+
+    const { unfollowsDone, scrollsDone } = await _runUnfollowOnUrl(
+        page, account,
+        'https://www.facebook.com/me/friends',
+        'danh sách bạn bè',
+        limit, emitLog, incrementStats
+    );
+
+    emitLog(accountId, `Hoàn thành. Số lượt bỏ theo dõi (bạn bè): ${unfollowsDone}, Số lần cuộn: ${scrollsDone}`);
+    return { successCount: unfollowsDone, scrollsDone };
+}
+
+/**
+ * Hủy theo dõi từ danh sách ĐANG THEO DÕI (/following)
+ */
+async function autoUnfollowFollowingTask(page, context, account, jobData, emitLog, incrementStats) {
+    const accountId = account.id;
+    const limit = jobData.maxUnfollow || 0;
+
+    const { unfollowsDone, scrollsDone } = await _runUnfollowOnUrl(
+        page, account,
+        'https://www.facebook.com/me/following',
+        'danh sách đang theo dõi',
+        limit, emitLog, incrementStats
+    );
+
+    emitLog(accountId, `Hoàn thành. Số lượt bỏ theo dõi (đang theo dõi): ${unfollowsDone}, Số lần cuộn: ${scrollsDone}`);
+    return { successCount: unfollowsDone, scrollsDone };
 }
 async function clickByVisibleText(page, texts, options = {}) {
     const wanted = Array.isArray(texts) ? texts : [texts];
@@ -464,7 +488,7 @@ async function warmupTask(page, context, account, emitLog, incrementStats) {
     const config = getSettings();
 
     // 1. Kiểm tra đăng nhập
-    emitLog(accountId, '[Warm-up] Dang mo Facebook de kiem tra phien dang nhap...', 'system');
+    emitLog(accountId, '[Warm-up] Đang mở Facebook để kiểm tra phiên đăng nhập...', 'system');
     await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
 
@@ -480,7 +504,7 @@ async function warmupTask(page, context, account, emitLog, incrementStats) {
                         pageText.includes('Tham gia hoặc đăng nhập Facebook');
 
     if (isLoggedOut) {
-        emitLog(accountId, '[Warm-up] Tai khoan chua dang nhap, dang thu tu dong dang nhap...', 'warning');
+        emitLog(accountId, '[Warm-up] Tài khoản chưa đăng nhập, đang thử tự động đăng nhập...', 'warning');
         await autoLogin(page, account, emitLog);
         await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(2500);
@@ -619,15 +643,15 @@ async function warmupJoinGroupsV2(page, account, emitLog, config) {
     const clicked = await clickByVisibleText(page, ['Tham gia nhóm', 'Join group', 'Join'], { timeout: 12000 });
     if (clicked) {
         await page.waitForTimeout(5000);
-        emitLog(account.id, 'Da click nut Tham gia nhom tren trang Discover.', 'success');
+        emitLog(account.id, 'Đã click nút Tham gia nhóm trên trang Discover.', 'success');
     } else {
-        throw new Error('Khong tim thay nut Tham gia nhom tren trang Discover.');
+        throw new Error('Không tìm thấy nút Tham gia nhóm trên trang Discover.');
     }
 }
 
 async function warmupShareContentV2(page, account, emitLog, config) {
     await page.goto('https://www.facebook.com/watch', { waitUntil: 'domcontentloaded' });
-    emitLog(account.id, 'Dang tim nut chia se de dang len trang ca nhan...');
+    emitLog(account.id, 'Đang tìm nút chia sẻ để đăng lên trang cá nhân...');
 
     let opened = false;
     for (let i = 0; i < 4; i++) {
@@ -638,22 +662,23 @@ async function warmupShareContentV2(page, account, emitLog, config) {
     }
 
     if (!opened) {
-        throw new Error('Khong tim thay icon/nut Chia se.');
+        throw new Error('Không tìm thấy icon/nút Chia sẻ.');
     }
 
     await page.waitForTimeout(3000);
     const shared = await clickByVisibleText(page, ['Chia sẻ ngay', 'Share now'], { timeout: 12000 });
     if (shared) {
-        emitLog(account.id, 'Da click Chia se ngay len trang ca nhan.', 'success');
+        emitLog(account.id, 'Đã click Chia sẻ ngay lên trang cá nhân.', 'success');
         await page.waitForTimeout(5000);
     } else {
         await page.keyboard.press('Escape').catch(() => {});
-        throw new Error('Khong tim thay nut Chia se ngay sau khi mo hop thoai chia se.');
+        throw new Error('Không tìm thấy nút Chia sẻ ngay sau khi mở hộp thoại chia sẻ.');
     }
 }
 
 module.exports = {
     autoInviteTask,
-    autoUnfollowTask,
+    autoUnfollowFriendsTask,
+    autoUnfollowFollowingTask,
     warmupTask
 };

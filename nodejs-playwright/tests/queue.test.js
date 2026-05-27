@@ -25,19 +25,23 @@ describe('Queue Module', () => {
             accountId: 'test_acc',
             payload
         }, expect.objectContaining({
-            attempts: 3,
-            removeOnComplete: true
+            attempts: 1,
+            backoff: { type: 'exponential', delay: 5000 },
+            removeOnComplete: true,
+            removeOnFail: false
         }));
     });
 
     it('should add the daily research repeatable job as manual-research', async () => {
         await addResearchJob();
 
-        expect(researchQueue.add).toHaveBeenCalledWith('manual-research', {}, expect.objectContaining({
+        expect(researchQueue.add).toHaveBeenCalledWith('manual-research', { trigger: 'daily-cron' }, expect.objectContaining({
             jobId: 'daily-manual-research',
             repeat: { pattern: '0 8 * * *', tz: 'Asia/Ho_Chi_Minh' },
             attempts: 3,
-            removeOnComplete: true
+            backoff: { type: 'exponential', delay: 300000 },
+            removeOnComplete: true,
+            removeOnFail: false
         }));
     });
 });

@@ -70,3 +70,9 @@ FAuto is a professional Facebook automation platform designed for invitation man
 - **No Magic Numbers**: Define constants for delays, limits, and timeouts.
 - **No Global Overrides**: Avoid modifying global prototypes or browser defaults.
 - **No Blind Rescues**: Do not catch errors without logging them.
+
+## Monitoring & Detailed Logs
+- **Monitoring-first detail**: Every meaningful operation, including small state changes, refresh requests, queue handoffs, AI calls, DB clears/inserts, fallbacks, retries, and failures, must write a concrete log with enough metadata to trace what happened.
+- **Backend system events**: Prefer `emitSystemLog(message, type, meta)` for backend monitoring events so console output, the `logs` table, and the live UI monitor stay in sync.
+- **No silent branches**: Any `catch`, fallback, skipped action, empty result, quota block, or validation drop must log the reason and the affected module/page/date before returning.
+- **Sensitive data rule**: Do not log cookies, passwords, API keys, raw prompts with secrets, or full auth/session payloads.

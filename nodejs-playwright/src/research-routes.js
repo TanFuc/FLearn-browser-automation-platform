@@ -5,10 +5,19 @@
 const express = require('express');
 const router = express.Router();
 const db = require('./db');
-const { getProductTrends, getProductDetail, runDailyTrendResearch } = require('./research-service');
+const {
+    getProductTrends,
+    getProductDetail,
+    runDailyTrendResearch,
+    refreshLegacyResearchPage: refreshLegacyResearchPageService
+} = require('./research-service');
 const { callGemini, getQuota } = require('./gemini');
 const upPostService = require('./up-post-service');
+const { emitSystemLog } = require('./logger');
 const RESEARCH_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
+const MIN_RESEARCH_RESULTS = 10;
+const MAX_RESEARCH_RESULTS = 15;
+const DEFAULT_RESEARCH_RESULTS = 15;
 
 function localDateSql(column = 'created_at') {
     return `DATE(${column} AT TIME ZONE '${RESEARCH_TIMEZONE}')`;
@@ -29,7 +38,29 @@ function currentLocalDate() {
     return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-function normalizeWindow(value = 'today') {
+function parseDateKey(value) {
+    if (!value) return null;
+    const text = String(value).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+    const date = new Date(`${text}T00:00:00Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function sourceWindowDays(window) {
+    if (window === 'today') return 0;
+    if (window === 'last_3_days') return 3;
+    return 7;
+}
+
+function isDateInsideWindow(value, window = 'last_7_days') {
+    const sourceDate = parseDateKey(value);
+    const today = parseDateKey(currentLocalDate());
+    if (!sourceDate || !today) return false;
+    const diffDays = Math.floor((today - sourceDate) / 86400000);
+    return diffDays >= 0 && diffDays <= sourceWindowDays(window);
+}
+
+function normalizeWindow(value = 'last_7_days') {
     const map = {
         '3d': 'last_3_days',
         '7d': 'last_7_days',
@@ -39,7 +70,18 @@ function normalizeWindow(value = 'today') {
         'last_7_days': 'last_7_days',
         today: 'today'
     };
-    return map[String(value || 'today')] || String(value || 'today');
+    return map[String(value || 'last_7_days')] || String(value || 'last_7_days');
+}
+
+function clampResearchLimit(value, fallback = DEFAULT_RESEARCH_RESULTS) {
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(MIN_RESEARCH_RESULTS, Math.min(MAX_RESEARCH_RESULTS, n));
+}
+
+function shouldUseLiteForLegacyPage(page, quota, explicitValue) {
+    if (explicitValue !== undefined) return !!explicitValue;
+    return page === 'suggestions' ? !!(quota && quota.request_count >= quota.soft_cap) : false;
 }
 
 function parseCategories(value) {
@@ -78,29 +120,68 @@ const LEGACY_PAGE_CONFIG = {
         listKeys: ['items', 'opportunities', 'data', 'results'],
         required: ['title', 'category', 'trend_score', 'monetization_score', 'competition_score'],
         defaultTopics: ['affiliate TikTok Shop', 'digital product', 'AI automation service', 'print on demand', 'content niche'],
-        limit: 12
+        limit: DEFAULT_RESEARCH_RESULTS
     },
     ai_tools: {
         promptType: 'ai_tools',
         table: 'research_results',
-        listKeys: ['items', 'tools', 'data', 'results'],
+        listKeys: ['items', 'tools', 'ai_tools', 'tool_list', 'tools_list', 'data', 'results'],
         required: ['tool_name', 'tool_type', 'use_case'],
-        limit: 12
+        defaultTopics: ['AI tools', 'GitHub trending', 'coding assistants', 'agent AI', 'automation tools', 'open-source AI', 'AI video', 'AI data tools'],
+        limit: DEFAULT_RESEARCH_RESULTS
     },
     suggestions: {
         promptType: 'suggestions',
         table: 'ai_suggestions',
         listKeys: ['items', 'suggestions', 'recommendations', 'data', 'results'],
         required: ['recommendation_title'],
-        limit: 10
+        defaultTopics: ['AI tools', 'MMO opportunities', 'weekly market signals', 'automation workflows'],
+        limit: DEFAULT_RESEARCH_RESULTS
     }
 };
+
+function buildAiToolsRetryPrompt({ currentDate, sourceWindow, limit }) {
+    const boundedLimit = clampResearchLimit(limit);
+    return `Return valid RFC8259 JSON array only. No markdown. No explanation.
+Current date: ${currentDate}.
+Task: find ${MIN_RESEARCH_RESULTS} to ${boundedLimit} AI tools, AI projects, or AI platforms that are popular, fast-rising, newly launched, newly updated, newly discounted, or strategically useful in the current week ending ${currentDate}.
+Freshness: use only source evidence dated inside ${sourceWindow} relative to ${currentDate}. For last_7_days, source_date must be inside the last 7 days. Do not include evergreen old brands unless there is fresh dated evidence and a clear "why now" trigger.
+Required sources: check at least 3 independent source classes when available: GitHub Trending at https://github.com/trending?spoken_language_code= for developer/open-source AI tools, official launch/changelog pages, Product Hunt, Hacker News, Reddit, X/Twitter, creator demos, reputable newsletters, pricing/discount pages, or credible news.
+Research broadly and return the most important, hot, popular, useful, and high-signal tools. Daily repeats are allowed when the tool is still hot or still has strong fresh evidence.
+Each item must explain WHY NOW in evidence_summary/market_signal. Prefer signals such as launch/update pages, repo momentum, Product Hunt/Hacker News activity, community discussion, creator demos, pricing/deal pages, or credible news.
+Do not invent tools, model names, rankings, dates, prices, stars, or viral claims. Return fewer than ${MIN_RESEARCH_RESULTS} only when fewer are genuinely verifiable.
+All user-facing prose must be Vietnamese only. Keep brand/tool names unchanged.
+Scores must be integers from 0 to 100. Use confidence_score >= 70 only when source_url, source_date, and evidence_summary are concrete.
+Each object must include exactly these keys:
+tool_name, tool_type, use_case, value_score, market_signal, market_reason, price_level, discount_or_launch_status, confidence_score, summary, best_value_reason, source_url, source_date, github_trending_url, evidence_summary, popularity_signal, recent_trigger, is_best_value, is_new_noteworthy.
+source_date format: YYYY-MM-DD.`;
+}
+
+function buildFreshnessAppendix({ page, currentDate, sourceWindow, limit }) {
+    const boundedLimit = clampResearchLimit(limit);
+    return `
+
+SERVER-ENFORCED FRESHNESS AND POPULARITY CONTRACT:
+- Current date: ${currentDate}.
+- Requested source_window: ${sourceWindow}.
+- Return ${MIN_RESEARCH_RESULTS}-${boundedLimit} ranked results. Prefer ${boundedLimit} when evidence is strong enough.
+- Use only evidence whose source_date is inside ${sourceWindow} relative to ${currentDate}.
+- Daily repeats are allowed only when evidence_summary/freshness_note explains the fresh signal inside ${sourceWindow}.
+- Reject famous but stale evergreen items unless they have a dated fresh trigger: major update, newly viral content, marketplace rank movement, fresh creator/community discussion, current discount, new integration/model support, or renewed search demand.
+- Use multiple source classes when available: TikTok/TikTok Shop, Shopee/Lazada/Amazon, Google Trends/search intent, YouTube Shorts, Reddit, X/Twitter, Facebook Groups, Product Hunt, Hacker News, GitHub Trending, official changelogs/blogs, newsletters, and niche communities.
+- For code/open-source/developer tools, check GitHub Trending exactly at https://github.com/trending?spoken_language_code= when relevant.
+- Every research item must include source_url, source_date, evidence_summary, and source_window.
+- source_window must equal "${sourceWindow}".
+- confidence_score must be below 70 when evidence is missing, stale, generic, unverifiable, or only based on old reputation.
+- Each item must include a clear "why now" signal in evidence_summary, market_signal, freshness_note, popularity_signal, or recent_trigger.
+- This page is "${page}". Keep all user-facing prose in natural Vietnamese only.`;
+}
 
 const BILINGUAL_OUTPUT_INSTRUCTION = `
 
 YEU CAU DINH DANG NGON NGU BAT BUOC:
-- Tat ca noi dung hien thi cho nguoi dung phai viet theo dang: tieng Viet (English).
-- Vi du: "Chien luoc noi dung ngan (Short-form content strategy)".
+- Tất cả nội dung hiển thị cho người dùng phải viết theo dạng: tiếng Việt (English).
+- Ví dụ: "Chiến lược nội dung ngắn (Short-form content strategy)".
 - Ap dung cho title, summary, content_angle, traffic_source, monetization_model, use_case, market_signal, market_reason, best_value_reason, recommendation_title, recommendation_text, reasoning_summary, next_action.
 - Khong dich ten rieng cua cong cu, san pham, thuong hieu.
 `;
@@ -113,6 +194,8 @@ Create one actionable affiliate video plan from the supplied research product. D
 
 QUALITY RULES:
 - Vietnamese first. Keep wording direct, specific, and easy to record.
+- Use source_window, source_dates/source_date, evidence_summary, popularity_signal, recent_trigger, and freshness_note from the input when present.
+- Do not recycle old generic selling angles. If the input does not prove current demand, keep the angle conservative and list the missing proof.
 - Hook must be under 18 Vietnamese words and name the pain, result, or curiosity gap.
 - Script must be 4-7 short lines for a 20-45 second vertical video.
 - Shot list must contain 4-7 shots with visual, on_screen_text, duration_seconds, and note.
@@ -192,6 +275,8 @@ REQUIRED JSON SHAPE:
 QUALITY RULES:
 - Vietnamese first.
 - Each platform must have a distinct angle and wording.
+- Use source_window, source_dates/source_date, evidence_summary, popularity_signal, recent_trigger, and freshness_note from the input when present.
+- Do not recycle old evergreen copy. Hooks and bodies must reflect the current trigger when the source has one.
 - If source content is weak, add warnings and still create conservative drafts.
 - Do not invent price, discount, guarantee, review, or availability.
 - Hashtags 3-10 items, each starts with #.
@@ -245,6 +330,14 @@ function score(value, fallback = 0) {
     return Math.max(0, Math.min(100, Math.round(n)));
 }
 
+function confidenceScore(value, fallback = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    if (n > 0 && n <= 5) return score(n * 20, fallback);
+    if (n > 5 && n <= 10) return score(n * 10, fallback);
+    return score(n, fallback);
+}
+
 function slug(value, fallback) {
     return String(value || fallback || 'item')
         .toLowerCase()
@@ -263,10 +356,12 @@ async function getPromptText(pageType, variables = {}) {
         [pageType]
     );
     if (!r.rows[0]?.prompt_text) throw new Error(`No active prompt configured for ${pageType}.`);
-    return renderPrompt(`${r.rows[0].prompt_text}${BILINGUAL_OUTPUT_INSTRUCTION}`, variables);
+    return renderPrompt(r.rows[0].prompt_text, variables);
 }
 
-async function getActiveTopics() {
+async function getActiveTopics(page = 'mmo') {
+    const config = LEGACY_PAGE_CONFIG[page];
+    if (config?.defaultTopics && page !== 'mmo') return config.defaultTopics;
     const r = await db.query(
         `SELECT name FROM research_topics
          WHERE is_active = TRUE
@@ -274,7 +369,7 @@ async function getActiveTopics() {
          LIMIT 12`
     );
     const topics = r.rows.map(row => row.name).filter(Boolean);
-    return topics.length ? topics : LEGACY_PAGE_CONFIG.mmo.defaultTopics;
+    return topics.length ? topics : (config?.defaultTopics || LEGACY_PAGE_CONFIG.mmo.defaultTopics);
 }
 
 function normalizeMmoItem(item, index) {
@@ -290,8 +385,13 @@ function normalizeMmoItem(item, index) {
         traffic_source: item.traffic_source || item.traffic || '',
         monetization_model: item.monetization_model || item.model || '',
         market_maturity: item.market_maturity || 'growing',
-        confidence_score: score(item.confidence_score, 70),
+        confidence_score: confidenceScore(item.confidence_score, 70),
         summary: item.summary || item.description || '',
+        source_url: item.source_url || firstValue(item.source_urls) || item.url || '',
+        source_date: item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || '',
+        evidence_summary: item.evidence_summary || item.evidence || item.market_signal || '',
+        popularity_signal: item.popularity_signal || item.market_signal || '',
+        recent_trigger: item.recent_trigger || item.evidence_summary || item.market_signal || '',
         generated_at: new Date().toISOString(),
         source_window: item.source_window || 'last_7_days'
     };
@@ -311,9 +411,15 @@ function normalizeAiToolItem(item, index) {
         market_reason: item.market_reason || item.reason || '',
         price_level: priceLevel,
         discount_or_launch_status: item.discount_or_launch_status || item.launch_status || item.status || priceLevel,
-        confidence_score: score(item.confidence_score, 70),
+        confidence_score: confidenceScore(item.confidence_score, 70),
         summary: item.summary || item.description || '',
         best_value_reason: item.best_value_reason || item.market_reason || item.reason || '',
+        source_url: item.source_url || firstValue(item.source_urls) || item.url || item.launch_url || item.github_url || '',
+        source_date: item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || item.release_date || '',
+        github_trending_url: item.github_trending_url || '',
+        evidence_summary: item.evidence_summary || item.evidence || item.market_signal || item.market_reason || '',
+        popularity_signal: item.popularity_signal || item.market_signal || '',
+        recent_trigger: item.recent_trigger || item.evidence_summary || item.market_signal || '',
         is_best_value: item.is_best_value ?? valueScore >= 85,
         is_new_noteworthy: item.is_new_noteworthy ?? ['emerging', 'new', 'launching'].includes(String(item.market_signal || item.status || '').toLowerCase()),
         generated_at: new Date().toISOString()
@@ -326,11 +432,13 @@ function normalizeSuggestionItem(item, index) {
     return {
         recommendation_title: title,
         recommendation_text: item.recommendation_text || item.hook || item.summary || plan,
-        confidence_score: score(item.confidence_score, score(item.roi_score, 75)),
+        confidence_score: confidenceScore(item.confidence_score, score(item.roi_score, 75)),
         urgency_score: score(item.urgency_score, 60),
         roi_score: score(item.roi_score, 70),
         reasoning_summary: item.reasoning_summary || item.risk || item.market_reason || '',
         next_action: item.next_action || (Array.isArray(item.execution_plan) ? item.execution_plan[0] : ''),
+        supporting_sources: Array.isArray(item.supporting_sources) ? item.supporting_sources : [],
+        freshness_note: item.freshness_note || '',
         topic: item.topic || item.target_topic || item.category || 'General',
         raw_data: { ...item, generated_at: new Date().toISOString() }
     };
@@ -340,6 +448,48 @@ function validateItems(items, required) {
     return items.filter(item =>
         item && typeof item === 'object' && required.every(field => item[field] !== undefined && item[field] !== null && item[field] !== '')
     );
+}
+
+function hasAnyItemField(item, fields) {
+    return fields.some(field => item[field] !== undefined && item[field] !== null && item[field] !== '');
+}
+
+function firstValue(value) {
+    return Array.isArray(value) ? value.find(Boolean) : value;
+}
+
+function hasFreshEvidenceFields(item, window = 'last_7_days') {
+    const sourceDate = item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || item.release_date;
+    return (hasAnyItemField(item, ['source_url', 'url', 'launch_url', 'github_url']) || hasAnyItemField(item, ['source_urls']))
+        && (hasAnyItemField(item, ['source_date', 'published_at', 'updated_at', 'release_date']) || hasAnyItemField(item, ['source_dates']))
+        && hasAnyItemField(item, ['evidence_summary', 'evidence', 'market_signal', 'market_reason'])
+        && isDateInsideWindow(sourceDate, window)
+        && confidenceScore(item.confidence_score, 0) >= 70;
+}
+
+function validateLegacyItems(page, items, required) {
+    if (!Array.isArray(items)) return [];
+    const itemWindow = item => normalizeWindow(item.source_window || 'last_7_days');
+    if (page === 'mmo') {
+        return validateItems(items, required).filter(item => hasFreshEvidenceFields(item, itemWindow(item)));
+    }
+    if (page === 'suggestions') {
+        return validateItems(items, required).filter(item => {
+            if (!item || typeof item !== 'object') return false;
+            const sources = Array.isArray(item.supporting_sources) ? item.supporting_sources.filter(Boolean) : [];
+            return sources.length > 0
+                && hasAnyItemField(item, ['freshness_note', 'reasoning_summary'])
+                && confidenceScore(item.confidence_score, 0) >= 70;
+        });
+    }
+    if (page !== 'ai_tools') return validateItems(items, required);
+    return items.filter(item => {
+        if (!item || typeof item !== 'object') return false;
+        return hasAnyItemField(item, ['tool_name', 'name', 'title'])
+            && hasAnyItemField(item, ['tool_type', 'type', 'category'])
+            && hasAnyItemField(item, ['use_case', 'primary_use_case', 'summary', 'description'])
+            && hasFreshEvidenceFields(item, itemWindow(item));
+    });
 }
 
 async function getLegacyAvailableDates(page) {
@@ -382,7 +532,7 @@ async function loadLegacyPageRows(page, date = null) {
     const dateWhere = where.length ? ` AND ${where.join(' AND ')}` : '';
     if (page === 'suggestions') {
         const result = await db.query(`SELECT * FROM ai_suggestions WHERE 1=1${dateWhere} ORDER BY created_at DESC`, params);
-        return result.rows;
+        return result.rows.map(row => ({ ...row, ...(row.raw_data || {}) }));
     }
     params.unshift(page);
     const adjustedDateWhere = where.length ? ` AND ${where.map((clause, idx) => clause.replace(`$${idx + 1}`, `$${idx + 2}`)).join(' AND ')}` : '';
@@ -479,13 +629,14 @@ function normalizeAffVideoCandidate(row) {
         confidence_score: confidenceScore,
         priority_score: priorityScore,
         growth_signal: product.growth_signal || row.summary_data?.growth_signal || '',
-        source_window: row.source_window || product.source_window || 'today',
+        source_window: row.source_window || product.source_window || 'last_7_days',
         market: row.market,
         created_at: row.created_at
     };
 }
 
-async function loadAffVideoCandidates({ date, market = 'vn', window = 'today', categories = ['all'], limit = 12 }) {
+async function loadAffVideoCandidates({ date, market = 'vn', window = 'last_7_days', categories = ['all'], limit = DEFAULT_RESEARCH_RESULTS }) {
+    limit = clampResearchLimit(limit);
     const normalizedWindow = normalizeWindow(window);
     const normalizedCategories = parseCategories(categories);
     const params = [market, normalizedWindow];
@@ -529,29 +680,29 @@ function normalizeAffVideoPlan(plan, product, requestedPlatforms = [], options =
         product_id: product.id,
         product_name: product.product_name || product.name || product.id,
         niche: plan.niche || product.category || 'General',
-        angle: plan.angle || product.summary || product.search_intent || 'Góc review nhanh dựa trên tín hiệu research',
-        hook: plan.hook || `Sản phẩm ${product.product_name || product.id} có gì đáng thử?`,
+        angle: plan.angle || product.summary || product.search_intent || 'GÃ³c review nhanh dá»±a trÃªn tÃ­n hiá»‡u research',
+        hook: plan.hook || `Sáº£n pháº©m ${product.product_name || product.id} cÃ³ gÃ¬ Ä‘Ã¡ng thá»­?`,
         script: Array.isArray(plan.script) && plan.script.length ? plan.script : [
-            `Mở đầu bằng vấn đề của người mua trong ngách ${product.category || 'này'}.`,
-            `Giới thiệu ${product.product_name || product.id} và lý do đang có tín hiệu tăng.`,
-            'Nêu 2 lợi ích thực tế, dễ nhìn thấy khi quay video ngắn.',
-            'Kết bằng lời kêu gọi xem link hoặc bình luận để nhận gợi ý.'
+            `Má»Ÿ Ä‘áº§u báº±ng váº¥n Ä‘á» cá»§a ngÆ°á»i mua trong ngÃ¡ch ${product.category || 'nÃ y'}.`,
+            `Giá»›i thiá»‡u ${product.product_name || product.id} vÃ  lÃ½ do Ä‘ang cÃ³ tÃ­n hiá»‡u tÄƒng.`,
+            'NÃªu 2 lá»£i Ã­ch thá»±c táº¿, dá»… nhÃ¬n tháº¥y khi quay video ngáº¯n.',
+            'Káº¿t báº±ng lá»i kÃªu gá»i xem link hoáº·c bÃ¬nh luáº­n Ä‘á»ƒ nháº­n gá»£i Ã½.'
         ],
         shot_list: Array.isArray(plan.shot_list) && plan.shot_list.length ? plan.shot_list : [
-            { shot: 1, visual: 'Cận cảnh sản phẩm hoặc ảnh marketplace', on_screen_text: plan.hook || 'Đang được chú ý', duration_seconds: 3, note: 'Mở bằng chuyển động nhanh' },
-            { shot: 2, visual: 'Demo vấn đề trước khi dùng', on_screen_text: 'Vấn đề thường gặp', duration_seconds: 5, note: 'Dùng cảnh đời thường' },
-            { shot: 3, visual: 'Demo sản phẩm giải quyết vấn đề', on_screen_text: 'Cách xử lý nhanh', duration_seconds: 8, note: 'Quay rõ thao tác' },
-            { shot: 4, visual: 'Kết quả sau khi dùng', on_screen_text: 'Có đáng mua?', duration_seconds: 5, note: 'Đưa nhận xét ngắn' }
+            { shot: 1, visual: 'Cáº­n cáº£nh sáº£n pháº©m hoáº·c áº£nh marketplace', on_screen_text: plan.hook || 'Äang Ä‘Æ°á»£c chÃº Ã½', duration_seconds: 3, note: 'Má»Ÿ báº±ng chuyá»ƒn Ä‘á»™ng nhanh' },
+            { shot: 2, visual: 'Demo váº¥n Ä‘á» trÆ°á»›c khi dÃ¹ng', on_screen_text: 'Váº¥n Ä‘á» thÆ°á»ng gáº·p', duration_seconds: 5, note: 'DÃ¹ng cáº£nh Ä‘á»i thÆ°á»ng' },
+            { shot: 3, visual: 'Demo sáº£n pháº©m giáº£i quyáº¿t váº¥n Ä‘á»', on_screen_text: 'CÃ¡ch xá»­ lÃ½ nhanh', duration_seconds: 8, note: 'Quay rÃµ thao tÃ¡c' },
+            { shot: 4, visual: 'Káº¿t quáº£ sau khi dÃ¹ng', on_screen_text: 'CÃ³ Ä‘Ã¡ng mua?', duration_seconds: 5, note: 'ÄÆ°a nháº­n xÃ©t ngáº¯n' }
         ],
-        CTA: plan.CTA || plan.cta || 'Xem link sản phẩm và so sánh giá trước khi mua.',
-        caption: plan.caption || `${product.product_name || product.id} đang có tín hiệu tốt trong ngách ${product.category || 'affiliate'}.`,
+        CTA: plan.CTA || plan.cta || 'Xem link sáº£n pháº©m vÃ  so sÃ¡nh giÃ¡ trÆ°á»›c khi mua.',
+        caption: plan.caption || `${product.product_name || product.id} Ä‘ang cÃ³ tÃ­n hiá»‡u tá»‘t trong ngÃ¡ch ${product.category || 'affiliate'}.`,
         hashtags: Array.isArray(plan.hashtags) && plan.hashtags.length ? plan.hashtags : ['#reviewsanpham', '#tiktokshop', '#muasamthongminh', '#affiliate'],
         platform_targets: platformTargets,
         video_setup: {
             video_duration: options.video_duration || plan.video_duration || '30-45s',
-            tone: options.tone || plan.tone || 'review thực tế',
+            tone: options.tone || plan.tone || 'review thá»±c táº¿',
             cta_type: options.cta_type || plan.cta_type || 'affiliate_click',
-            creator_persona: options.creator_persona || plan.creator_persona || 'reviewer tiếng Việt',
+            creator_persona: options.creator_persona || plan.creator_persona || 'reviewer tiáº¿ng Viá»‡t',
             affiliate_url: options.affiliate_url || null,
             language: options.language || 'vi'
         },
@@ -562,7 +713,7 @@ function normalizeAffVideoPlan(plan, product, requestedPlatforms = [], options =
             trend_score: trendScore,
             confidence_score: score(product.confidence_score, confidenceScore),
             growth_signal: product.growth_signal || '',
-            source_window: product.source_window || 'today'
+            source_window: product.source_window || 'last_7_days'
         },
         missing_fields: [...new Set([...(Array.isArray(plan.missing_fields) ? plan.missing_fields : []), ...missing])],
         fallback_notes: Array.isArray(plan.fallback_notes) ? plan.fallback_notes : []
@@ -604,9 +755,9 @@ async function generateAffVideoPlan(productId, platformTargets = [], options = {
         PLATFORM_TARGETS: JSON.stringify(platformTargets.length ? platformTargets : ['TikTok', 'Facebook Reels', 'Instagram Reels']),
         VIDEO_OPTIONS: JSON.stringify({
             video_duration: options.video_duration || '30-45s',
-            tone: options.tone || 'review thực tế',
+            tone: options.tone || 'review thá»±c táº¿',
             cta_type: options.cta_type || 'affiliate_click',
-            creator_persona: options.creator_persona || 'reviewer tiếng Việt',
+            creator_persona: options.creator_persona || 'reviewer tiáº¿ng Viá»‡t',
             affiliate_url: options.affiliate_url || null,
             language: options.language || 'vi'
         })
@@ -738,9 +889,9 @@ function normalizePostVariant(post, source, platform, index, scheduledTime = nul
     if (!content.hook && !content.caption && !content.summary) warnings.push('Source content lacks hook/caption/summary.');
     if (!content.CTA && !content.cta) warnings.push('Source content lacks CTA.');
     const postId = post.post_id || slug(`${sourceId}_${platform}_${index + 1}`, `up_post_${index + 1}`);
-    const body = post.body || content.caption || content.angle || content.summary || `Bản nháp cho ${baseTitle}.`;
+    const body = post.body || content.caption || content.angle || content.summary || `Báº£n nhÃ¡p cho ${baseTitle}.`;
     const hook = post.hook || content.hook || String(body).split(/[.!?]/)[0] || baseTitle;
-    const cta = post.CTA || post.cta || content.CTA || content.cta || 'Xem thêm thông tin trước khi quyết định.';
+    const cta = post.CTA || post.cta || content.CTA || content.cta || 'Xem thÃªm thÃ´ng tin trÆ°á»›c khi quyáº¿t Ä‘á»‹nh.';
     const hashtags = Array.isArray(post.hashtags) && post.hashtags.length
         ? post.hashtags
         : (Array.isArray(content.hashtags) && content.hashtags.length ? content.hashtags.slice(0, 8) : ['#review', '#affiliate', '#muasamthongminh']);
@@ -757,7 +908,7 @@ function normalizePostVariant(post, source, platform, index, scheduledTime = nul
         scheduled_time: post.scheduled_time || scheduledTime || null,
         post_setup: {
             campaign_tag: options.campaign_tag || null,
-            tone: options.tone || 'rõ ràng, có CTA',
+            tone: options.tone || 'rÃµ rÃ ng, cÃ³ CTA',
             cta_type: options.cta_type || 'engagement_or_click',
             requested_post_type: options.post_type || null
         },
@@ -768,20 +919,20 @@ function normalizePostVariant(post, source, platform, index, scheduledTime = nul
 }
 
 function platformSpecificBody(post, sourceContent) {
-    const productName = sourceContent.product_name || sourceContent.title || 'sản phẩm này';
+    const productName = sourceContent.product_name || sourceContent.title || 'sáº£n pháº©m nÃ y';
     const hook = post.hook || sourceContent.hook || productName;
-    const cta = post.CTA || sourceContent.CTA || 'Xem thêm trước khi quyết định.';
+    const cta = post.CTA || sourceContent.CTA || 'Xem thÃªm trÆ°á»›c khi quyáº¿t Ä‘á»‹nh.';
     if (post.platform === 'threads') {
-        return `${hook}\n\n${productName} đang đáng chú ý vì giải quyết đúng một nhu cầu rất cụ thể. Bạn có muốn mình tách checklist nên mua/không nên mua không?`;
+        return `${hook}\n\n${productName} Ä‘ang Ä‘Ã¡ng chÃº Ã½ vÃ¬ giáº£i quyáº¿t Ä‘Ãºng má»™t nhu cáº§u ráº¥t cá»¥ thá»ƒ. Báº¡n cÃ³ muá»‘n mÃ¬nh tÃ¡ch checklist nÃªn mua/khÃ´ng nÃªn mua khÃ´ng?`;
     }
     if (post.platform === 'facebook') {
-        return `${hook}\n\nNếu bạn đang tìm một lựa chọn thực tế trong nhóm ${post.title || productName}, điểm đáng xem là: vấn đề nó giải quyết, cách dùng trong đời sống hằng ngày, và liệu có phù hợp nhu cầu của bạn không.\n\n${cta}`;
+        return `${hook}\n\nNáº¿u báº¡n Ä‘ang tÃ¬m má»™t lá»±a chá»n thá»±c táº¿ trong nhÃ³m ${post.title || productName}, Ä‘iá»ƒm Ä‘Ã¡ng xem lÃ : váº¥n Ä‘á» nÃ³ giáº£i quyáº¿t, cÃ¡ch dÃ¹ng trong Ä‘á»i sá»‘ng háº±ng ngÃ y, vÃ  liá»‡u cÃ³ phÃ¹ há»£p nhu cáº§u cá»§a báº¡n khÃ´ng.\n\n${cta}`;
     }
     if (post.platform === 'tiktok_caption') {
-        return `${hook} Xem nhanh trước khi mua. ${cta}`;
+        return `${hook} Xem nhanh trÆ°á»›c khi mua. ${cta}`;
     }
     if (post.platform === 'facebook_video') {
-        return `${hook}\n\nTrong video này mình sẽ đi từ vấn đề, cách sản phẩm xử lý, đến điểm cần cân nhắc trước khi mua.\n\n${cta}`;
+        return `${hook}\n\nTrong video nÃ y mÃ¬nh sáº½ Ä‘i tá»« váº¥n Ä‘á», cÃ¡ch sáº£n pháº©m xá»­ lÃ½, Ä‘áº¿n Ä‘iá»ƒm cáº§n cÃ¢n nháº¯c trÆ°á»›c khi mua.\n\n${cta}`;
     }
     return post.body;
 }
@@ -845,7 +996,7 @@ async function generateUpPosts({ sourceContentId, sourceType = 'aff_vid', platfo
             scheduled_time: scheduledTime,
             campaign_tag: options.campaign_tag || null,
             post_type: options.post_type || null,
-            tone: options.tone || 'rõ ràng, có CTA',
+            tone: options.tone || 'rÃµ rÃ ng, cÃ³ CTA',
             cta_type: options.cta_type || 'engagement_or_click'
         })
     });
@@ -888,30 +1039,82 @@ async function generateUpPosts({ sourceContentId, sourceType = 'aff_vid', platfo
 async function refreshLegacyResearchPage(page, options = {}) {
     const config = LEGACY_PAGE_CONFIG[page];
     if (!config) throw new Error(`Unsupported research page: ${page}`);
+    const targetDate = options.target_date || currentLocalDate();
+    if (targetDate !== currentLocalDate()) {
+        throw new Error(`Manual refresh only supports today's date (${currentLocalDate()}). Selected date: ${targetDate}.`);
+    }
+    await emitSystemLog('AI Research legacy refresh started', 'info', {
+        page,
+        target_date: targetDate,
+        source_window: options.source_window || 'last_7_days'
+    });
 
     if (page === 'suggestions') {
         const [mmoRows, aiRows] = await Promise.all([
             loadLegacyPageRows('mmo'),
             loadLegacyPageRows('ai_tools')
         ]);
+        await emitSystemLog('AI Research suggestions dependency check', 'info', {
+            mmo_rows: mmoRows.length,
+            ai_tools_rows: aiRows.length
+        });
         if (mmoRows.length === 0) await refreshLegacyResearchPage('mmo', options);
         if (aiRows.length === 0) await refreshLegacyResearchPage('ai_tools', options);
     }
 
-    const topics = await getActiveTopics();
+    const topics = await getActiveTopics(page);
+    await emitSystemLog('AI Research prompt context loaded', 'info', {
+        page,
+        topics: topics.length,
+        target_date: targetDate
+    });
     const variables = {
         TOPICS: topics.join(', '),
-        PAGE1_DATA: JSON.stringify((await loadLegacyPageRows('mmo')).slice(0, 20)),
-        PAGE2_DATA: JSON.stringify((await loadLegacyPageRows('ai_tools')).slice(0, 20)),
+        PAGE1_DATA: JSON.stringify((await loadLegacyPageRows('mmo', targetDate)).slice(0, DEFAULT_RESEARCH_RESULTS)),
+        PAGE2_DATA: JSON.stringify((await loadLegacyPageRows('ai_tools', targetDate)).slice(0, DEFAULT_RESEARCH_RESULTS)),
         SOURCE_WINDOW: options.source_window || 'last_7_days',
+        CURRENT_DATE: currentLocalDate(),
         LIMIT: config.limit
     };
-    const prompt = await getPromptText(config.promptType, variables);
+    const prompt = page === 'ai_tools'
+        ? buildAiToolsRetryPrompt({
+            currentDate: variables.CURRENT_DATE,
+            sourceWindow: variables.SOURCE_WINDOW,
+            limit: config.limit
+        })
+        : `${await getPromptText(config.promptType, variables)}${buildFreshnessAppendix({
+            page,
+            currentDate: variables.CURRENT_DATE,
+            sourceWindow: variables.SOURCE_WINDOW,
+            limit: config.limit
+        })}`;
     const quota = await getQuota();
-    const useLite = options.useLite ?? !!(quota && quota.request_count >= quota.soft_cap);
+    const useLite = shouldUseLiteForLegacyPage(page, quota, options.useLite);
+    await emitSystemLog('AI Research Gemini call queued', 'info', { page, use_lite: useLite });
     const aiData = await callGemini(prompt, { endpoint: config.promptType, skipCache: true, useLite });
-    const rawItems = extractList(aiData, config.listKeys).slice(0, config.limit);
-    const validItems = validateItems(rawItems, config.required);
+    let rawItems = extractList(aiData, config.listKeys).slice(0, config.limit);
+    let validItems = validateLegacyItems(page, rawItems, config.required);
+    await emitSystemLog('AI Research Gemini response validated', 'info', {
+        page,
+        raw_items: rawItems.length,
+        valid_items: validItems.length
+    });
+
+    if (page === 'ai_tools' && validItems.length === 0 && options.allowRetry !== false) {
+        await emitSystemLog('AI Market validation empty, retrying strict prompt', 'warning', { page });
+        const retryPrompt = buildAiToolsRetryPrompt({
+            currentDate: variables.CURRENT_DATE,
+            sourceWindow: variables.SOURCE_WINDOW,
+            limit: config.limit
+        });
+        const retryData = await callGemini(retryPrompt, { endpoint: config.promptType, skipCache: true, useLite: false });
+        rawItems = extractList(retryData, config.listKeys).slice(0, config.limit);
+        validItems = validateLegacyItems(page, rawItems, config.required);
+        await emitSystemLog('AI Market retry response validated', 'info', {
+            raw_items: rawItems.length,
+            valid_items: validItems.length
+        });
+    }
 
     if (validItems.length === 0) {
         throw new Error(`Gemini returned no valid ${page} items. Check active prompt schema.`);
@@ -919,7 +1122,15 @@ async function refreshLegacyResearchPage(page, options = {}) {
 
     if (page === 'mmo') {
         const normalized = validItems.map(normalizeMmoItem);
-        await db.query('DELETE FROM research_results WHERE page_type = $1', ['mmo']);
+        const deleted = await db.query(
+            `DELETE FROM research_results WHERE page_type = $1 AND ${localDateSql('created_at')} = $2`,
+            ['mmo', targetDate]
+        );
+        await emitSystemLog('AI Research old rows cleared for target date', 'info', {
+            page,
+            target_date: targetDate,
+            deleted_rows: deleted.rowCount
+        });
         for (const item of normalized) {
             await db.query(
                 `INSERT INTO research_results
@@ -928,12 +1139,21 @@ async function refreshLegacyResearchPage(page, options = {}) {
                 [item.category, 'mmo', item.title, item.category, JSON.stringify(item), item.trend_score, item.monetization_score, item.competition_score]
             );
         }
+        await emitSystemLog('AI Research legacy refresh completed', 'success', { page, target_date: targetDate, inserted_rows: normalized.length });
         return { page, count: normalized.length, data: normalized, use_lite: useLite };
     }
 
     if (page === 'ai_tools') {
         const normalized = validItems.map(normalizeAiToolItem);
-        await db.query('DELETE FROM research_results WHERE page_type = $1', ['ai_tools']);
+        const deleted = await db.query(
+            `DELETE FROM research_results WHERE page_type = $1 AND ${localDateSql('created_at')} = $2`,
+            ['ai_tools', targetDate]
+        );
+        await emitSystemLog('AI Research old rows cleared for target date', 'info', {
+            page,
+            target_date: targetDate,
+            deleted_rows: deleted.rowCount
+        });
         for (const item of normalized) {
             await db.query(
                 `INSERT INTO research_results
@@ -942,48 +1162,78 @@ async function refreshLegacyResearchPage(page, options = {}) {
                 [item.tool_type, 'ai_tools', item.tool_name, item.tool_type, JSON.stringify(item), item.value_score, item.confidence_score, 0]
             );
         }
+        await emitSystemLog('AI Research legacy refresh completed', 'success', { page, target_date: targetDate, inserted_rows: normalized.length });
         return { page, count: normalized.length, data: normalized, use_lite: useLite };
     }
 
     const normalized = validItems.map(normalizeSuggestionItem);
-    await db.query('DELETE FROM ai_suggestions');
+    const deleted = await db.query(
+        `DELETE FROM ai_suggestions WHERE ${localDateSql('created_at')} = $1`,
+        [targetDate]
+    );
+    await emitSystemLog('AI Research old rows cleared for target date', 'info', {
+        page,
+        target_date: targetDate,
+        deleted_rows: deleted.rowCount
+    });
     for (const item of normalized) {
         await db.query(
             `INSERT INTO ai_suggestions
-             (recommendation_title, recommendation_text, confidence_score, urgency_score, roi_score, reasoning_summary, next_action, topic)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [item.recommendation_title, item.recommendation_text, item.confidence_score, item.urgency_score, item.roi_score, item.reasoning_summary, item.next_action, item.topic]
+             (recommendation_title, recommendation_text, confidence_score, urgency_score, roi_score, reasoning_summary, next_action, topic, raw_data)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [item.recommendation_title, item.recommendation_text, item.confidence_score, item.urgency_score, item.roi_score, item.reasoning_summary, item.next_action, item.topic, JSON.stringify(item)]
         );
     }
+    await emitSystemLog('AI Research legacy refresh completed', 'success', { page, target_date: targetDate, inserted_rows: normalized.length });
     return { page, count: normalized.length, data: normalized, use_lite: useLite };
 }
 
-// ─── Lấy danh sách Trend ──────────────────────────────────────────────
+// â”€â”€â”€ Láº¥y danh sÃ¡ch Trend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get('/', async (req, res) => {
     try {
         const market = req.query.market || 'vn';
         const categoriesStr = req.query.categories || 'all';
         const categories = parseCategories(categoriesStr);
-        const limit = parseInt(req.query.limit || '8', 10);
-        const window = normalizeWindow(req.query.window || 'today');
+        const limit = clampResearchLimit(req.query.limit);
+        const window = normalizeWindow(req.query.window || 'last_7_days');
         const mode = req.query.mode || 'overview';
         const page = parseInt(req.query.page || '1', 10);
         const requestedDate = req.query.date || null;
         const forceFresh = req.query.forceFresh === 'true' || req.query.refresh === 'true';
+        const today = currentLocalDate();
 
         const dateInfo = await resolveProductTrendDate({ requestedDate, market, categories, window });
-        const resolvedDate = dateInfo.resolvedDate;
-        const shouldReadByDate = requestedDate || (!forceFresh && resolvedDate);
+        let resolvedDate = dateInfo.resolvedDate;
+        const shouldGenerateToday = forceFresh && (!requestedDate || requestedDate === today);
+        const shouldReadByDate = !shouldGenerateToday && (requestedDate || (!forceFresh && resolvedDate));
 
         let result;
         if (shouldReadByDate) {
+            await emitSystemLog('Product Trends read from DB by date', 'info', {
+                requested_date: requestedDate,
+                resolved_date: resolvedDate,
+                window
+            });
             const data = await loadProductTrendRows({ market, categories, window, limit, date: resolvedDate });
             result = { data, is_stale: false, schema_version: 'V4.0.1', from_db_date: resolvedDate };
         } else {
             const generationCategories = isAllCategories(categories)
-                ? ['Skincare', 'Gia dụng', 'Fitness', 'Thời trang', 'Mẹ & bé']
+                ? ['Skincare', 'Gia dụng', 'Fitness', 'Thời trang', 'Mẹ & bé', 'Điện tử', 'Sức khỏe', 'Thú cưng', 'Đồ chơi', 'Nhà cửa']
                 : categories;
+            await emitSystemLog('Product Trends force refresh started', 'info', {
+                requested_date: requestedDate || null,
+                target_date: today,
+                market,
+                window,
+                categories: generationCategories.length
+            });
             result = await getProductTrends({ market, categories: generationCategories, limit, window, mode, forceFresh });
+            resolvedDate = today;
+            await emitSystemLog('Product Trends force refresh completed', 'success', {
+                target_date: today,
+                window,
+                count: result.data.length
+            });
         }
 
         const total = result.data.length; // Simplified total
@@ -1022,7 +1272,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-// ─── Legacy Pages (Backward Compatibility) ───────────────────────────
+// â”€â”€â”€ Legacy Pages (Backward Compatibility) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get('/page-1', async (req, res) => {
     try {
@@ -1105,7 +1355,7 @@ router.get('/page-3', async (req, res) => {
     }
 });
 
-// ─── Quota & Usage ────────────────────────────────────────────────────
+// â”€â”€â”€ Quota & Usage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get('/usage', async (req, res) => {
     try {
@@ -1423,11 +1673,32 @@ router.get('/overview', async (req, res) => {
     }
 });
 
-// ─── Prompt Management ───────────────────────────────────────────────
+// â”€â”€â”€ Prompt Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+async function ensureResearchPromptTitleColumn() {
+    await db.query('ALTER TABLE research_prompts ADD COLUMN IF NOT EXISTS title TEXT');
+    await db.query(`
+        UPDATE research_prompts
+        SET title = CASE page_type
+            WHEN 'overview' THEN 'Product Trend Overview'
+            WHEN 'deep_dive' THEN 'Product Deep Dive'
+            WHEN 'opportunity' THEN 'Product Opportunity Plan'
+            WHEN 'mmo' THEN 'MMO Opportunity Research'
+            WHEN 'ai_tools' THEN 'AI Tools Market Research'
+            WHEN 'suggestions' THEN 'AI Research Suggestions'
+            WHEN 'aff_vid' THEN 'Video Script Studio'
+            WHEN 'up_post' THEN 'Social Post Composer'
+            WHEN 'test' THEN 'Gemini API Test Prompt'
+            ELSE INITCAP(REPLACE(page_type, '_', ' '))
+        END
+        WHERE title IS NULL OR title = ''
+    `);
+}
 
 router.get('/prompts', async (req, res) => {
     try {
-        const result = await db.query('SELECT * FROM research_prompts ORDER BY page_type, updated_at DESC');
+        await ensureResearchPromptTitleColumn();
+        const result = await db.query('SELECT * FROM research_prompts ORDER BY page_type, is_active DESC, updated_at DESC');
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1436,11 +1707,13 @@ router.get('/prompts', async (req, res) => {
 
 router.post('/prompts', async (req, res) => {
     try {
+        await ensureResearchPromptTitleColumn();
         const { id, page_type, variant_name, prompt_text, set_active } = req.body;
+        const title = String(req.body.title || '').trim() || null;
         if (id) {
             await db.query(
-                'UPDATE research_prompts SET page_type=$1, variant_name=$2, prompt_text=$3, updated_at=NOW() WHERE id=$4',
-                [page_type, variant_name, prompt_text, id]
+                'UPDATE research_prompts SET page_type=$1, variant_name=$2, title=$3, prompt_text=$4, updated_at=NOW() WHERE id=$5',
+                [page_type, variant_name, title, prompt_text, id]
             );
             if (set_active) {
                 await db.query('UPDATE research_prompts SET is_active=FALSE WHERE page_type=$1', [page_type]);
@@ -1449,8 +1722,8 @@ router.post('/prompts', async (req, res) => {
             res.json({ success: true, message: 'Updated' });
         } else {
             const insRes = await db.query(
-                'INSERT INTO research_prompts (page_type, variant_name, prompt_text, is_active) VALUES ($1, $2, $3, $4) RETURNING id',
-                [page_type, variant_name, prompt_text, !!set_active]
+                'INSERT INTO research_prompts (page_type, variant_name, title, prompt_text, is_active) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+                [page_type, variant_name, title, prompt_text, !!set_active]
             );
             if (set_active) {
                 await db.query('UPDATE research_prompts SET is_active=FALSE WHERE page_type=$1 AND id != $2', [page_type, insRes.rows[0].id]);
@@ -1488,7 +1761,7 @@ router.delete('/prompts/:id', async (req, res) => {
     }
 });
 
-// ─── Gemini Testing ──────────────────────────────────────────────────
+// â”€â”€â”€ Gemini Testing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.post('/test-gemini', async (req, res) => {
     try {
@@ -1500,14 +1773,14 @@ router.post('/test-gemini', async (req, res) => {
     }
 });
 
-// ─── Lấy chi tiết 1 sản phẩm ──────────────────────────────────────────
-// AFF VID: biến kết quả research thành kế hoạch video affiliate có cấu trúc.
+// â”€â”€â”€ Láº¥y chi tiáº¿t 1 sáº£n pháº©m â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// AFF VID: biáº¿n káº¿t quáº£ research thÃ nh káº¿ hoáº¡ch video affiliate cÃ³ cáº¥u trÃºc.
 router.get('/aff-vid/source-products', async (req, res) => {
     try {
         await ensureAffVideoTable();
-        const { market = 'vn', limit = 12 } = req.query;
+        const { market = 'vn', limit = DEFAULT_RESEARCH_RESULTS } = req.query;
         const requestedDate = req.query.date || null;
-        const window = normalizeWindow(req.query.window || 'today');
+        const window = normalizeWindow(req.query.window || 'last_7_days');
         const categories = parseCategories(req.query.categories || 'all');
         const dateInfo = await resolveProductTrendDate({ requestedDate, market, categories, window });
         const resolvedDate = dateInfo.resolvedDate;
@@ -1516,7 +1789,7 @@ router.get('/aff-vid/source-products', async (req, res) => {
             market,
             window,
             categories,
-            limit: parseInt(limit, 10)
+            limit: clampResearchLimit(limit)
         });
         res.json({
             success: true,
@@ -1572,9 +1845,9 @@ router.post('/aff-vid/generate', async (req, res) => {
             product_id,
             platform_targets = ['TikTok', 'Facebook Reels', 'Instagram Reels'],
             video_duration = '30-45s',
-            tone = 'review thực tế',
+            tone = 'review thá»±c táº¿',
             cta_type = 'affiliate_click',
-            creator_persona = 'reviewer tiếng Việt',
+            creator_persona = 'reviewer tiáº¿ng Viá»‡t',
             affiliate_url = null,
             language = 'vi'
         } = req.body || {};
@@ -1596,7 +1869,7 @@ router.post('/aff-vid/generate', async (req, res) => {
     }
 });
 
-// UP POST: biến AFF VID/research content thành post variants theo từng nền tảng.
+// UP POST: biáº¿n AFF VID/research content thÃ nh post variants theo tá»«ng ná»n táº£ng.
 router.get('/up-post/sources', async (req, res) => {
     try {
         const requestedDate = req.query.date || null;
@@ -1604,7 +1877,7 @@ router.get('/up-post/sources', async (req, res) => {
         const dates = await upPostService.getUpPostAvailableDates(sourceType);
         const resolvedDate = requestedDate || dates[0]?.day || null;
         const sources = await upPostService.loadUpPostSources({
-            limit: parseInt(req.query.limit || '20', 10),
+            limit: clampResearchLimit(req.query.limit),
             sourceType,
             date: resolvedDate
         });
@@ -1633,7 +1906,7 @@ router.get('/up-post/variants', async (req, res) => {
             sourceContentId: req.query.source_content_id || null,
             campaignTag: req.query.campaign_tag || null,
             date: req.query.date || null,
-            limit: parseInt(req.query.limit || '30', 10)
+            limit: clampResearchLimit(req.query.limit)
         });
         res.json({ success: true, data });
     } catch (err) {
@@ -1650,7 +1923,7 @@ router.post('/up-post/generate', async (req, res) => {
             scheduled_time = null,
             campaign_tag = null,
             post_type = null,
-            tone = 'rõ ràng, có CTA',
+            tone = 'rÃµ rÃ ng, cÃ³ CTA',
             cta_type = 'engagement_or_click'
         } = req.body || {};
         if (!source_content_id) {
@@ -1707,35 +1980,57 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-// ─── Refresh thủ công ──────────────────────────────────────────────────
+// â”€â”€â”€ Refresh thá»§ cÃ´ng â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.post('/refresh', async (req, res) => {
     try {
-        const { page, market = 'vn', categories = ['Skincare', 'Gia dụng'], source_window = 'today', mode = 'overview' } = req.body;
+        const targetDate = req.body.target_date || currentLocalDate();
+        const { page, market = 'vn', categories = ['Skincare', 'Gia dụng'], source_window = 'last_7_days', mode = 'overview' } = req.body;
+        await emitSystemLog('Manual AI Research refresh requested', 'info', {
+            page: page || 'trends',
+            target_date: targetDate,
+            source_window
+        });
 
         if (page === 'trends' || !page) {
-            const result = await getProductTrends({ market, categories, window: source_window, mode, limit: 10, forceFresh: true, useLite: !!req.body.useLite });
-            return res.json({ success: true, message: 'Refreshed trends successfully.', count: result.data.length, use_lite: !!req.body.useLite });
+            if (targetDate !== currentLocalDate()) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Manual refresh only supports today's date (${currentLocalDate()}). Selected date: ${targetDate}.`
+                });
+            }
+            const result = await getProductTrends({ market, categories, window: source_window, mode, limit: DEFAULT_RESEARCH_RESULTS, forceFresh: true, useLite: !!req.body.useLite });
+            await emitSystemLog('Manual Product Trends refresh completed', 'success', {
+                target_date: targetDate,
+                count: result.data.length,
+                source_window
+            });
+            return res.json({ success: true, message: 'Refreshed trends successfully.', count: result.data.length, use_lite: !!req.body.useLite, target_date: targetDate });
         }
 
-        const result = await refreshLegacyResearchPage(page, { source_window, useLite: req.body.useLite });
+        const result = await refreshLegacyResearchPageService(page, { source_window, useLite: req.body.useLite, target_date: targetDate });
         res.json({
             success: true,
             message: `Refreshed ${page} successfully.`,
             count: result.count,
-            use_lite: result.use_lite
+            use_lite: result.use_lite,
+            target_date: targetDate
         });
     } catch (err) {
+        await emitSystemLog('Manual AI Research refresh failed', 'error', { error: err.message });
         res.status(500).json({ success: false, error: err.message });
     }
 });
-
-// ─── Thao tác quản trị nội bộ ─────────────────────────────────────────
+// â”€â”€â”€ Thao tÃ¡c quáº£n trá»‹ ná»™i bá»™ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.post('/admin/run-daily-job', async (req, res) => {
     const { researchQueue } = require('./queue');
-    const date = new Date().toISOString().split('T')[0];
-    await researchQueue.add('manual-research', {}, {
-        jobId: `trend_manual_${date}`
+    const date = currentLocalDate();
+    await researchQueue.add('manual-research', { trigger: 'manual-admin', target_date: date }, {
+        jobId: `trend_manual_${date}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5 * 60 * 1000 },
+        removeOnComplete: true,
+        removeOnFail: false
     });
     res.json({ success: true, message: 'Daily trend job queued in background.' });
 });

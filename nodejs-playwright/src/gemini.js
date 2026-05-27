@@ -4,6 +4,7 @@
 
 const crypto = require('crypto');
 const db = require('./db');
+const { emitSystemLog } = require('./logger');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
@@ -105,32 +106,102 @@ function chooseModel(quota) {
 }
 
 async function parseGeminiResponse(text) {
+    const source = String(text || '');
+    const candidates = [];
+    const fenced = source.match(/```(?:json)?\s*([\s\S]*?)\s*```/gi) || [];
+    for (const block of fenced) {
+        candidates.push(block.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim());
+    }
+    candidates.push(source.trim());
+
+    function balancedJsonSlice(input) {
+        const starts = [input.indexOf('['), input.indexOf('{')].filter(i => i >= 0).sort((a, b) => a - b);
+        for (const start of starts) {
+            const open = input[start];
+            const close = open === '[' ? ']' : '}';
+            let depth = 0;
+            let inString = false;
+            let escape = false;
+            for (let i = start; i < input.length; i++) {
+                const ch = input[i];
+                if (escape) {
+                    escape = false;
+                    continue;
+                }
+                if (ch === '\\') {
+                    escape = true;
+                    continue;
+                }
+                if (ch === '"') {
+                    inString = !inString;
+                    continue;
+                }
+                if (inString) continue;
+                if (ch === open) depth += 1;
+                if (ch === close) depth -= 1;
+                if (depth === 0) return input.slice(start, i + 1);
+            }
+        }
+        return null;
+    }
+
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        try {
+            return JSON.parse(candidate);
+        } catch (e) {
+            const slice = balancedJsonSlice(candidate);
+            if (slice) {
+                try {
+                    return JSON.parse(slice);
+                } catch (e2) {}
+            }
+        }
+    }
+
     try {
-        const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
+        const jsonMatch = source.match(/```json\s*([\s\S]*?)\s*```/) || source.match(/```\s*([\s\S]*?)\s*```/);
         const cleaned = jsonMatch ? jsonMatch[1].trim() : text.trim();
         return JSON.parse(cleaned);
     } catch (e) {
         try {
-            const startArr = text.indexOf('[');
-            const startObj = text.indexOf('{');
+            const startArr = source.indexOf('[');
+            const startObj = source.indexOf('{');
             let start = -1, end = -1;
             if (startArr !== -1 && (startObj === -1 || startArr < startObj)) {
-                start = startArr; end = text.lastIndexOf(']') + 1;
+                start = startArr; end = source.lastIndexOf(']') + 1;
             } else if (startObj !== -1) {
-                start = startObj; end = text.lastIndexOf('}') + 1;
+                start = startObj; end = source.lastIndexOf('}') + 1;
             }
-            if (start !== -1 && end > start) return JSON.parse(text.substring(start, end));
+            if (start !== -1 && end > start) return JSON.parse(source.substring(start, end));
         } catch (e2) {}
-        return { raw: text };
+        return { raw: source };
     }
 }
 
-async function callGeminiAPI(prompt, model) {
+const GROUNDED_ENDPOINTS = new Set([
+    'product_trends',
+    'mmo',
+    'ai_tools',
+]);
+
+function shouldEnableGoogleSearch(endpoint, explicitValue) {
+    if (explicitValue !== undefined) return !!explicitValue;
+    if (process.env.GEMINI_ENABLE_GOOGLE_SEARCH === 'false') return false;
+    return GROUNDED_ENDPOINTS.has(endpoint);
+}
+
+async function callGeminiAPI(prompt, model, { googleSearch = false } = {}) {
     const url = `${BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`;
     const body = {
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 8192, responseMimeType: 'application/json' },
+        generationConfig: { temperature: 0.4, maxOutputTokens: 8192 },
     };
+    if (googleSearch) {
+        body.tools = [{ google_search: {} }];
+    } else {
+        body.generationConfig.responseMimeType = 'application/json';
+    }
 
     let lastError = null;
     for (let i = 0; i < 3; i++) {
@@ -160,27 +231,40 @@ async function callGeminiAPI(prompt, model) {
     throw lastError || new Error('Unknown Gemini API Error');
 }
 
-async function callGemini(prompt, { endpoint = 'unknown', skipCache = false, useLite = undefined } = {}) {
+async function callGemini(prompt, { endpoint = 'unknown', skipCache = false, useLite = undefined, googleSearch = undefined } = {}) {
     if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY missing');
     const promptHash = sha256(prompt);
+    await emitSystemLog('Gemini request prepared', 'info', { endpoint, skipCache, prompt_hash: promptHash.slice(0, 12) });
 
     if (!skipCache) {
         const cached = await getCache(promptHash);
         if (cached) {
             await incrementCacheHit();
+            await emitSystemLog('Gemini cache hit', 'info', { endpoint, prompt_hash: promptHash.slice(0, 12) });
             return cached.payload_json;
         }
     }
 
     const reserved = await reserveQuota();
-    if (!reserved) throw new Error('QUOTA_EXCEEDED');
+    if (!reserved) {
+        await emitSystemLog('Gemini quota reservation failed', 'warning', { endpoint });
+        throw new Error('QUOTA_EXCEEDED');
+    }
 
     try {
         const quota = await getQuota();
         const model = useLite === true ? MODELS.lite : chooseModel(quota);
-        const response = await callGeminiAPI(prompt, model);
+        await emitSystemLog('Gemini API call started', 'info', {
+            endpoint,
+            model,
+            google_search: shouldEnableGoogleSearch(endpoint, googleSearch)
+        });
+        const response = await callGeminiAPI(prompt, model, {
+            googleSearch: shouldEnableGoogleSearch(endpoint, googleSearch)
+        });
 
-        const text = response?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+        const parts = response?.candidates?.[0]?.content?.parts || [];
+        const text = parts.map(part => part.text || '').filter(Boolean).join('\n').trim() || '{}';
         const usage = response?.usageMetadata || {};
         const promptTokens = usage.promptTokenCount || 0;
         const outputTokens = usage.candidatesTokenCount || 0;
@@ -193,10 +277,18 @@ async function callGemini(prompt, { endpoint = 'unknown', skipCache = false, use
             `INSERT INTO api_usage_logs (model, prompt_tokens, output_tokens, total_tokens, cache_hit, endpoint) VALUES ($1, $2, $3, $4, FALSE, $5)`,
             [model, promptTokens, outputTokens, promptTokens + outputTokens, endpoint]
         );
+        await emitSystemLog('Gemini API call completed', 'success', {
+            endpoint,
+            model,
+            prompt_tokens: promptTokens,
+            output_tokens: outputTokens,
+            total_tokens: promptTokens + outputTokens
+        });
 
         return parsed;
     } catch (error) {
         await rollbackQuotaReservation();
+        await emitSystemLog('Gemini API call failed', 'error', { endpoint, error: error.message });
         throw error;
     }
 }

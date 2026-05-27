@@ -17,7 +17,7 @@ const inviteQueue = new Queue('invite-queue', { connection });
 
 async function addInviteJob(accountId, payload, customOpts = {}) {
   const baseOpts = {
-    attempts: 3,
+    attempts: 1, // Chỉ thử 1 lần, không tự động hiện lại khi bị lỗi/tắt
     backoff: {
       type: 'exponential',
       delay: 5000
@@ -35,22 +35,24 @@ async function addInviteJob(accountId, payload, customOpts = {}) {
 const researchQueue = new Queue('research-queue', { connection });
 const RESEARCH_DAILY_PATTERN = '0 8 * * *';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
+const RESEARCH_DAILY_JOB_ID = 'daily-manual-research';
 
 async function addResearchJob() {
   const repeatableJobs = await researchQueue.getRepeatableJobs().catch(() => []);
   for (const job of repeatableJobs) {
-    const isDailyResearchJob = job.pattern === RESEARCH_DAILY_PATTERN;
-    const isStaleJob = job.name !== 'manual-research' || job.tz !== APP_TIMEZONE;
-    if (isDailyResearchJob && isStaleJob) {
+    const isExpectedJob = job.name === 'manual-research' &&
+      job.pattern === RESEARCH_DAILY_PATTERN &&
+      job.tz === APP_TIMEZONE;
+    if (!isExpectedJob) {
       await researchQueue.removeRepeatableByKey(job.key).catch(() => {});
     }
   }
 
-  await researchQueue.add('manual-research', {}, {
-    jobId: 'daily-manual-research',
+  await researchQueue.add('manual-research', { trigger: 'daily-cron' }, {
+    jobId: RESEARCH_DAILY_JOB_ID,
     repeat: { pattern: RESEARCH_DAILY_PATTERN, tz: APP_TIMEZONE },
     attempts: 3,
-    backoff: { type: 'exponential', delay: 10000 },
+    backoff: { type: 'exponential', delay: 5 * 60 * 1000 },
     removeOnComplete: true,
     removeOnFail: false
   });
@@ -60,5 +62,7 @@ module.exports = {
   inviteQueue,
   researchQueue,
   addInviteJob,
-  addResearchJob
+  addResearchJob,
+  RESEARCH_DAILY_JOB_ID,
+  RESEARCH_DAILY_PATTERN
 };

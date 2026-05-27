@@ -2,8 +2,9 @@ require('dotenv').config();
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const db = require('./db');
+const { inviteQueue } = require('./queue');
 const { createOrLoadContext } = require('./browser');
-const { autoInviteTask, autoUnfollowTask, warmupTask } = require('./tasks');
+const { autoInviteTask, autoUnfollowFriendsTask, autoUnfollowFollowingTask, warmupTask } = require('./tasks');
 const { EventEmitter } = require('events');
 
 const workerEvents = new EventEmitter();
@@ -23,6 +24,11 @@ const connection = new IORedis(redisOptions);
 const worker = new Worker('invite-queue', async job => {
   const { accountId, payload } = job.data;
   const taskType = payload.taskType || 'invite';
+
+  // [TỐI ƯU] Tránh mở trình duyệt đồng loạt gây nghẽn CPU/Lock renewal
+  // Tăng delay ngẫu nhiên từ 2-15 giây để dàn trải tải trọng
+  const startupDelay = Math.floor(Math.random() * 13000) + 2000;
+  await new Promise(r => setTimeout(r, startupDelay));
 
   // Insert account if it doesn't exist so we don't crash the worker
   await db.query(
@@ -98,7 +104,7 @@ const worker = new Worker('invite-queue', async job => {
     const accountResult = await db.query('SELECT proxy FROM accounts WHERE id = $1', [accountId]);
     const proxyString = accountResult.rows.length > 0 ? accountResult.rows[0].proxy : null;
 
-    emitLog(accountId, `Dang mo trinh duyet cho task ${taskType}...`, 'system');
+    emitLog(accountId, `Đang mở trình duyệt cho task ${taskType}...`, 'system');
     const contextData = await createOrLoadContext(accountId, proxyString, false);
     context = contextData.context;
     page = contextData.page;
@@ -106,9 +112,12 @@ const worker = new Worker('invite-queue', async job => {
     emitLog(accountId, `🚀 Chạy job cho account: ${accountId}`, 'system');
 
     let result;
-    if (taskType === 'unfollow') {
-        emitLog(accountId, `🚀 Bắt đầu Hủy Theo Dõi (Limit: ${payload.maxUnfollow || 'Tất cả'})`);
-        result = await autoUnfollowTask(page, context, account, payload, emitLog, incrementStats);
+    if (taskType === 'unfollow_friends') {
+        emitLog(accountId, `🚀 Bắt đầu Hủy Theo Dõi - Danh sách Bạn Bè (Limit: ${payload.maxUnfollow || 'Tất cả'})`);
+        result = await autoUnfollowFriendsTask(page, context, account, payload, emitLog, incrementStats);
+    } else if (taskType === 'unfollow_following') {
+        emitLog(accountId, `🚀 Bắt đầu Hủy Theo Dõi - Danh sách Đang Theo Dõi (Limit: ${payload.maxUnfollow || 'Tất cả'})`);
+        result = await autoUnfollowFollowingTask(page, context, account, payload, emitLog, incrementStats);
     } else if (taskType === 'warmup') {
         emitLog(accountId, `🚀 Bắt đầu quy trình Warm-up (Tăng độ tin cậy)`);
         result = await warmupTask(page, context, account, emitLog, incrementStats);
@@ -154,13 +163,16 @@ const worker = new Worker('invite-queue', async job => {
     }
 
   } catch (err) {
-    await db.query(
-      `UPDATE accounts
-       SET error_count = error_count + 1
-       WHERE id = $1`,
-      [accountId]
-    );
-    await db.query(`UPDATE tasks SET status = 'failed', error = $1, finished_at = NOW() WHERE id = $2`, [err.message, taskId]);
+    const isBrowserClosed = err.message.includes('closed') || err.message.includes('Target page, context or browser has been closed');
+    const displayError = isBrowserClosed ? 'Trình duyệt bị đóng (Người dùng hoặc Hệ thống)' : err.message;
+
+    if (!isBrowserClosed) {
+        await db.query(
+          `UPDATE accounts SET error_count = error_count + 1 WHERE id = $1`,
+          [accountId]
+        );
+    }
+    await db.query(`UPDATE tasks SET status = 'failed', error = $1, finished_at = NOW() WHERE id = $2`, [displayError, taskId]);
     if (scheduleId) {
       await db.query(
         `UPDATE automation_schedules
@@ -190,7 +202,10 @@ const worker = new Worker('invite-queue', async job => {
   }
 }, {
     connection,
-    concurrency: parseInt(process.env.MAX_CONCURRENCY || 5)
+    concurrency: parseInt(process.env.MAX_CONCURRENCY || 3), // Giảm xuống 3 để an toàn cho RAM/CPU
+    lockDuration: 120000, // Tăng lên 120s (2 phút) để chịu được lag nặng
+    lockRenewTime: 30000,
+    autorun: false
 });
 
 const { runDailyTrendResearch } = require('./research-service');
@@ -204,16 +219,65 @@ const researchWorker = new Worker('research-queue', async job => {
         workerEvents.emit('cron_status', { status: 'error', message: err.message });
         throw err;
     }
-}, { connection, concurrency: 1 });
+}, {
+    connection,
+    concurrency: 1,
+    lockDuration: 120000,
+    lockRenewTime: 30000,
+    autorun: false
+});
+
+async function cleanupFinishedScheduleJobs(job) {
+  const scheduleId = job?.data?.payload?.scheduleId;
+  if (!scheduleId || !inviteQueue) return;
+
+  const scheduleRes = await db.query(
+    'SELECT status, max_runs, run_count FROM automation_schedules WHERE id = $1',
+    [scheduleId]
+  );
+  const schedule = scheduleRes.rows[0];
+  const shouldRemove = !schedule ||
+    schedule.status !== 'active' ||
+    (schedule.max_runs && Number(schedule.run_count || 0) >= Number(schedule.max_runs));
+
+  if (!shouldRemove) return;
+
+  const idText = String(scheduleId);
+  const repeatableJobs = await inviteQueue.getRepeatableJobs().catch(() => []);
+  for (const repeatJob of repeatableJobs) {
+    const key = String(repeatJob.key || '');
+    const jobId = String(repeatJob.id || '');
+    if (key.includes(idText) || jobId.includes(idText)) {
+      await inviteQueue.removeRepeatableByKey(repeatJob.key).catch(() => {});
+    }
+  }
+
+  const pendingJobs = await inviteQueue.getJobs(['waiting', 'delayed', 'prioritized', 'paused']).catch(() => []);
+  for (const pendingJob of pendingJobs) {
+    if (String(pendingJob?.data?.payload?.scheduleId || '') === idText) {
+      await pendingJob.remove().catch(() => {});
+    }
+  }
+}
 
 worker.on('completed', job => {
   console.log(`✅ Job done: ${job.id}`);
   workerEvents.emit('log', { accountId: job.data.accountId, message: `✅ Tác vụ hoàn thành (Job ID: ${job.id})`, type: 'success' });
+  cleanupFinishedScheduleJobs(job).catch(err => console.error('[Worker] Schedule cleanup failed:', err.message));
 });
 
 worker.on('failed', (job, err) => {
   console.log(`❌ Job failed: ${job.id}`, err.message);
   workerEvents.emit('log', { accountId: job.data.accountId, message: `❌ Tác vụ thất bại: ${err.message}`, type: 'error' });
+  cleanupFinishedScheduleJobs(job).catch(cleanupErr => console.error('[Worker] Schedule cleanup failed:', cleanupErr.message));
 });
 
-module.exports = { worker, workerEvents };
+let workersStarted = false;
+function startWorkers() {
+  if (workersStarted) return;
+  workersStarted = true;
+  worker.run().catch(err => console.error('[Worker] Invite worker stopped:', err));
+  researchWorker.run().catch(err => console.error('[Worker] Research worker stopped:', err));
+}
+
+module.exports = { worker, researchWorker, workerEvents, startWorkers };

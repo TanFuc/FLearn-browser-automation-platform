@@ -10,7 +10,7 @@ FAuto is a Node.js automation dashboard with three main areas:
 
 - Facebook account automation: invite, unfollow, and warmup tasks driven by Playwright.
 - Schedule management: immediate jobs, daily-time jobs, and interval jobs through BullMQ/Redis.
-- AI Research: Gemini-backed research pages, product trends, AFF VID, UP POST, prompt management, quota tracking, and daily refresh.
+- AI Research: Gemini-backed research pages, product trends, Video Script Studio, Social Post Composer, prompt management, quota tracking, and daily refresh.
 
 Current code status:
 
@@ -348,9 +348,9 @@ Known timestamp caveat:
 - `product_trend_results`, `aff_video_plans`, and `up_post_variants` use `timestamp without time zone`.
 - Date filters use local date helpers. Be careful when comparing raw timestamps across these tables.
 
-## 10. AFF VID
+## 10. Video Script Studio
 
-AFF VID turns Product Trends rows into affiliate video plans.
+Video Script Studio, formerly AFF VID in API/table names, turns Product Trends rows into affiliate video plans.
 
 Core tables:
 
@@ -376,9 +376,9 @@ Implementation status:
 - Read/generate APIs exist.
 - Status update endpoint is still documented as future work in `docs/AFF_VID_IMPLEMENTATION_PLAN.md`.
 
-## 11. UP POST
+## 11. Social Post Composer
 
-UP POST turns AFF VID plans or Product Trends content into platform-specific post variants.
+Social Post Composer, formerly UP POST in API/table names, turns Video Script Studio plans or Product Trends content into platform-specific post variants.
 
 Core tables:
 
@@ -570,7 +570,7 @@ AI/research tables:
 | Table | Purpose | Key columns |
 |---|---|---|
 | `research_topics` | Active topics for prompt variables | `name`, `category`, `is_active` |
-| `research_prompts` | Prompt variants and active prompt per page | `page_type`, `variant_name`, `prompt_text`, `is_active` |
+| `research_prompts` | Prompt variants and active prompt per page | `page_type`, `title`, `variant_name`, `prompt_text`, `is_active` |
 | `research_results` | Legacy MMO/AI Tools rows | `page_type`, `title`, `category`, `data`, scores, `created_at` |
 | `ai_suggestions` | Suggestions page rows | `recommendation_title`, `recommendation_text`, scores, `raw_data` |
 | `product_trend_results` | V4 trend products | `product_id`, `market`, `category`, `raw_data`, `source_window`, `schema_version` |

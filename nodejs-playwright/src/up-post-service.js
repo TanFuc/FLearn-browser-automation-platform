@@ -467,20 +467,20 @@ async function getUpPostSource(sourceContentId, sourceType = 'aff_vid') {
 }
 
 function fallbackBody(platform, source, options = {}) {
-    const title = source.title || 'noi dung nay';
+    const title = source.title || 'nội dung này';
     const hook = source.hook || title;
     const cta = source.CTA || 'Xem them truoc khi quyet dinh.';
     if (platform === 'threads') {
-        return `${hook}\n\n${title} dang co mot goc kha dang ban: no giai quyet dung mot nhu cau cu the, nhung van nen xem ky truoc khi chon. Ban muon minh tach checklist nen/khong nen khong?`;
+        return `${hook}\n\n${title} đang có một góc khá đáng bàn: nó giải quyết đúng một nhu cầu cụ thể, nhưng vẫn nên xem kỹ trước khi chọn. Bạn muốn mình tách checklist nên/không nên không?`;
     }
     if (platform === 'facebook') {
-        return `${hook}\n\nNeu ban dang can them ngu canh ve ${title}, diem dang xem la van de no giai quyet, doi tuong phu hop, va nhung dieu can kiem tra truoc khi xuong tien.\n\n${source.summary || ''}\n\n${cta}`.trim();
+        return `${hook}\n\nNếu bạn đang cần thêm ngữ cảnh về ${title}, điểm đáng xem là vấn đề nó giải quyết, đối tượng phù hợp, và những điều cần kiểm tra trước khi xuống tiền.\n\n${source.summary || ''}\n\n${cta}`.trim();
     }
     if (platform === 'tiktok_caption') {
         return `${hook} Xem nhanh truoc khi mua. ${cta}`;
     }
     if (platform === 'facebook_video') {
-        return `${hook}\n\nTrong video nay: mo dau bang van de, cho xem cach ${title} duoc dung, roi chot lai diem nen can nhac truoc khi quyet dinh.\n\n${cta}`;
+        return `${hook}\n\nTrong video này: mở đầu bằng vấn đề, cho xem cách ${title} được dùng, rồi chốt lại điểm nên cân nhắc trước khi quyết định.\n\n${cta}`;
     }
     return `${hook}\n\n${source.summary}\n\n${cta}`.trim();
 }
@@ -499,7 +499,7 @@ function fallbackPost(platform, source, options = {}) {
         platform_fit_score: source.source_warnings.length ? 62 : 74,
         validation_warnings: [...source.source_warnings, 'Backend generated conservative fallback from source data.'],
         shot_suggestions: platform === 'facebook_video'
-            ? ['Mo dau bang van de', 'Can canh source/product/workflow', 'Demo ket qua hoac cach dung', 'Ket voi CTA an toan']
+            ? ['Mở đầu bằng vấn đề', 'Cận cảnh source/product/workflow', 'Demo kết quả hoặc cách dùng', 'Kết với CTA an toàn']
             : []
     };
 }
@@ -518,7 +518,7 @@ function detectClaimWarnings(text) {
         /giam can/,
         /het mun/,
         /kiem tien nhanh/,
-        /thu nhap thu dong/
+        /thu nhập thụ động/
     ];
     if (risky.some(pattern => pattern.test(raw))) {
         warnings.push('Contains strong or unsupported claim language; review before publishing.');

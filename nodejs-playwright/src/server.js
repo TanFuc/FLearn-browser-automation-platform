@@ -4,10 +4,11 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const { getSettings, saveSettings } = require('./config');
-const { addInviteJob, inviteQueue, addResearchJob } = require('./queue');
-const { workerEvents } = require('./worker');
+const { addInviteJob, inviteQueue, addResearchJob, RESEARCH_DAILY_JOB_ID } = require('./queue');
+const { workerEvents, startWorkers } = require('./worker');
 const researchRouter = require('./research-routes');
 const { getQuota, setSocketEmitter } = require('./gemini');
+const { emitSystemLog, setLogEmitter } = require('./logger');
 const { researchQueue } = require('./queue');
 const APP_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
 
@@ -15,6 +16,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 setSocketEmitter(io);
+setLogEmitter(io);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -63,6 +65,87 @@ async function enqueueScheduleJobs(schedule) {
     }
 }
 
+async function removeScheduleJobs(scheduleId) {
+    if (!inviteQueue || !scheduleId) return;
+    const idText = String(scheduleId);
+
+    const repeatableJobs = await inviteQueue.getRepeatableJobs().catch(() => []);
+    for (const job of repeatableJobs) {
+        const key = String(job.key || '');
+        const jobId = String(job.id || '');
+        if (key.includes(idText) || jobId.includes(idText)) {
+            await inviteQueue.removeRepeatableByKey(job.key).catch(() => {});
+        }
+    }
+
+    const pendingJobs = await inviteQueue.getJobs(['waiting', 'delayed', 'prioritized', 'paused']).catch(() => []);
+    for (const job of pendingJobs) {
+        if (job?.data?.payload?.scheduleId === idText) {
+            await job.remove().catch(() => {});
+        }
+    }
+}
+
+function normalizeSchedulePayload(body) {
+    const accounts = Array.isArray(body.accountId)
+        ? body.accountId
+        : (Array.isArray(body.account_ids) ? body.account_ids : []);
+    const accountIds = accounts.map(id => String(id || '').trim()).filter(Boolean);
+    const taskType = body.taskType || body.task_type || 'invite';
+    const groupUrl = body.groupUrl !== undefined ? body.groupUrl : body.group_url;
+    const maxUnfollowRaw = body.maxUnfollow !== undefined ? body.maxUnfollow : body.max_unfollow;
+    const scheduleType = body.scheduleType || body.schedule_type || 'none';
+    const scheduleTime = body.scheduleTime !== undefined ? body.scheduleTime : body.schedule_time;
+    const scheduleInterval = body.scheduleInterval !== undefined ? body.scheduleInterval : body.schedule_interval;
+    const maxRunsRaw = body.maxRuns !== undefined ? body.maxRuns : body.max_runs;
+    const maxUnfollow = maxUnfollowRaw === '' || maxUnfollowRaw === undefined || maxUnfollowRaw === null
+        ? 0
+        : parseInt(maxUnfollowRaw, 10);
+    const maxRuns = maxRunsRaw === '' || maxRunsRaw === undefined || maxRunsRaw === null
+        ? null
+        : parseInt(maxRunsRaw, 10);
+
+    if (accountIds.length === 0) {
+        throw new Error('Chọn ít nhất 1 tài khoản.');
+    }
+    if (!['invite', 'unfollow_friends', 'unfollow_following', 'warmup'].includes(taskType)) {
+        throw new Error('Loại tác vụ không hợp lệ.');
+    }
+    if (!['none', 'time', 'interval'].includes(scheduleType)) {
+        throw new Error('Loại lịch không hợp lệ.');
+    }
+    if (taskType === 'invite' && !groupUrl) {
+        throw new Error('Missing groupUrl for invite task');
+    }
+    if (!Number.isInteger(maxUnfollow) || maxUnfollow < 0) {
+        throw new Error('maxUnfollow must be a non-negative integer.');
+    }
+    if (maxRuns !== null && (!Number.isInteger(maxRuns) || maxRuns < 1)) {
+        throw new Error('maxRuns must be a positive integer.');
+    }
+    if (scheduleType === 'time' && !/^\d{2}:\d{2}$/.test(scheduleTime || '')) {
+        throw new Error('Giờ hẹn không hợp lệ. Vui lòng chọn theo định dạng HH:mm.');
+    }
+    if (scheduleType === 'interval') {
+        const hours = parseInt(scheduleInterval, 10);
+        if (!Number.isInteger(hours) || hours < 1 || hours > 72) {
+            throw new Error('Khoảng cách giờ phải từ 1 đến 72.');
+        }
+    }
+
+    return {
+        account_ids: accountIds,
+        task_type: taskType,
+        group_url: groupUrl || null,
+        max_unfollow: maxUnfollow,
+        schedule_type: scheduleType,
+        schedule_value: scheduleType === 'time'
+            ? scheduleTime
+            : (scheduleType === 'interval' ? String(parseInt(scheduleInterval, 10)) : null),
+        max_runs: maxRuns
+    };
+}
+
 // Broadcast stats from BullMQ
 async function broadcastStats() {
     try {
@@ -89,10 +172,7 @@ setInterval(broadcastStats, 3000);
 
 // Helper for system logs
 function systemLog(message, type = 'info') {
-    const data = { accountId: 'system', message, type };
-    io.emit('log', data);
-    const dbPool = require('./db');
-    dbPool.query('INSERT INTO logs (account_id, type, message) VALUES ($1, $2, $3)', [data.accountId, data.type, data.message]).catch(() => {});
+    emitSystemLog(message, type).catch(() => {});
 }
 
 // Listen to worker events
@@ -126,6 +206,12 @@ app.post('/api/config', (req, res) => {
 
 app.post('/api/run', async (req, res) => {
     const { accountId, groupUrl, taskType, maxUnfollow, scheduleType, scheduleTime, scheduleInterval, maxRuns } = req.body;
+    let scheduleInput;
+    try {
+        scheduleInput = normalizeSchedulePayload(req.body);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
     if (!accountId) {
         return res.status(400).json({ error: 'Missing accountId' });
     }
@@ -148,7 +234,7 @@ app.post('/api/run', async (req, res) => {
 
         if (inviteQueue) await inviteQueue.resume(); // Đảm bảo queue đang chạy
 
-        const accounts = Array.isArray(accountId) ? accountId : [accountId];
+        const accounts = scheduleInput.account_ids;
 
         // 1. Create schedule record
         const dbPool = require('./db');
@@ -157,13 +243,13 @@ app.post('/api/run', async (req, res) => {
              (account_ids, task_type, group_url, max_unfollow, schedule_type, schedule_value, max_runs, status, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW()) RETURNING id`,
             [
-                accounts,
-                normalizedTaskType,
-                groupUrl || null,
-                maxUnfollow || 0,
-                normalizedScheduleType,
-                (normalizedScheduleType === 'time' ? scheduleTime : scheduleInterval),
-                runLimit
+                scheduleInput.account_ids,
+                scheduleInput.task_type,
+                scheduleInput.group_url,
+                scheduleInput.max_unfollow,
+                scheduleInput.schedule_type,
+                scheduleInput.schedule_value,
+                scheduleInput.max_runs
             ]
         );
         const scheduleId = schedRes.rows[0].id;
@@ -172,11 +258,11 @@ app.post('/api/run', async (req, res) => {
         await enqueueScheduleJobs({
             id: scheduleId,
             account_ids: accounts,
-            task_type: normalizedTaskType,
-            group_url: groupUrl || null,
-            max_unfollow: maxUnfollow || 0,
-            schedule_type: normalizedScheduleType,
-            schedule_value: normalizedScheduleType === 'time' ? scheduleTime : scheduleInterval
+            task_type: scheduleInput.task_type,
+            group_url: scheduleInput.group_url,
+            max_unfollow: scheduleInput.max_unfollow,
+            schedule_type: scheduleInput.schedule_type,
+            schedule_value: scheduleInput.schedule_value
         });
 
         broadcastStats();
@@ -384,9 +470,6 @@ app.post('/api/accounts', async (req, res) => {
     }
 });
 
-// Ensure the repeatable research job is queued for 08:00 AM daily
-addResearchJob().catch(console.error);
-
 // Pass worker events to socket.io
 workerEvents.on('cron_status', (data) => {
     io.emit('cron_status', data);
@@ -512,6 +595,126 @@ app.get('/api/automation/schedules', async (req, res) => {
     }
 });
 
+app.get('/api/automation/schedules/:id', async (req, res) => {
+    try {
+        const dbPool = require('./db');
+        const result = await dbPool.query('SELECT * FROM automation_schedules WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Không tìm thấy lịch hẹn.' });
+        }
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/automation/schedules/:id', async (req, res) => {
+    let scheduleInput;
+    try {
+        scheduleInput = normalizeSchedulePayload(req.body);
+    } catch (err) {
+        return res.status(400).json({ success: false, error: err.message });
+    }
+
+    const scheduleId = req.params.id;
+    const dbPool = require('./db');
+    const client = await dbPool.connect();
+    try {
+        await client.query('BEGIN');
+        const currentRes = await client.query(
+            'SELECT id, run_count FROM automation_schedules WHERE id = $1 FOR UPDATE',
+            [scheduleId]
+        );
+        if (currentRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: 'Không tìm thấy lịch hẹn.' });
+        }
+
+        const runCount = parseInt(currentRes.rows[0].run_count || 0, 10);
+        const nextStatus = scheduleInput.max_runs !== null && runCount >= scheduleInput.max_runs
+            ? 'completed'
+            : 'active';
+
+        const updateRes = await client.query(
+            `UPDATE automation_schedules
+             SET account_ids = $1,
+                 task_type = $2,
+                 group_url = $3,
+                 max_unfollow = $4,
+                 schedule_type = $5,
+                 schedule_value = $6,
+                 max_runs = $7,
+                 status = $8,
+                 completed_at = CASE WHEN $8 = 'completed' THEN NOW() ELSE NULL END,
+                 updated_at = NOW()
+             WHERE id = $9
+             RETURNING *`,
+            [
+                scheduleInput.account_ids,
+                scheduleInput.task_type,
+                scheduleInput.group_url,
+                scheduleInput.max_unfollow,
+                scheduleInput.schedule_type,
+                scheduleInput.schedule_value,
+                scheduleInput.max_runs,
+                nextStatus,
+                scheduleId
+            ]
+        );
+        await client.query('COMMIT');
+
+        await removeScheduleJobs(scheduleId);
+        const updated = updateRes.rows[0];
+        if (updated.status === 'active') {
+            await enqueueScheduleJobs(updated);
+        }
+        broadcastStats();
+        res.json({ success: true, data: updated });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+app.post('/api/automation/schedules/:id/duplicate', async (req, res) => {
+    const dbPool = require('./db');
+    try {
+        const sourceRes = await dbPool.query('SELECT * FROM automation_schedules WHERE id = $1', [req.params.id]);
+        if (sourceRes.rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Không tìm thấy lịch hẹn.' });
+        }
+
+        const source = sourceRes.rows[0];
+        const insertRes = await dbPool.query(
+            `INSERT INTO automation_schedules
+             (account_ids, task_type, group_url, max_unfollow, schedule_type, schedule_value, max_runs,
+              run_count, success_count, failed_count, status, completed_at, last_run_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, 0, 'active', NULL, NULL, NOW())
+             RETURNING *`,
+            [
+                source.account_ids,
+                source.task_type,
+                source.group_url,
+                source.max_unfollow || 0,
+                source.schedule_type,
+                source.schedule_value,
+                source.max_runs
+            ]
+        );
+
+        const duplicate = insertRes.rows[0];
+        await enqueueScheduleJobs(duplicate);
+        broadcastStats();
+        res.json({ success: true, data: duplicate });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 app.get('/api/automation/summary', async (req, res) => {
     try {
         const { date, type } = req.query;
@@ -624,6 +827,7 @@ app.delete('/api/automation/schedules/:id', async (req, res) => {
         }
 
         const schedule = schedRes.rows[0];
+        await removeScheduleJobs(scheduleId);
 
         // 2. Remove repeatable jobs from BullMQ if it was a recurring schedule
         if (schedule.schedule_type === 'time' || schedule.schedule_type === 'interval') {
@@ -661,10 +865,27 @@ async function clearQueueOnStartup() {
         await dbPool.query(
             "UPDATE tasks SET status = 'failed', error = 'Cancelled by server restart', finished_at = NOW() WHERE status IN ('pending', 'active', 'running')"
         );
+
         if (inviteQueue) {
+            // Xóa tất cả jobs đang chờ và đang chạy
             await inviteQueue.obliterate({ force: true }).catch(() => {});
+
+            // Xóa các lịch lặp lại (repeatable jobs) cũ để tránh xung đột khi rehydrate
+            const repeatables = await inviteQueue.getRepeatableJobs();
+            for (const job of repeatables) {
+                await inviteQueue.removeRepeatableByKey(job.key).catch(() => {});
+            }
         }
-        console.log('🧹 Đã tự động dọn dẹp hàng đợi cũ do server khởi động lại.');
+
+        if (researchQueue) {
+            // Xóa các lịch lặp lại cũ của research
+            const repeatables = await researchQueue.getRepeatableJobs();
+            for (const job of repeatables) {
+                await researchQueue.removeRepeatableByKey(job.key).catch(() => {});
+            }
+        }
+
+        console.log('🧹 Đã dọn dẹp hàng đợi và các lịch lặp lại cũ do server khởi động lại.');
     } catch(err) {
         console.error('Lỗi khi dọn dẹp hàng đợi:', err.message);
     }
@@ -690,16 +911,95 @@ async function rehydrateActiveSchedules() {
     }
 }
 
-// Trigger once on startup (using repeatable jobId logic to avoid double runs on restart)
-async function triggerStartupResearch() {
-    const date = new Date().toISOString().split('T')[0];
-    await researchQueue.add('startup-research', {}, {
-        jobId: `trend_startup_${date}`
-    }).catch(() => {}); // Skip if already ran today
+function currentLocalDate() {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: APP_TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(new Date());
+    const get = type => parts.find(part => part.type === type)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-ensureAutomationSchema().then(() => clearQueueOnStartup()).then(() => rehydrateActiveSchedules()).then(() => {
-    triggerStartupResearch();
+async function getLatestResearchDataDate() {
+    const dbPool = require('./db');
+    const tables = ['research_results', 'ai_suggestions', 'product_trend_results', 'aff_video_plans', 'up_post_variants'];
+    const dates = [];
+    for (const table of tables) {
+        const exists = await dbPool.query(`SELECT to_regclass($1) as table_name`, [table]);
+        if (!exists.rows[0]?.table_name) continue;
+        const result = await dbPool.query(`
+            SELECT TO_CHAR(MAX(DATE(created_at AT TIME ZONE '${APP_TIMEZONE}')), 'YYYY-MM-DD') as latest_date
+            FROM ${table}
+        `);
+        if (result.rows[0]?.latest_date) dates.push(result.rows[0].latest_date);
+    }
+    return dates.sort().reverse()[0] || null;
+}
+
+async function ensureResearchScheduler(reason = 'startup') {
+    await addResearchJob();
+
+    const repeatables = await researchQueue.getRepeatableJobs().catch(() => []);
+    const hasDailyJob = repeatables.some(job =>
+        job.id === RESEARCH_DAILY_JOB_ID ||
+        String(job.key || '').includes(RESEARCH_DAILY_JOB_ID)
+    );
+    if (!hasDailyJob) {
+        await emitSystemLog('AI Research daily cron was missing; re-registering', 'warning', { reason });
+        await addResearchJob();
+    }
+}
+
+async function ensureResearchFreshness(reason = 'startup') {
+    const today = currentLocalDate();
+    let latestDate = null;
+    try {
+        latestDate = await getLatestResearchDataDate();
+    } catch (err) {
+        await emitSystemLog('AI Research freshness check failed', 'error', { reason, error: err.message });
+        return;
+    }
+
+    if (latestDate === today) return;
+
+    await researchQueue.add('manual-research', {
+        trigger: 'freshness-watchdog',
+        reason,
+        latest_available_date: latestDate,
+        target_date: today
+    }, {
+        jobId: `research_freshness_${today}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5 * 60 * 1000 },
+        removeOnComplete: true,
+        removeOnFail: false
+    }).catch(() => {});
+
+    await emitSystemLog('AI Research data is stale; queued freshness job', 'warning', {
+        reason,
+        latest_available_date: latestDate,
+        target_date: today
+    });
+}
+
+async function startResearchWatchdog() {
+    await ensureResearchScheduler('startup');
+    await ensureResearchFreshness('startup');
+
+    setInterval(async () => {
+        try {
+            await ensureResearchScheduler('watchdog');
+            await ensureResearchFreshness('watchdog');
+        } catch (err) {
+            await emitSystemLog('AI Research watchdog failed', 'error', { error: err.message });
+        }
+    }, 60 * 60 * 1000);
+}
+
+ensureAutomationSchema().then(() => clearQueueOnStartup()).then(() => startResearchWatchdog()).then(() => rehydrateActiveSchedules()).then(() => {
+    startWorkers();
     server.listen(PORT, '0.0.0.0', () => {
         console.log(`
 🚀 ===================================================

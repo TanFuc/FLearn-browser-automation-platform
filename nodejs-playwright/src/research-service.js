@@ -3,15 +3,58 @@
  */
 const db = require('./db');
 const { callGemini, incrementCacheHit, getQuota } = require('./gemini');
+const { emitSystemLog } = require('./logger');
 const crypto = require('crypto');
+const RESEARCH_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
 
 const DEFAULT_CATEGORIES = ['Skincare', 'Gia dụng', 'Fitness', 'Thời trang', 'Mẹ & bé', 'Điện tử', 'Sức khỏe', 'Thú cưng', 'Đồ chơi', 'Nhà cửa'];
 const inFlight = new Map();
+const MIN_RESEARCH_RESULTS = 10;
+const MAX_RESEARCH_RESULTS = 15;
+const DEFAULT_RESEARCH_RESULTS = 15;
 const TREND_WINDOWS = {
     today: 'trong ngày hôm nay, ưu tiên tín hiệu mới nhất trong 24 giờ qua',
     last_3_days: 'trong 3 ngày gần nhất, ưu tiên tín hiệu tăng tốc ngắn hạn',
     last_7_days: 'trong 7 ngày gần nhất, ưu tiên xu hướng bền hơn trong tuần'
 };
+
+function buildAiToolsRetryPrompt({ currentDate, sourceWindow, limit }) {
+    const boundedLimit = clampResearchLimit(limit);
+    return `Return valid RFC8259 JSON array only. No markdown. No explanation.
+Current date: ${currentDate}.
+Task: find ${MIN_RESEARCH_RESULTS} to ${boundedLimit} AI tools, AI projects, or AI platforms that are popular, fast-rising, newly launched, newly updated, newly discounted, or strategically useful in the current week ending ${currentDate}.
+Freshness: use only source evidence dated inside ${sourceWindow} relative to ${currentDate}. For last_7_days, source_date must be inside the last 7 days. Do not include evergreen old brands unless there is fresh dated evidence and a clear "why now" trigger.
+Required sources: check at least 3 independent source classes when available: GitHub Trending at https://github.com/trending?spoken_language_code= for developer/open-source AI tools, official launch/changelog pages, Product Hunt, Hacker News, Reddit, X/Twitter, creator demos, reputable newsletters, pricing/discount pages, or credible news.
+Research broadly and return the most important, hot, popular, useful, and high-signal tools. Daily repeats are allowed when the tool is still hot or still has strong fresh evidence.
+Each item must explain WHY NOW in evidence_summary/market_signal. Prefer signals such as launch/update pages, repo momentum, Product Hunt/Hacker News activity, community discussion, creator demos, pricing/deal pages, or credible news.
+Do not invent tools, model names, rankings, dates, prices, stars, or viral claims. Return fewer than ${MIN_RESEARCH_RESULTS} only when fewer are genuinely verifiable.
+All user-facing prose must be Vietnamese only. Keep brand/tool names unchanged.
+Scores must be integers from 0 to 100. Use confidence_score >= 70 only when source_url, source_date, and evidence_summary are concrete.
+Each object must include exactly these keys:
+tool_name, tool_type, use_case, value_score, market_signal, market_reason, price_level, discount_or_launch_status, confidence_score, summary, best_value_reason, source_url, source_date, github_trending_url, evidence_summary, popularity_signal, recent_trigger, is_best_value, is_new_noteworthy.
+source_date format: YYYY-MM-DD.`;
+}
+
+function buildFreshnessAppendix({ page, currentDate, sourceWindow, limit }) {
+    const boundedLimit = clampResearchLimit(limit);
+    return `
+
+SERVER-ENFORCED FRESHNESS AND SOURCE CONTRACT:
+- Current date: ${currentDate}.
+- Requested source_window: ${sourceWindow}.
+- Return ${MIN_RESEARCH_RESULTS}-${boundedLimit} ranked results. Prefer ${boundedLimit} when evidence is strong enough.
+- Use only evidence whose source_date is inside ${sourceWindow} relative to ${currentDate}.
+- Daily repeats are allowed, but only when evidence_summary/freshness_note explains the fresh signal inside ${sourceWindow}.
+- Reject old evergreen items unless they have a fresh trigger: major update, newly viral content, marketplace rank movement, fresh creator/community discussion, current discount, new integration/model support, or renewed search demand.
+- Use multiple source classes when available: TikTok/TikTok Shop, Shopee/Lazada/Amazon, Google Trends/search intent, YouTube Shorts, Reddit, X/Twitter, Facebook Groups, Product Hunt, Hacker News, GitHub Trending, official changelogs/blogs, newsletters, and niche communities.
+- For code/open-source/developer tools, check GitHub Trending exactly at https://github.com/trending?spoken_language_code= when relevant.
+- Every item must include source_url, source_date, evidence_summary, source_window.
+- source_window must equal "${sourceWindow}".
+- confidence_score must be below 70 when the evidence is missing, stale, generic, or unverifiable.
+- Optimize for currently popular, actively discussed, or fast-rising items. Famous but stale items must be removed.
+- Each item must include a clear "why now" signal in evidence_summary, market_signal, freshness_note, popularity_signal, or recent_trigger.
+- This page is "${page}". Keep all user-facing prose in natural Vietnamese only.`;
+}
 
 const LEGACY_PAGE_CONFIG = {
     mmo: {
@@ -19,41 +62,94 @@ const LEGACY_PAGE_CONFIG = {
         listKeys: ['items', 'opportunities', 'data', 'results'],
         required: ['title', 'category', 'trend_score', 'monetization_score', 'competition_score'],
         defaultTopics: ['affiliate TikTok Shop', 'digital product', 'AI automation service', 'print on demand', 'content niche'],
-        limit: 12
+        limit: DEFAULT_RESEARCH_RESULTS
     },
     ai_tools: {
         promptType: 'ai_tools',
-        listKeys: ['items', 'tools', 'data', 'results'],
+        listKeys: ['items', 'tools', 'ai_tools', 'tool_list', 'tools_list', 'data', 'results'],
         required: ['tool_name', 'tool_type', 'use_case'],
-        limit: 12
+        defaultTopics: ['AI tools', 'GitHub trending', 'coding assistants', 'agent AI', 'automation tools', 'open-source AI', 'AI video', 'AI data tools'],
+        limit: DEFAULT_RESEARCH_RESULTS
     },
     suggestions: {
         promptType: 'suggestions',
         listKeys: ['items', 'suggestions', 'recommendations', 'data', 'results'],
         required: ['recommendation_title'],
-        limit: 10
+        defaultTopics: ['AI tools', 'MMO opportunities', 'weekly market signals', 'automation workflows'],
+        limit: DEFAULT_RESEARCH_RESULTS
     }
 };
 
-const BILINGUAL_OUTPUT_INSTRUCTION = `
+function clampResearchLimit(value, fallback = DEFAULT_RESEARCH_RESULTS) {
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(MIN_RESEARCH_RESULTS, Math.min(MAX_RESEARCH_RESULTS, n));
+}
 
-YEU CAU DINH DANG NGON NGU BAT BUOC:
-- Tat ca noi dung hien thi cho nguoi dung phai viet theo dang: tieng Viet (English).
-- Vi du: "Chien luoc noi dung ngan (Short-form content strategy)".
-- Ap dung cho title, summary, content_angle, traffic_source, monetization_model, use_case, market_signal, market_reason, best_value_reason, recommendation_title, recommendation_text, reasoning_summary, next_action.
-- Khong dich ten rieng cua cong cu, san pham, thuong hieu.
+function currentLocalDate() {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: RESEARCH_TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(new Date());
+    const get = type => parts.find(part => part.type === type)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function localDateSql(column = 'created_at') {
+    return `DATE(${column} AT TIME ZONE '${RESEARCH_TIMEZONE}')`;
+}
+
+function parseDateKey(value) {
+    if (!value) return null;
+    const text = String(value).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+    const date = new Date(`${text}T00:00:00Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function sourceWindowDays(window) {
+    if (window === 'today') return 0;
+    if (window === 'last_3_days') return 3;
+    return 7;
+}
+
+function isDateInsideWindow(value, window = 'last_7_days') {
+    const sourceDate = parseDateKey(value);
+    const today = parseDateKey(currentLocalDate());
+    if (!sourceDate || !today) return false;
+    const diffDays = Math.floor((today - sourceDate) / 86400000);
+    return diffDays >= 0 && diffDays <= sourceWindowDays(window);
+}
+
+function hasDateInsideWindow(values, window = 'last_7_days') {
+    const list = Array.isArray(values) ? values : [values];
+    return list.some(value => isDateInsideWindow(value, window));
+}
+
+const VIETNAMESE_OUTPUT_INSTRUCTION = `
+
+YÊU CẦU NGÔN NGỮ BẮT BUỘC:
+- Tất cả nội dung trả về PHẢI là tiếng Việt thuần túy.
+- KHÔNG sử dụng định dạng "Tiếng Việt (English)".
+- Chỉ giữ lại tên riêng của công cụ, thương hiệu hoặc thuật ngữ kỹ thuật không thể dịch (ví dụ: AI, ChatGPT, TikTok).
+- Các trường như: title, summary, content_angle, traffic_source, monetization_model, use_case, market_signal, market_reason, best_value_reason, recommendation_title, recommendation_text, reasoning_summary, next_action PHẢI viết bằng tiếng Việt tự nhiên, chuyên nghiệp.
 `;
 
 function normalizeTrendWindow(value) {
     if (value === 'last_24h' || value === '24h' || value === 'today') return 'today';
     if (value === '3_days' || value === 'last_3_days') return 'last_3_days';
     if (value === '7_days' || value === 'last_7_days') return 'last_7_days';
-    return 'today';
+    return 'last_7_days';
 }
 
-function windowProductId(productId, window) {
-    const base = String(productId || 'product').replace(/(__today|__last_3_days|__last_7_days)$/g, '');
-    return `${base}__${window}`;
+function windowProductId(productId, window, date = currentLocalDate()) {
+    const base = String(productId || 'product')
+        .replace(/__\d{4}_\d{2}_\d{2}__(today|last_3_days|last_7_days)$/g, '')
+        .replace(/__(today|last_3_days|last_7_days)$/g, '');
+    const dateKey = String(date || currentLocalDate()).replace(/-/g, '_');
+    return `${base}__${dateKey}__${window}`;
 }
 
 function withInFlight(key, fn) {
@@ -65,6 +161,11 @@ function withInFlight(key, fn) {
 
 function shouldUseLite(quota) {
     return !!(quota && quota.request_count >= quota.soft_cap);
+}
+
+function shouldUseLiteForPage(page, quota, explicitValue) {
+    if (explicitValue !== undefined) return !!explicitValue;
+    return page === 'suggestions' ? shouldUseLite(quota) : false;
 }
 
 function extractList(data, preferredKeys = []) {
@@ -83,6 +184,125 @@ function validateData(items, requiredFields) {
     return items.filter(item => {
         if (!item || typeof item !== 'object') return false;
         return requiredFields.every(field => item[field] !== undefined && item[field] !== null);
+    });
+}
+
+function hasAnyField(item, fields) {
+    return fields.some(field => item[field] !== undefined && item[field] !== null && item[field] !== '');
+}
+
+function firstValue(value) {
+    return Array.isArray(value) ? value.find(Boolean) : value;
+}
+
+function normalizeEvidenceList(value) {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (!value) return [];
+    return [value];
+}
+
+function normalizeProductTrendItem(item, index, window) {
+    const productName = item.product_name || item.name || item.title || item.product || `Product trend ${index + 1}`;
+    const sourceUrls = normalizeEvidenceList(item.source_urls || item.sources || item.urls || item.source_url || item.url);
+    const sourceDates = normalizeEvidenceList(item.source_dates || item.published_dates || item.source_date || item.published_at || item.updated_at || item.release_date);
+    return {
+        ...item,
+        id: item.id || slug(productName, `trend_${index + 1}`),
+        category: item.category || item.niche || item.topic || 'Other',
+        product_name: productName,
+        trend_score: score(item.trend_score || item.score, 70),
+        confidence_score: confidenceScore(item.confidence_score, 70),
+        summary: item.summary || item.description || item.market_reason || item.evidence_summary || '',
+        source_urls: sourceUrls,
+        source_dates: sourceDates,
+        evidence_summary: item.evidence_summary || item.evidence || item.market_signal || item.market_reason || '',
+        popularity_signal: item.popularity_signal || item.market_signal || item.search_intent || '',
+        recent_trigger: item.recent_trigger || item.evidence_summary || item.market_signal || '',
+        source_window: normalizeTrendWindow(item.source_window || window)
+    };
+}
+
+function hasFreshEvidenceFields(item, window = 'last_7_days') {
+    const sourceDate = item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || item.release_date;
+    return (hasAnyField(item, ['source_url', 'url', 'launch_url', 'github_url']) || hasAnyField(item, ['source_urls']))
+        && (hasAnyField(item, ['source_date', 'published_at', 'updated_at', 'release_date']) || hasAnyField(item, ['source_dates']))
+        && hasAnyField(item, ['evidence_summary', 'evidence', 'market_signal', 'market_reason'])
+        && isDateInsideWindow(sourceDate, window)
+        && confidenceScore(item.confidence_score, 0) >= 70;
+}
+
+function isTransientGeminiError(err) {
+    return /Gemini API (429|500|502|503|504)|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand/i.test(err?.message || '');
+}
+
+function isEmptyAiPayload(data, keys) {
+    return extractList(data, keys).length === 0;
+}
+
+async function callGeminiWithFallbacks(prompt, { endpoint, useLite = false, listKeys = [], allowNoSearchRetry = true } = {}) {
+    const attempts = [
+        { useLite, googleSearch: undefined, label: 'primary' },
+        ...(allowNoSearchRetry ? [{ useLite, googleSearch: false, label: 'no_search' }] : []),
+        { useLite: true, googleSearch: false, label: 'lite_no_search' }
+    ];
+    let lastError = null;
+    for (const attempt of attempts) {
+        try {
+            await emitSystemLog('Gemini fallback attempt started', 'info', {
+                endpoint,
+                attempt: attempt.label,
+                use_lite: attempt.useLite,
+                google_search: attempt.googleSearch
+            });
+            const data = await callGemini(prompt, {
+                endpoint,
+                skipCache: true,
+                useLite: attempt.useLite,
+                googleSearch: attempt.googleSearch
+            });
+            if (listKeys.length && isEmptyAiPayload(data, listKeys) && attempt !== attempts[attempts.length - 1]) {
+                await emitSystemLog('Gemini fallback attempt returned empty list', 'warning', {
+                    endpoint,
+                    attempt: attempt.label
+                });
+                continue;
+            }
+            return data;
+        } catch (err) {
+            lastError = err;
+            await emitSystemLog('Gemini fallback attempt failed', 'warning', {
+                endpoint,
+                attempt: attempt.label,
+                error: err.message
+            });
+            if (!isTransientGeminiError(err) && attempt.label !== 'primary') break;
+        }
+    }
+    throw lastError || new Error(`Gemini failed for ${endpoint}.`);
+}
+
+function validateLegacyItems(page, items, requiredFields) {
+    if (!Array.isArray(items)) return [];
+    const itemWindow = item => normalizeTrendWindow(item.source_window || 'last_7_days');
+    if (page === 'mmo') {
+        return validateData(items, requiredFields).filter(item => hasFreshEvidenceFields(item, itemWindow(item)));
+    }
+    if (page === 'suggestions') {
+        return validateData(items, requiredFields).filter(item => {
+            if (!item || typeof item !== 'object') return false;
+            const sources = Array.isArray(item.supporting_sources) ? item.supporting_sources.filter(Boolean) : [];
+            return sources.length > 0
+                && hasAnyField(item, ['freshness_note', 'reasoning_summary'])
+                && confidenceScore(item.confidence_score, 0) >= 70;
+        });
+    }
+    if (page !== 'ai_tools') return validateData(items, requiredFields);
+    return items.filter(item => {
+        if (!item || typeof item !== 'object') return false;
+        return hasAnyField(item, ['tool_name', 'name', 'title'])
+            && hasAnyField(item, ['tool_type', 'type', 'category'])
+            && hasAnyField(item, ['use_case', 'primary_use_case', 'summary', 'description'])
+            && hasFreshEvidenceFields(item, itemWindow(item));
     });
 }
 
@@ -129,6 +349,14 @@ function score(value, fallback = 0) {
     return Math.max(0, Math.min(100, Math.round(n)));
 }
 
+function confidenceScore(value, fallback = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    if (n > 0 && n <= 5) return score(n * 20, fallback);
+    if (n > 5 && n <= 10) return score(n * 10, fallback);
+    return score(n, fallback);
+}
+
 function slug(value, fallback) {
     return String(value || fallback || 'item')
         .toLowerCase()
@@ -148,10 +376,12 @@ async function getLegacyPromptText(pageType, variables = {}) {
     );
     const row = r.rows[0];
     if (!row?.prompt_text) throw new Error(`No active prompt configured for ${pageType}.`);
-    return renderPrompt(`${row.prompt_text}${BILINGUAL_OUTPUT_INSTRUCTION}`, variables);
+    return renderPrompt(row.prompt_text, variables);
 }
 
-async function getActiveTopics() {
+async function getActiveTopics(page = 'mmo') {
+    const config = LEGACY_PAGE_CONFIG[page];
+    if (config?.defaultTopics && page !== 'mmo') return config.defaultTopics;
     const r = await db.query(
         `SELECT name FROM research_topics
          WHERE is_active = TRUE
@@ -159,7 +389,7 @@ async function getActiveTopics() {
          LIMIT 12`
     );
     const topics = r.rows.map(row => row.name).filter(Boolean);
-    return topics.length ? topics : LEGACY_PAGE_CONFIG.mmo.defaultTopics;
+    return topics.length ? topics : (config?.defaultTopics || LEGACY_PAGE_CONFIG.mmo.defaultTopics);
 }
 
 function normalizeMmoItem(item, index) {
@@ -175,8 +405,13 @@ function normalizeMmoItem(item, index) {
         traffic_source: item.traffic_source || item.traffic || '',
         monetization_model: item.monetization_model || item.model || '',
         market_maturity: item.market_maturity || 'growing',
-        confidence_score: score(item.confidence_score, 70),
+        confidence_score: confidenceScore(item.confidence_score, 70),
         summary: item.summary || item.description || '',
+        source_url: item.source_url || firstValue(item.source_urls) || item.url || '',
+        source_date: item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || '',
+        evidence_summary: item.evidence_summary || item.evidence || item.market_signal || '',
+        popularity_signal: item.popularity_signal || item.market_signal || '',
+        recent_trigger: item.recent_trigger || item.evidence_summary || item.market_signal || '',
         generated_at: new Date().toISOString(),
         source_window: item.source_window || 'last_7_days'
     };
@@ -196,9 +431,15 @@ function normalizeAiToolItem(item, index) {
         market_reason: item.market_reason || item.reason || '',
         price_level: priceLevel,
         discount_or_launch_status: item.discount_or_launch_status || item.launch_status || item.status || priceLevel,
-        confidence_score: score(item.confidence_score, 70),
+        confidence_score: confidenceScore(item.confidence_score, 70),
         summary: item.summary || item.description || '',
         best_value_reason: item.best_value_reason || item.market_reason || item.reason || '',
+        source_url: item.source_url || firstValue(item.source_urls) || item.url || item.launch_url || item.github_url || '',
+        source_date: item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || item.release_date || '',
+        github_trending_url: item.github_trending_url || '',
+        evidence_summary: item.evidence_summary || item.evidence || item.market_signal || item.market_reason || '',
+        popularity_signal: item.popularity_signal || item.market_signal || '',
+        recent_trigger: item.recent_trigger || item.evidence_summary || item.market_signal || '',
         is_best_value: item.is_best_value ?? valueScore >= 85,
         is_new_noteworthy: item.is_new_noteworthy ?? ['emerging', 'new', 'launching'].includes(String(item.market_signal || item.status || '').toLowerCase()),
         generated_at: new Date().toISOString()
@@ -211,24 +452,35 @@ function normalizeSuggestionItem(item, index) {
     return {
         recommendation_title: title,
         recommendation_text: item.recommendation_text || item.hook || item.summary || plan,
-        confidence_score: score(item.confidence_score, score(item.roi_score, 75)),
+        confidence_score: confidenceScore(item.confidence_score, score(item.roi_score, 75)),
         urgency_score: score(item.urgency_score, 60),
         roi_score: score(item.roi_score, 70),
         reasoning_summary: item.reasoning_summary || item.risk || item.market_reason || '',
         next_action: item.next_action || (Array.isArray(item.execution_plan) ? item.execution_plan[0] : ''),
+        supporting_sources: Array.isArray(item.supporting_sources) ? item.supporting_sources : [],
+        freshness_note: item.freshness_note || '',
         topic: item.topic || item.target_topic || item.category || 'General',
         raw_data: { ...item, generated_at: new Date().toISOString() }
     };
 }
 
-async function loadLegacyPageRows(page) {
-    if (page === 'suggestions') {
-        const result = await db.query(`SELECT * FROM ai_suggestions ORDER BY created_at DESC`);
-        return result.rows;
+async function loadLegacyPageRows(page, date = null) {
+    const params = [];
+    const where = [];
+    if (date) {
+        params.push(date);
+        where.push(`${localDateSql('created_at')} = $${params.length}`);
     }
+    const dateWhere = where.length ? ` AND ${where.join(' AND ')}` : '';
+    if (page === 'suggestions') {
+        const result = await db.query(`SELECT * FROM ai_suggestions WHERE 1=1${dateWhere} ORDER BY created_at DESC`, params);
+        return result.rows.map(row => ({ ...row, ...(row.raw_data || {}) }));
+    }
+    params.unshift(page);
+    const adjustedDateWhere = where.length ? ` AND ${where.map((clause, idx) => clause.replace(`$${idx + 1}`, `$${idx + 2}`)).join(' AND ')}` : '';
     const result = await db.query(
-        `SELECT * FROM research_results WHERE page_type = $1 ORDER BY created_at DESC`,
-        [page]
+        `SELECT * FROM research_results WHERE page_type = $1${adjustedDateWhere} ORDER BY created_at DESC`,
+        params
     );
     return result.rows.map(row => ({ ...row, ...row.data }));
 }
@@ -236,31 +488,77 @@ async function loadLegacyPageRows(page) {
 async function refreshLegacyResearchPage(page, options = {}) {
     const config = LEGACY_PAGE_CONFIG[page];
     if (!config) throw new Error(`Unsupported research page: ${page}.`);
+    const targetDate = options.target_date || currentLocalDate();
+    await emitSystemLog('AI Research service refresh started', 'info', {
+        page,
+        target_date: targetDate,
+        source_window: options.source_window || 'last_7_days'
+    });
 
     if (page === 'suggestions') {
         const [mmoRows, aiRows] = await Promise.all([
-            loadLegacyPageRows('mmo'),
-            loadLegacyPageRows('ai_tools')
+            loadLegacyPageRows('mmo', targetDate),
+            loadLegacyPageRows('ai_tools', targetDate)
         ]);
         if (mmoRows.length === 0) await refreshLegacyResearchPage('mmo', options);
         if (aiRows.length === 0) await refreshLegacyResearchPage('ai_tools', options);
     }
 
-    const topics = await getActiveTopics();
+    const topics = await getActiveTopics(page);
     const variables = {
         TOPICS: topics.join(', '),
-        PAGE1_DATA: JSON.stringify((await loadLegacyPageRows('mmo')).slice(0, 20)),
-        PAGE2_DATA: JSON.stringify((await loadLegacyPageRows('ai_tools')).slice(0, 20)),
+        PAGE1_DATA: JSON.stringify((await loadLegacyPageRows('mmo', targetDate)).slice(0, DEFAULT_RESEARCH_RESULTS)),
+        PAGE2_DATA: JSON.stringify((await loadLegacyPageRows('ai_tools', targetDate)).slice(0, DEFAULT_RESEARCH_RESULTS)),
         SOURCE_WINDOW: options.source_window || 'last_7_days',
-        LIMIT: config.limit
+        CURRENT_DATE: currentLocalDate(),
+        LIMIT: clampResearchLimit(config.limit)
     };
 
-    const prompt = await getLegacyPromptText(config.promptType, variables);
+    const prompt = page === 'ai_tools'
+        ? buildAiToolsRetryPrompt({
+            currentDate: variables.CURRENT_DATE,
+            sourceWindow: variables.SOURCE_WINDOW,
+            limit: clampResearchLimit(config.limit)
+        })
+        : `${await getLegacyPromptText(config.promptType, variables)}${buildFreshnessAppendix({
+            page,
+            currentDate: variables.CURRENT_DATE,
+            sourceWindow: variables.SOURCE_WINDOW,
+            limit: config.limit
+        })}`;
     const quota = await getQuota();
-    const useLite = options.useLite ?? !!(quota && quota.request_count >= quota.soft_cap);
-    const aiData = await callGemini(prompt, { endpoint: config.promptType, skipCache: true, useLite });
-    const rawItems = extractList(aiData, config.listKeys).slice(0, config.limit);
-    const validItems = validateData(rawItems, config.required);
+    const useLite = shouldUseLiteForPage(page, quota, options.useLite);
+    await emitSystemLog('AI Research service Gemini call queued', 'info', { page, use_lite: useLite });
+    const aiData = await callGeminiWithFallbacks(prompt, {
+        endpoint: config.promptType,
+        useLite,
+        listKeys: config.listKeys,
+        allowNoSearchRetry: page === 'ai_tools' || page === 'mmo'
+    });
+    const pageLimit = clampResearchLimit(config.limit);
+    let rawItems = extractList(aiData, config.listKeys).slice(0, pageLimit);
+    let validItems = validateLegacyItems(page, rawItems, config.required);
+    await emitSystemLog('AI Research service response validated', 'info', {
+        page,
+        raw_items: rawItems.length,
+        valid_items: validItems.length
+    });
+
+    if (page === 'ai_tools' && validItems.length === 0 && options.allowRetry !== false) {
+        const retryPrompt = buildAiToolsRetryPrompt({
+            currentDate: variables.CURRENT_DATE,
+            sourceWindow: variables.SOURCE_WINDOW,
+            limit: pageLimit
+        });
+        const retryData = await callGeminiWithFallbacks(retryPrompt, {
+            endpoint: config.promptType,
+            useLite: true,
+            listKeys: config.listKeys,
+            allowNoSearchRetry: true
+        });
+        rawItems = extractList(retryData, config.listKeys).slice(0, pageLimit);
+        validItems = validateLegacyItems(page, rawItems, config.required);
+    }
 
     if (validItems.length === 0) {
         throw new Error(`Gemini returned no valid ${page} items. Check active prompt schema.`);
@@ -268,7 +566,11 @@ async function refreshLegacyResearchPage(page, options = {}) {
 
     if (page === 'mmo') {
         const normalized = validItems.map(normalizeMmoItem);
-        await db.query('DELETE FROM research_results WHERE page_type = $1', ['mmo']);
+        const deleted = await db.query(
+            `DELETE FROM research_results WHERE page_type = $1 AND ${localDateSql('created_at')} = $2`,
+            ['mmo', targetDate]
+        );
+        await emitSystemLog('AI Research service old rows cleared', 'info', { page, target_date: targetDate, deleted_rows: deleted.rowCount });
         for (const item of normalized) {
             await db.query(
                 `INSERT INTO research_results
@@ -277,12 +579,17 @@ async function refreshLegacyResearchPage(page, options = {}) {
                 [item.category, 'mmo', item.title, item.category, JSON.stringify(item), item.trend_score, item.monetization_score, item.competition_score]
             );
         }
+        await emitSystemLog('AI Research service refresh completed', 'success', { page, target_date: targetDate, inserted_rows: normalized.length });
         return { page, count: normalized.length, data: normalized, use_lite: useLite };
     }
 
     if (page === 'ai_tools') {
         const normalized = validItems.map(normalizeAiToolItem);
-        await db.query('DELETE FROM research_results WHERE page_type = $1', ['ai_tools']);
+        const deleted = await db.query(
+            `DELETE FROM research_results WHERE page_type = $1 AND ${localDateSql('created_at')} = $2`,
+            ['ai_tools', targetDate]
+        );
+        await emitSystemLog('AI Research service old rows cleared', 'info', { page, target_date: targetDate, deleted_rows: deleted.rowCount });
         for (const item of normalized) {
             await db.query(
                 `INSERT INTO research_results
@@ -291,19 +598,25 @@ async function refreshLegacyResearchPage(page, options = {}) {
                 [item.tool_type, 'ai_tools', item.tool_name, item.tool_type, JSON.stringify(item), item.value_score, item.confidence_score, 0]
             );
         }
+        await emitSystemLog('AI Research service refresh completed', 'success', { page, target_date: targetDate, inserted_rows: normalized.length });
         return { page, count: normalized.length, data: normalized, use_lite: useLite };
     }
 
     const normalized = validItems.map(normalizeSuggestionItem);
-    await db.query('DELETE FROM ai_suggestions');
+    const deleted = await db.query(
+        `DELETE FROM ai_suggestions WHERE ${localDateSql('created_at')} = $1`,
+        [targetDate]
+    );
+    await emitSystemLog('AI Research service old rows cleared', 'info', { page, target_date: targetDate, deleted_rows: deleted.rowCount });
     for (const item of normalized) {
         await db.query(
             `INSERT INTO ai_suggestions
-             (recommendation_title, recommendation_text, confidence_score, urgency_score, roi_score, reasoning_summary, next_action, topic)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [item.recommendation_title, item.recommendation_text, item.confidence_score, item.urgency_score, item.roi_score, item.reasoning_summary, item.next_action, item.topic]
+             (recommendation_title, recommendation_text, confidence_score, urgency_score, roi_score, reasoning_summary, next_action, topic, raw_data)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [item.recommendation_title, item.recommendation_text, item.confidence_score, item.urgency_score, item.roi_score, item.reasoning_summary, item.next_action, item.topic, JSON.stringify(item)]
         );
     }
+    await emitSystemLog('AI Research service refresh completed', 'success', { page, target_date: targetDate, inserted_rows: normalized.length });
     return { page, count: normalized.length, data: normalized, use_lite: useLite };
 }
 
@@ -312,8 +625,8 @@ async function refreshLegacyResearchPage(page, options = {}) {
 async function getProductTrends(options = {}) {
     const market = options.market || 'vn';
     const categories = options.categories || DEFAULT_CATEGORIES;
-    const window = normalizeTrendWindow(options.window || 'today');
-    const limit = options.limit || 8;
+    const window = normalizeTrendWindow(options.window || 'last_7_days');
+    const limit = clampResearchLimit(options.limit);
     const forceFresh = !!(options.forceFresh || options.skipCache);
     
     const categoriesStr = Array.isArray(categories) ? categories.join(',') : categories;
@@ -329,7 +642,7 @@ async function getProductTrends(options = {}) {
             CATEGORIES: categoriesStr,
             SOURCE_WINDOW: window,
             WINDOW_DESCRIPTION: TREND_WINDOWS[window],
-            CURRENT_DATE: new Date().toISOString().slice(0, 10),
+            CURRENT_DATE: currentLocalDate(),
             LIMIT: limit,
             MODE: 'overview'
         });
@@ -337,15 +650,18 @@ async function getProductTrends(options = {}) {
 
 SOURCE WINDOW REQUIREMENT:
 - source_window must be exactly "${window}".
-- Current date is ${new Date().toISOString().slice(0, 10)}.
+- Current date is ${currentLocalDate()}.
 - Analyze ${TREND_WINDOWS[window]}.
 - For "today", prioritize products with same-day spikes, newly viral posts, marketplace rank jumps, or search/social acceleration today.
 - For "last_3_days", prioritize products with acceleration in the last 72 hours.
 - For "last_7_days", prioritize products with reliable weekly momentum.
+- Return ${MIN_RESEARCH_RESULTS} to ${limit} results whenever verifiable. Prefer the maximum useful result count.
+- Rank by importance, heat, popularity, practical value, and evidence strength.
+- Daily repeats are allowed when the product is still hot or still has strong fresh evidence inside the selected source window.
 - Do not reuse stale generic evergreen products unless they have a clear signal inside this source window.`;
         
         const quota = await getQuota();
-        const useLite = options.useLite ?? shouldUseLite(quota);
+        const useLite = options.useLite ?? false;
         const modelVersion = useLite ? 'gemini-2.5-flash-lite' : 'gemini-2.5-flash';
         const promptHash = hash(prompt + modelVersion);
         const modelHash = hash(modelVersion);
@@ -368,27 +684,46 @@ SOURCE WINDOW REQUIREMENT:
 
         let aiData;
         try {
-            aiData = await callGemini(prompt, { endpoint: 'product_trends', skipCache: forceFresh, useLite });
+            aiData = await callGeminiWithFallbacks(prompt, {
+                endpoint: 'product_trends',
+                useLite,
+                listKeys: ['items', 'products', 'trends', 'data'],
+                allowNoSearchRetry: true
+            });
         } catch (err) {
-            console.warn('[Research] Trend AI error, fallback to DB:', err ? err.message : 'Unknown error');
+            await emitSystemLog('Product Trends AI refresh failed', 'error', {
+                window,
+                market,
+                error: err ? err.message : 'Unknown error'
+            });
+            if (forceFresh) throw err;
             const fallback = await getTrendsFromDB(market, categoriesStr, window);
-            return { data: fallback, is_stale: true, schema_version: 'V4.0.1' };
+            return { data: fallback, is_stale: true, schema_version: 'V4.0.1', from_fallback: true };
         }
 
         
         const results = extractList(aiData, ['items', 'products', 'trends', 'data']);
-        const validResults = validateData(results, ['id', 'category', 'product_name', 'trend_score', 'confidence_score', 'summary']);
-        let bounded = validResults.filter(i => i.confidence_score >= 70).slice(0, limit);
+        const normalizedResults = results.map((item, index) => normalizeProductTrendItem(item, index, window));
+        const validResults = validateData(normalizedResults, ['id', 'category', 'product_name', 'trend_score', 'confidence_score', 'summary']);
+        let bounded = validResults
+            .filter(i => i.confidence_score >= 70 && hasDateInsideWindow(i.source_dates, window))
+            .slice(0, limit);
         
         if (bounded.length > 0) {
             // Server-side timestamp and schema injection (Patch #4 & #7)
             bounded = bounded.map(item => ({
                 ...item,
                 canonical_id: item.id,
-                id: windowProductId(item.id, window),
+                id: windowProductId(item.id, window, currentLocalDate()),
                 source_window: window
             }));
             bounded = injectServerTimestamp(bounded);
+            await emitSystemLog('Product Trends validated results ready for storage', 'info', {
+                window,
+                market,
+                count: bounded.length,
+                target_date: currentLocalDate()
+            });
 
             // Store to cache
             await db.query(
@@ -398,6 +733,7 @@ SOURCE WINDOW REQUIREMENT:
                  DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at, created_at = NOW()`,
                 [marketHash, categoryHash, windowHash, promptHash, modelHash, JSON.stringify(bounded)]
             );
+            await emitSystemLog('Product Trends cache updated', 'info', { window, market, count: bounded.length });
             
             // Store to main tables
             for (const item of bounded) {
@@ -417,11 +753,31 @@ SOURCE WINDOW REQUIREMENT:
                     [item.id, market, item.category || 'Other', JSON.stringify(item), JSON.stringify(summaryData), modelVersion, window, item.schema_version]
                 );
             }
+            await emitSystemLog('Product Trends DB rows upserted', 'success', {
+                window,
+                market,
+                target_date: currentLocalDate(),
+                upserted_rows: bounded.length
+            });
             return { data: bounded, is_stale: false, schema_version: 'V4.0.1' };
         } else {
-            // fallback if empty
+            await emitSystemLog('Product Trends AI response had no valid fresh rows', 'warning', {
+                window,
+                market,
+                raw_items: results.length,
+                normalized_items: normalizedResults.length,
+                valid_items: validResults.length
+            });
+            if (forceFresh) {
+                throw new Error(`Gemini returned no valid fresh product trends for ${window}.`);
+            }
             const fallback = await getTrendsFromDB(market, categoriesStr, window);
-            return { data: fallback, is_stale: true, schema_version: 'V4.0.1' };
+            await emitSystemLog('Product Trends valid result empty, using DB fallback', 'warning', {
+                window,
+                market,
+                fallback_rows: fallback.length
+            });
+            return { data: fallback, is_stale: true, schema_version: 'V4.0.1', from_fallback: true };
         }
     });
 }
@@ -497,7 +853,7 @@ async function runDailyTrendResearch() {
                 market: 'vn',
                 categories: DEFAULT_CATEGORIES,
                 window: sourceWindow,
-                limit: 10,
+                limit: DEFAULT_RESEARCH_RESULTS,
                 forceFresh: true
             });
             console.log(`[Research] Fetched ${res.data.length} ${sourceWindow} trends.`);
@@ -519,7 +875,16 @@ async function runDailyTrendResearch() {
             summary.errors.push({ page, error: err.message });
         }
     }
+    const insertedCount = [
+        ...Object.values(summary.trends),
+        ...Object.values(summary.legacy)
+    ].reduce((total, count) => total + Number(count || 0), 0);
     if (summary.errors.length) console.error(`[Research] Daily job completed with ${summary.errors.length} errors.`);
+    if (insertedCount <= 0) {
+        const error = new Error('Daily AI Research finished without inserting any fresh rows.');
+        error.summary = summary;
+        throw error;
+    }
     return summary;
 }
 
@@ -530,7 +895,7 @@ async function getTrendsFromDB(market, categoriesStr, window = 'today') {
          FROM product_trend_results
          WHERE market = $1 AND category = ANY($2) AND source_window = $3
          ORDER BY created_at DESC
-         LIMIT 20`,
+         LIMIT ${DEFAULT_RESEARCH_RESULTS}`,
         [market, categories, normalizeTrendWindow(window)]
     );
     return r.rows.map(row => row.raw_data);

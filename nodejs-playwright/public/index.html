@@ -62,21 +62,29 @@
             <div class="content-wrapper">
                 <!-- ═══ SCHEDULES TAB ═══ -->
                 <div id="schedules-tab" class="tab-pane">
-                    <div class="card">
-                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-                            <h2 class="card-title">Quản Lý Lịch Hẹn & Tự Động Hóa</h2>
-                            <button class="btn btn-primary btn-sm" onclick="loadSchedules()">Làm mới</button>
+                    <div class="card schedule-management-card">
+                        <div class="schedule-manager-header">
+                            <div>
+                                <p class="schedule-kicker">Automation timeline</p>
+                                <h2 class="card-title">Quản Lý Lịch Hẹn & Tự Động Hóa</h2>
+                                <p class="schedule-header-copy">Theo dõi cấu hình, hiệu suất và lịch sử chạy của từng lịch tự động.</p>
+                            </div>
+                            <button class="btn btn-primary btn-sm schedule-refresh-btn" onclick="loadSchedules()">Làm mới</button>
                         </div>
-                        <div class="stats-grid" id="scheduleSummaryCards" style="margin-bottom:16px;"></div>
-                        <div class="table-toolbar" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-                            <input type="date" id="scheduleDateFilter" class="filter-select" onchange="loadSchedules()" style="max-width:180px;">
-                            <select id="scheduleTypeFilter" class="filter-select" onchange="loadSchedules()" style="max-width:180px;">
+                        <div class="schedule-summary-grid" id="scheduleSummaryCards"></div>
+                        <div class="schedule-toolbar">
+                            <div class="schedule-filter-group">
+                                <span class="schedule-filter-label">Bộ lọc</span>
+                                <input type="date" id="scheduleDateFilter" class="filter-select" onchange="loadSchedules()">
+                            </div>
+                            <select id="scheduleTypeFilter" class="filter-select" onchange="loadSchedules()">
                                 <option value="all">Tất cả tác vụ</option>
                                 <option value="invite">Kết bạn</option>
-                                <option value="unfollow">Hủy theo dõi</option>
+                                <option value="unfollow_friends">Hủy theo dõi - Bạn Bè</option>
+                                <option value="unfollow_following">Hủy theo dõi - Đang Theo Dõi</option>
                                 <option value="warmup">Nuôi nick</option>
                             </select>
-                            <select id="scheduleStatusFilter" class="filter-select" onchange="loadSchedules()" style="max-width:180px;">
+                            <select id="scheduleStatusFilter" class="filter-select" onchange="loadSchedules()">
                                 <option value="all">Tất cả trạng thái</option>
                                 <option value="active">Đang hoạt động</option>
                                 <option value="completed">Đã hoàn thành</option>
@@ -88,18 +96,17 @@
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>ID / Loại</th>
+                                        <th>Lịch</th>
                                         <th>Tài Khoản</th>
-                                        <th>Chi tiết / Nhóm</th>
-                                        <th>Lịch Trình</th>
-                                        <th>Lượt Chạy</th>
-                                        <th>Giới Hạn</th>
+                                        <th>Mục Tiêu</th>
+                                        <th>Tiến Độ</th>
+                                        <th>Kết Quả</th>
                                         <th>Trạng Thái</th>
                                         <th>Thao Tác</th>
                                     </tr>
                                 </thead>
                                 <tbody id="schedulesTableBody">
-                                    <tr><td colspan="8" style="text-align:center;">Đang tải...</td></tr>
+                                    <tr><td colspan="7" style="text-align:center;">Đang tải...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -153,16 +160,31 @@
                         <span class="cooldown-badge" id="cooldownDevBadge" style="display:none;">Chế độ phát triển</span>
                     </div>
 
-                    <div style="display:flex; gap:10px; margin-bottom:24px; flex-wrap:wrap;">
-                        <button id="rtab-mmo" class="btn btn-outline" onclick="switchResearchTab('mmo')">⚡ MMO</button>
-                        <button id="rtab-ai" class="btn btn-outline" onclick="switchResearchTab('ai')">🤖 AI Market</button>
-                        <button id="rtab-suggest" class="btn btn-outline" onclick="switchResearchTab('suggest')">💡 Gợi Ý</button>
-                        <button id="rtab-trends" class="btn btn-primary" onclick="switchResearchTab('trends')">🛒 Trends V4</button>
-                        <button id="rtab-affvid" class="btn btn-outline" onclick="switchResearchTab('affvid')">AFF VID</button>
-                        <button id="rtab-uppost" class="btn btn-outline" onclick="switchResearchTab('uppost')">UP POST</button>
-                        <button id="rtab-quota" class="btn btn-outline" onclick="switchResearchTab('quota')">📊 Usage</button>
-                        <button id="rtab-prompts" class="btn btn-outline" onclick="switchResearchTab('prompts')">🧩 Prompts</button>
-                        <button id="btnTestGemini" class="btn btn-outline" onclick="testGemini()">🧪 Test API</button>
+                    <div class="research-control-bar">
+                        <div class="research-nav-group">
+                            <div class="research-nav-label">Cập nhật thông tin</div>
+                            <div class="research-nav-actions">
+                                <button id="rtab-mmo" class="btn btn-outline" onclick="switchResearchTab('mmo')">MMO Research</button>
+                                <button id="rtab-ai" class="btn btn-outline" onclick="switchResearchTab('ai')">AI Market</button>
+                                <button id="rtab-suggest" class="btn btn-outline" onclick="switchResearchTab('suggest')">AI Suggestions</button>
+                                <button id="rtab-trends" class="btn btn-primary" onclick="switchResearchTab('trends')">Product Trends</button>
+                            </div>
+                        </div>
+                        <div class="research-nav-group research-nav-tools">
+                            <div class="research-nav-label">Chức năng nội dung</div>
+                            <div class="research-nav-actions">
+                                <button id="rtab-affvid" class="btn btn-outline" onclick="switchResearchTab('affvid')">Video Script Studio</button>
+                                <button id="rtab-uppost" class="btn btn-outline" onclick="switchResearchTab('uppost')">Social Post Composer</button>
+                            </div>
+                        </div>
+                        <div class="research-nav-group research-nav-system">
+                            <div class="research-nav-label">Hệ thống</div>
+                            <div class="research-nav-actions">
+                                <button id="rtab-prompts" class="btn btn-outline" onclick="switchResearchTab('prompts')">Prompt Library</button>
+                                <button id="rtab-quota" class="btn btn-outline" onclick="switchResearchTab('quota')">Usage</button>
+                                <button id="btnTestGemini" class="btn btn-outline" onclick="testGemini()">Test API</button>
+                            </div>
+                        </div>
                     </div>
 
                     <div id="testResult" class="test-result" style="display:none;"></div>
@@ -189,7 +211,7 @@
                             </div>
                             <div class="table-responsive">
                                 <table>
-                                    <thead><tr><th>Cơ Hội (Opportunity)</th><th>Niche (Niche)</th><th>Trend (Trend)</th><th>Monetize (Monetize)</th><th>Cạnh Tranh (Competition)</th><th>Mô Hình (Model)</th></tr></thead>
+                                    <thead><tr><th>Cơ Hội</th><th>Ngách</th><th>Xu Hướng</th><th>Kiếm Tiền</th><th>Cạnh Tranh</th><th>Mô Hình</th></tr></thead>
                                     <tbody id="mmoTableBody"></tbody>
                                 </table>
                             </div>
@@ -213,7 +235,7 @@
                             </div>
                             <div class="table-responsive">
                                 <table>
-                                    <thead><tr><th>Công cụ (Tool)</th><th>Loại (Type)</th><th>Giá (Price)</th><th>Trạng thái (Status)</th><th>Use Case</th><th>Tín hiệu (Market Signal)</th><th>Giá trị (Value)</th></tr></thead>
+                                    <thead><tr><th>Công Cụ</th><th>Loại</th><th>Giá</th><th>Trạng Thái</th><th>Ứng Dụng</th><th>Tín Hiệu Thị Trường</th><th>Giá Trị</th></tr></thead>
                                     <tbody id="aiTableBody"></tbody>
                                 </table>
                             </div>
@@ -232,8 +254,8 @@
                     <div id="rpage-uppost" class="rpage" style="display:none;">
                         <div class="page-header" style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <h2 style="margin:0; font-size:1.2rem;">UP POST</h2>
-                                <p id="upPostUpdated" style="font-size:0.8rem; color:var(--text-muted); margin:4px 0 0;">Biến AFF VID/research thành post variants theo từng nền tảng.</p>
+                                <h2 style="margin:0; font-size:1.2rem;">Social Post Composer</h2>
+                                <p id="upPostUpdated" style="font-size:0.8rem; color:var(--text-muted); margin:4px 0 0;">Biến Video Script Studio/research thành post variants theo từng nền tảng.</p>
                             </div>
                             <div style="display:flex;gap:8px;flex-wrap:wrap;">
                                 <button class="btn btn-outline btn-sm" onclick="showResearchGuide('uppost')">Hướng dẫn (Guide)</button>
@@ -251,7 +273,7 @@
                             <div class="uppost-panel">
                                 <div class="table-toolbar">
                                     <select class="filter-select" id="upPostSourceType" onchange="loadUpPostSources()">
-                                        <option value="aff_vid">AFF VID</option>
+                                        <option value="aff_vid">Video Script Studio</option>
                                         <option value="research">Research result</option>
                                     </select>
                                     <button class="btn btn-outline btn-sm" onclick="loadUpPostVariants()">Drafts</button>
@@ -284,7 +306,7 @@
                     <div id="rpage-affvid" class="rpage" style="display:none;">
                         <div class="page-header" style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <h2 style="margin:0; font-size:1.2rem;">AFF VID</h2>
+                                <h2 style="margin:0; font-size:1.2rem;">Video Script Studio</h2>
                                 <p id="affVidUpdated" style="font-size:0.8rem; color:var(--text-muted); margin:4px 0 0;">Biến dữ liệu research thành video affiliate ngắn.</p>
                             </div>
                             <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -305,7 +327,7 @@
                                     <select class="filter-select" id="affVidWindowFilter" onchange="loadAffVidCandidates()">
                                         <option value="today">Hôm nay</option>
                                         <option value="last_3_days">3 ngày qua</option>
-                                        <option value="last_7_days">7 ngày qua</option>
+                                        <option value="last_7_days" selected>7 ngày qua</option>
                                     </select>
                                     <select class="filter-select" id="affVidPlatformFilter" onchange="renderAffVidCandidates()">
                                         <option value="TikTok">TikTok</option>
@@ -340,7 +362,7 @@
                                 <h2 style="margin:0; font-size:1.2rem;">🛒 Product Trend Intelligence <span style="font-size:0.7rem; font-weight:400; opacity:0.6;">V4.0.1</span></h2>
                                 <p id="v4MetaInfo" style="font-size:0.8rem; color:var(--text-muted); margin:4px 0 0;">Dữ liệu xu hướng thị trường cập nhật từ AI.</p>
                             </div>
-                            <button class="btn btn-primary btn-sm" id="v4RefreshBtn" onclick="TrendV4.load()">🔄 Refresh</button>
+                            <button class="btn btn-primary btn-sm" id="v4RefreshBtn" onclick="TrendV4.load(true)">🔄 Refresh</button>
                         </div>
 
                         <div class="daily-summary" id="dailySummary-trends"></div>
@@ -353,7 +375,11 @@
                                 <select class="filter-select" id="v4WindowFilter">
                                     <option value="today">Hôm nay</option>
                                     <option value="last_3_days">3 ngày qua</option>
-                                    <option value="last_7_days">7 ngày qua</option>
+                                    <option value="last_7_days" selected>7 ngày qua</option>
+                                </select>
+                                <select class="filter-select" id="v4LimitFilter">
+                                    <option value="10">Limit: 10</option>
+                                    <option value="15" selected>Limit: 15</option>
                                 </select>
                                 <select class="filter-select" id="v4SortFilter">
                                     <option value="trend_score">Sắp xếp: Trend</option>
@@ -413,6 +439,7 @@
                                     <select id="promptPageType" required class="filter-select" style="width:100%; margin-bottom:12px;">
                                         <option value="mmo">mmo</option><option value="ai_tools">ai_tools</option><option value="suggestions">suggestions</option><option value="aff_vid">aff_vid</option><option value="up_post">up_post</option>
                                     </select>
+                                    <input type="text" id="promptTitle" placeholder="Title hiển thị, vd: Product Trend Overview" required style="margin-bottom:12px;">
                                     <input type="text" id="promptVariant" placeholder="v1" required style="margin-bottom:12px;">
                                     <textarea id="promptText" rows="8" placeholder="Nội dung prompt..." required style="margin-bottom:12px;"></textarea>
                                     <label style="display:block; margin-bottom:12px;"><input type="checkbox" id="promptSetActive"> Set as Active</label>
@@ -441,7 +468,8 @@
                                     <label>Tác Vụ</label>
                                     <select id="taskType" onchange="toggleTaskTypeUI()" class="filter-select" style="width:100%;">
                                         <option value="invite">Kết bạn trong nhóm</option>
-                                        <option value="unfollow">Hủy theo dõi</option>
+                                        <option value="unfollow_friends">Hủy theo dõi - Bạn Bè (/friends)</option>
+                                        <option value="unfollow_following">Hủy theo dõi - Đang Theo Dõi (/following)</option>
                                         <option value="warmup">Nuôi nick (Tăng trust)</option>
                                     </select>
                                 </div>

@@ -28,6 +28,7 @@ window.switchPage = function(page, el) {
     if (page === 'affvid') { loadAffVidCandidates(); }
     if (page === 'uppost') { loadUpPostSources(); }
     if (page === 'quota') { loadQuota(); }
+    if (page === 'prompts') { loadPrompts(); }
 };
 
 // Auto-show trends page on standalone load
@@ -100,6 +101,20 @@ function scoreBar(v) {
 }
 function badge(label, type) {
     return `<span class="badge badge-${type}">${label}</span>`;
+}
+function promptPageLabel(page) {
+    const map = {
+        overview: 'Xu hướng Sản phẩm (Product Trends)',
+        deep_dive: 'Phân tích sâu (Deep Dive)',
+        opportunity: 'Kế hoạch cơ hội (Opportunity Plan)',
+        mmo: 'Nghiên cứu MMO (MMO Research)',
+        ai_tools: 'Thị trường AI (AI Tools Market)',
+        suggestions: 'Gợi ý từ AI (AI Suggestions)',
+        aff_vid: 'Studio Kịch bản Video (Video Script Studio)',
+        up_post: 'Soạn thảo bài viết (Social Post Composer)',
+        test: 'Kiểm tra Prompt (Test Prompt)'
+    };
+    return map[page] || String(page || '').replace(/_/g, ' ');
 }
 function priceColor(p) {
     const map = { free: 'success', freemium: 'info', paid: 'warning', enterprise: 'error' };
@@ -209,13 +224,13 @@ async function loadDateAvailability() {
     const url = date ? `/api/research/date-availability?date=${encodeURIComponent(date)}` : '/api/research/date-availability';
     const res = await fetch(url);
     const json = await res.json();
-    if (!res.ok || !json.success) throw new Error(json.error || 'Loi tai date availability');
+    if (!res.ok || !json.success) throw new Error(json.error || 'Lỗi tải trạng thái ngày');
     dateAvailabilityCache = json;
     return json;
 }
 
 function metaDateLabel(meta) {
-    const mode = meta?.date_mode === 'selected' ? 'Ngay chon (Selected date)' : 'Moi nhat co du lieu (Latest available)';
+    const mode = meta?.date_mode === 'selected' ? 'Ngày chọn (Selected date)' : 'Mới nhất có dữ liệu (Latest available)';
     const date = meta?.resolved_date || meta?.date || meta?.requested_date || '';
     return `${mode}: ${date ? formatDay(date) : '--'}`;
 }
@@ -223,14 +238,27 @@ function metaDateLabel(meta) {
 function emptyMetaHtml(title, meta, refreshText = 'Refresh AI') {
     const nearest = meta?.available_dates?.[0];
     const switchBtn = nearest && nearest !== meta?.requested_date
-        ? `<button class="btn btn-outline btn-sm" onclick="selectResearchDate('${nearest}')">Chuyen sang ${formatDay(nearest)}</button>`
+        ? `<button class="btn btn-outline btn-sm" onclick="selectResearchDate('${nearest}')">Chuyển sang ${formatDay(nearest)}</button>`
         : '';
     return `<div class="empty-state">
         <h3>${title}</h3>
-        <p>${meta?.empty_reason || 'Khong co du lieu cho bo loc hien tai.'}</p>
+        <p>${meta?.empty_reason || 'Không có dữ liệu cho bộ lọc hiện tại.'}</p>
         <p>${metaDateLabel(meta)}</p>
         <div class="empty-actions">${switchBtn}<span>${refreshText}</span></div>
     </div>`;
+}
+
+function shortText(value, max = 130) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function sourceMeta(item = {}) {
+    const date = item.source_date || item.source_dates?.[0] || item.published_at || item.updated_at || '';
+    const url = item.source_url || item.source_urls?.[0] || item.supporting_sources?.[0] || item.url || item.launch_url || item.github_url || '';
+    const evidence = item.evidence_summary || item.market_reason || item.freshness_note || '';
+    const source = url ? `<a class="source-link" href="${url}" target="_blank" rel="noopener">Nguồn</a>` : '';
+    return `<div class="fresh-meta">${date ? `<span>${formatDay(date)}</span>` : ''}${source}${evidence ? `<span>${shortText(evidence, 110)}</span>` : ''}</div>`;
 }
 
 window.selectResearchDate = function selectResearchDate(day) {
@@ -463,13 +491,14 @@ function renderMMOTopCards() {
         <div class="opportunity-card">
             <div class="badge-row">${badge(item.category || '—', 'primary')}${badge(item.traffic_source || '—', 'muted')}</div>
             <h3>${item.title || '—'}</h3>
-            <p>${item.summary || ''}</p>
+            <p>${shortText(item.summary || item.content_angle || '', 150)}</p>
             <div class="score-row">
                 <div class="score-item">Xu hướng (Trend) <span class="sv">${item.trend_score||0}</span></div>
                 <div class="score-item">Kiếm tiền (Monetize) <span class="sv">${item.monetization_score||0}</span></div>
                 <div class="score-item">Cạnh tranh (Competition) <span class="sv">${item.competition_score||0}</span></div>
             </div>
-            <p style="font-size:0.78rem;color:var(--muted);margin-top:10px;">Mô hình (Model): ${item.monetization_model || '—'}</p>
+            <div class="compact-line"><b>Model</b><span>${shortText(item.monetization_model || '—', 90)}</span></div>
+            ${sourceMeta(item)}
         </div>`).join('');
 }
 
@@ -496,7 +525,8 @@ function renderGroupSections(containerId, data, groupKey, labelMap) {
             <div class="opportunity-card">
                 <div class="badge-row">${badge(label, 'primary')}${item.traffic_source ? badge(item.traffic_source, 'muted') : ''}</div>
                 <h3>${item.title || item.tool_name || item.recommendation_title || '—'}</h3>
-                <p>${item.summary || item.market_signal || item.recommendation_text || ''}</p>
+                <p>${shortText(item.summary || item.market_signal || item.recommendation_text || '', 120)}</p>
+                ${sourceMeta(item)}
             </div>`).join('');
 
         return `
@@ -530,12 +560,12 @@ function renderMMOTable(data) {
     if (!data.length) { document.getElementById('mmoTableBody').innerHTML = `<tr><td colspan="6">${emptyMetaHtml('Không có dữ liệu MMO (No MMO data)', mmoMeta, 'Nhấn Refresh AI để tạo dữ liệu mới.')}</td></tr>`; return; }
     document.getElementById('mmoTableBody').innerHTML = data.map(d => `
         <tr>
-            <td><b>${d.title||'—'}</b><br><span style="font-size:0.75rem;color:var(--muted)">${d.content_angle||''}</span>${d.traffic_source ? `<br><span style="font-size:0.75rem;color:var(--muted)">Nguồn traffic (Traffic source): ${d.traffic_source}</span>` : ''}</td>
+            <td><b>${d.title||'—'}</b><div class="table-sub">${shortText(d.content_angle||d.summary||'', 150)}</div>${sourceMeta(d)}</td>
             <td>${badge(d.category||'—','primary')}</td>
             <td>${scoreBar(d.trend_score||0)}</td>
             <td>${scoreBar(d.monetization_score||0)}</td>
             <td>${scoreBar(d.competition_score||0)}</td>
-            <td><span style="font-size:0.8rem">${d.monetization_model||'—'}</span></td>
+            <td><span class="table-sub">${shortText(d.monetization_model||'—', 110)}</span>${d.traffic_source ? `<div class="table-sub">Traffic: ${shortText(d.traffic_source, 90)}</div>` : ''}</td>
         </tr>`).join('');
 }
 
@@ -579,8 +609,9 @@ function renderAITopCards() {
                 ${badge(d.price_level||'?', priceColor(d.price_level))}
             </div>
             <h3>${d.tool_name||'—'}</h3>
-            <p>${d.summary||''}</p>
-            <p style="font-size:0.78rem;color:var(--muted);margin-top:10px">📡 ${d.market_signal||''}</p>
+            <p>${shortText(d.summary || d.use_case || '', 150)}</p>
+            <div class="compact-line"><b>Tín hiệu</b><span>${shortText(d.market_signal||'', 100)}</span></div>
+            ${sourceMeta(d)}
         </div>`).join('');
 }
 
@@ -610,9 +641,9 @@ function renderAITable(data) {
             <td>${badge(d.tool_type||'other','primary')}</td>
             <td>${badge(d.price_level||'?', priceColor(d.price_level))}</td>
             <td>${statusBadge(d.discount_or_launch_status)}</td>
-            <td style="max-width:200px;font-size:0.8rem">${d.use_case||'—'}</td>
-            <td style="max-width:180px;font-size:0.78rem;color:var(--muted)">${d.market_signal||'—'}</td>
-            <td style="max-width:160px;font-size:0.78rem">${d.best_value_reason||'—'}</td>
+            <td class="table-sub">${shortText(d.use_case||'—', 120)}</td>
+            <td class="table-sub">${shortText(d.market_signal||'—', 120)}${sourceMeta(d)}</td>
+            <td class="table-sub">${shortText(d.best_value_reason||'—', 120)}</td>
         </tr>`).join('');
 }
 function filterAI() { renderAITable(); }
@@ -655,13 +686,14 @@ function renderSuggestions() {
                         ${d.urgency_score >= 70 ? badge('🔥 Urgent','error') : ''}
                     </div>
                     <h3>${d.recommendation_title||'—'}</h3>
-                    <p>${d.recommendation_text||''}</p>
+                    <p>${shortText(d.recommendation_text||'', 190)}</p>
                     <div class="suggest-scores">
                         <div class="suggest-score">Confidence <span class="val">${d.confidence_score||0}</span></div>
                         <div class="suggest-score">Urgency <span class="val">${d.urgency_score||0}</span></div>
                         <div class="suggest-score">ROI <span class="val">${d.roi_score||0}</span></div>
                     </div>
-                    ${d.reasoning_summary ? `<p style="font-size:0.8rem;color:var(--muted);margin-top:8px;border-left:2px solid var(--border);padding-left:10px">${d.reasoning_summary}</p>` : ''}
+                    ${d.reasoning_summary ? `<p class="suggest-reason">${shortText(d.reasoning_summary, 170)}</p>` : ''}
+                    ${sourceMeta(d)}
                     ${d.next_action ? `<div class="suggest-action">→ ${d.next_action}</div>` : ''}
                 </div>
             </div>`).join('');
@@ -707,19 +739,18 @@ window.loadAffVidCandidates = async function loadAffVidCandidates() {
     const date = getSelectedResearchDate();
     const dateParam = date ? `&date=${encodeURIComponent(date)}` : '';
     try {
-        const res = await fetch(`/api/research/aff-vid/source-products?market=vn&window=${encodeURIComponent(windowValue)}&categories=all&limit=12${dateParam}`);
+        const res = await fetch(`/api/research/aff-vid/source-products?market=vn&window=${encodeURIComponent(windowValue)}&categories=all&limit=20${dateParam}`);
         const json = await res.json();
-        if (!res.ok || !json.success) throw new Error(json.error || 'Không tải được sản phẩm AFF VID');
+        if (!res.ok || !json.success) throw new Error(json.error || 'Không tải được sản phẩm Video Script Studio');
         affVidCandidates = json.data || [];
         affVidMeta = json.meta || null;
         if (updated) updated.textContent = `${affVidCandidates.length} sản phẩm (products) · ${metaDateLabel(json.meta)} · Window: ${json.meta?.window || windowValue}`;
         renderAffVidCandidates();
     } catch (err) {
-        list.innerHTML = `<div class="empty-state"><h3>Lỗi tải AFF VID</h3><p>${err.message}</p></div>`;
+        list.innerHTML = `<div class="empty-state"><h3>Lỗi tải Video Script Studio</h3><p>${err.message}</p></div>`;
         showAlert(err.message, 'error');
     }
 };
-
 window.renderAffVidCandidates = function renderAffVidCandidates() {
     const list = document.getElementById('affVidCandidateList');
     if (!list) return;
@@ -775,18 +806,18 @@ window.copyAffVidPlan = async function copyAffVidPlan() {
 window.showResearchGuide = function showResearchGuide(type) {
     const guides = {
         affvid: {
-            title: 'Hướng dẫn AFF VID (AFF VID Guide)',
+            title: 'Hướng dẫn Video Script Studio',
             steps: [
                 'Stage 1: Chọn ngày/window để lấy sản phẩm thật từ Trends V4.',
                 'Stage 2: Setup platform, độ dài video, tone, CTA và affiliate URL nếu có.',
                 'Stage 3: Bấm Sinh video để tạo hook, script, shot list, caption, hashtag.',
-                'Stage 4: Copy JSON hoặc dùng plan này làm source cho UP POST/n8n.'
+                'Stage 4: Copy JSON hoặc dùng plan này làm source cho Social Post Composer/n8n.'
             ]
         },
         uppost: {
-            title: 'Hướng dẫn UP POST (UP POST Guide)',
+            title: 'Hướng dẫn Social Post Composer',
             steps: [
-                'Stage 1: Chọn source từ AFF VID hoặc Research result theo ngày.',
+                'Stage 1: Chọn source từ Video Script Studio hoặc Research result theo ngày.',
                 'Stage 2: Chọn từng nền tảng; hệ thống sẽ sinh biến thể riêng, không dùng một bài chung.',
                 'Stage 3: Setup giờ đăng, campaign tag, post type, tone và CTA.',
                 'Stage 4: Bấm Sinh post rồi đưa draft đạt yêu cầu vào publishing queue.'
@@ -839,7 +870,7 @@ function formatUpPostPreview(data) {
     const warnings = data?.warnings || [];
     if (!posts.length) return JSON.stringify(data || {}, null, 2);
     const lines = [
-        `UP POST ${data.schema_version || ''}`,
+        `Social Post Composer ${data.schema_version || ''}`,
         `Source: ${data.source_type || ''} / ${data.source_content_id || ''}`,
         `Model: ${data.model_name || '--'}`,
         ''
@@ -885,13 +916,13 @@ window.loadUpPostSources = async function loadUpPostSources() {
     try {
         const res = await fetch(`/api/research/up-post/sources?source_type=${encodeURIComponent(sourceType)}&limit=20${dateParam}`);
         const json = await res.json();
-        if (!res.ok || !json.success) throw new Error(json.error || 'Không tải được UP POST sources');
+        if (!res.ok || !json.success) throw new Error(json.error || 'Không tải được Social Post Composer sources');
         upPostSources = json.data || [];
         upPostMeta = json.meta || null;
         if (updated) updated.textContent = `${upPostSources.length} source · Loại (Type): ${sourceType} · ${metaDateLabel(json.meta)}`;
         renderUpPostSources();
     } catch (err) {
-        list.innerHTML = `<div class="empty-state"><h3>Lỗi tải UP POST</h3><p>${err.message}</p></div>`;
+        list.innerHTML = `<div class="empty-state"><h3>Lỗi tải Social Post Composer</h3><p>${err.message}</p></div>`;
         showAlert(err.message, 'error');
     }
 };
@@ -900,7 +931,7 @@ window.renderUpPostSources = function renderUpPostSources() {
     const list = document.getElementById('upPostSourceList');
     if (!list) return;
     if (!upPostSources.length) {
-        list.innerHTML = emptyMetaHtml('Chưa có source (No source content)', upPostMeta, 'Hãy sinh AFF VID trước hoặc chọn Research result.');
+        list.innerHTML = emptyMetaHtml('Chưa có source (No source content)', upPostMeta, 'Hãy sinh Video Script Studio trước hoặc chọn Research result.');
         return;
     }
     list.innerHTML = upPostSources.map(source => `
@@ -1083,26 +1114,44 @@ document.addEventListener('change', (e) => {
 // ─── Refresh AI ───────────────────────────────────────────────────────────
 async function refreshPage(page) {
     const btnMap = { mmo: 'mmoRefreshBtn', ai_tools: 'aiRefreshBtn', suggestions: 'suggestRefreshBtn' };
-    const btn = document.getElementById(btnMap[page]);
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Đang gọi AI...'; }
+    const targetDate = dayKey(new Date());
+    const selectedDate = getSelectedResearchDate();
+    if (selectedDate && selectedDate !== targetDate) {
+        showAlert(`Refresh chỉ tạo dữ liệu cho hôm nay (${formatDay(targetDate)}). Ngày cũ sẽ đọc lại từ DB.`, 'warning');
+    }
+    const buttons = Array.from(document.querySelectorAll(`button[onclick="refreshPage('${page}')"]`));
+    const mainBtn = document.getElementById(btnMap[page]);
+    if (mainBtn && !buttons.includes(mainBtn)) buttons.push(mainBtn);
+    buttons.forEach(btn => {
+        btn.disabled = true;
+        btn.dataset.originalText = btn.textContent;
+        btn.textContent = 'Đang gọi AI...';
+    });
 
     try {
         const res = await fetch('/api/research/refresh', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ page })
+            body: JSON.stringify({ page, source_window: 'last_7_days', target_date: targetDate })
         });
         const json = await res.json();
         if (!res.ok) { showAlert(json.error, 'warning'); return; }
 
-        showAlert(`✅ Đã refresh! ${json.count} mục mới.${json.use_lite ? ' (Lite mode)' : ''}`, 'success');
+        selectedDailyDay = json.target_date || targetDate;
+        showAlert(`Đã refresh ngày ${formatDay(selectedDailyDay)}: ${json.count} mục mới.${json.use_lite ? ' (Lite mode)' : ''}`, 'success');
+        await loadDailyUsage(1).catch(() => {});
         if (page === 'mmo') { mmoData = []; loadMMO(); }
         if (page === 'ai_tools') { aiData = []; loadAI(); }
         if (page === 'suggestions') { suggestData = []; loadSuggestions(); }
     } catch(e) { showAlert('Lỗi: ' + e.message, 'error'); }
-    finally { if (btn) { btn.disabled = false; btn.textContent = '↺ Refresh AI'; } }
+    finally {
+        buttons.forEach(btn => {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.originalText || 'Refresh AI';
+            delete btn.dataset.originalText;
+        });
+    }
 }
-
 
 // ─── Admin actions ────────────────────────────────────────────────────────
 async function resetQuota() {
@@ -1203,11 +1252,11 @@ function renderPromptList(items) {
     list.innerHTML = Object.entries(groups).map(([page, prompts]) => {
         const rows = prompts.map(p => `
             <div class="prompt-item">
-                <div>
-                    <div class="prompt-title">${p.variant_name}
+                <div class="prompt-main">
+                    <div class="prompt-title">${p.title || promptPageLabel(page)}
                         ${p.is_active ? '<span class="badge badge-success">active</span>' : ''}
                     </div>
-                    <div class="prompt-meta">${page} · ${new Date(p.updated_at).toLocaleString('vi-VN')}</div>
+                    <div class="prompt-meta">${promptPageLabel(page)} · ${p.variant_name} · ${new Date(p.updated_at).toLocaleString('vi-VN')}</div>
                 </div>
                 <div class="prompt-actions">
                     <button class="btn btn-outline btn-sm" onclick="activatePrompt(${p.id})">Active</button>
@@ -1219,7 +1268,7 @@ function renderPromptList(items) {
 
         return `
             <div class="prompt-group">
-                <div class="prompt-group-header">${page}</div>
+                <div class="prompt-group-header"><span>${promptPageLabel(page)}</span><small>${page}</small></div>
                 ${rows}
             </div>
         `;
@@ -1235,6 +1284,8 @@ function editPrompt(id) {
 
     promptEditingId = id;
     document.getElementById('promptPageType').value = item.page_type;
+    const promptTitle = document.getElementById('promptTitle');
+    if (promptTitle) promptTitle.value = item.title || promptPageLabel(item.page_type);
     document.getElementById('promptVariant').value = item.variant_name;
     document.getElementById('promptText').value = item.prompt_text;
     document.getElementById('promptSetActive').checked = item.is_active;
@@ -1264,6 +1315,7 @@ if (promptForm) {
         const payload = {
             id: promptEditingId,
             page_type: document.getElementById('promptPageType').value,
+            title: document.getElementById('promptTitle')?.value.trim() || '',
             variant_name: document.getElementById('promptVariant').value.trim(),
             prompt_text: document.getElementById('promptText').value.trim(),
             set_active: document.getElementById('promptSetActive').checked,
@@ -1276,13 +1328,13 @@ if (promptForm) {
         });
 
         const json = await res.json();
-        if (!res.ok) return showAlert(json.error || 'Loi luu prompt', 'error');
+        if (!res.ok) return showAlert(json.error || 'Lỗi lưu prompt', 'error');
 
         promptEditingId = null;
         promptForm.reset();
         document.getElementById('promptSetActive').checked = false;
         loadPrompts();
-        showAlert('Da luu prompt thanh cong.', 'success');
+        showAlert('Đã lưu prompt thành công.', 'success');
     });
 }
 
@@ -1369,7 +1421,7 @@ document.addEventListener('DOMContentLoaded', () => {
         resetBtn.addEventListener('click', async () => {
             const res = await fetch('/api/admin/reset-cooldown', { method: 'POST' });
             const json = await res.json();
-            if (!res.ok) return showAlert(json.error || 'Loi reset cooldown', 'error');
+            if (!res.ok) return showAlert(json.error || 'Lỗi reset cooldown', 'error');
             showAlert(json.message || 'Cooldown reset.', 'success');
             loadCooldownStatus().catch(() => {});
         });
@@ -1384,13 +1436,13 @@ const TrendV4 = {
     state: {
         market: 'vn',
         categories: ['all'],
-        window: 'today',
-        limit: 8,
+        window: 'last_7_days',
+        limit: 15,
         mode: 'overview',
         sortBy: 'trend_score',
         loading: false,
         data: [],
-        pagination: { page: 1, limit: 8, total: 0, has_more: false },
+        pagination: { page: 1, limit: 15, total: 0, has_more: false },
         is_stale: false,
     },
 
@@ -1423,8 +1475,8 @@ const TrendV4 = {
     },
 
     applyFilters() {
-        const limit = parseInt(document.getElementById('v4LimitFilter')?.value || '8', 10);
-        const window = document.getElementById('v4WindowFilter')?.value || 'today';
+        const limit = parseInt(document.getElementById('v4LimitFilter')?.value || '15', 10);
+        const window = document.getElementById('v4WindowFilter')?.value || 'last_7_days';
         const sortBy = document.getElementById('v4SortFilter')?.value || 'trend_score';
         const market = document.getElementById('v4MarketFilter')?.value || 'vn';
         
@@ -1592,7 +1644,8 @@ const TrendV4 = {
                         <span class="v4-comp-val">${item.competition_level}</span>
                     </div>` : ''}
                 </div>
-                <p class="v4-card-summary">${item.summary || ''}</p>
+                <p class="v4-card-summary">${shortText(item.summary || item.evidence_summary || '', 150)}</p>
+                ${sourceMeta(item)}
                 <div class="v4-card-meta">
                     ${(item.platform_signal || []).map(p => `<span class="v4-platform-tag">${p}</span>`).join('')}
                 </div>

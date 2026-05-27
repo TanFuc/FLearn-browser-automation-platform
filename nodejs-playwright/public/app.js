@@ -124,11 +124,33 @@ function renderScheduleSummary(payload) {
     if (!el || !payload) return;
     const s = payload.summary || {};
     const sch = payload.schedules || {};
+    const totalSchedules = Number(sch.total_schedules || 0);
+    const activeSchedules = Number(sch.active_schedules || 0);
+    const completedRuns = Number(s.completed || 0);
+    const failedRuns = Number(s.failed || 0);
+    const totalRuns = Number(s.task_runs || 0);
+    const successRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
     el.innerHTML = `
-        <div class="card" style="padding:12px;"><p style="font-size:0.72rem;color:var(--text-muted);">Lịch đang hoạt động</p><b>${sch.active_schedules || 0}</b></div>
-        <div class="card" style="padding:12px;"><p style="font-size:0.72rem;color:var(--text-muted);">Lượt chạy</p><b>${s.task_runs || 0}</b></div>
-        <div class="card" style="padding:12px;"><p style="font-size:0.72rem;color:var(--text-muted);">Thành công</p><b style="color:var(--success);">${s.completed || 0}</b></div>
-        <div class="card" style="padding:12px;"><p style="font-size:0.72rem;color:var(--text-muted);">Thất bại</p><b style="color:var(--error);">${s.failed || 0}</b></div>
+        <div class="schedule-summary-tile accent">
+            <span class="summary-label">Lịch đang hoạt động</span>
+            <strong>${activeSchedules}</strong>
+            <small>${totalSchedules} lịch trong bộ lọc</small>
+        </div>
+        <div class="schedule-summary-tile">
+            <span class="summary-label">Lượt chạy</span>
+            <strong>${totalRuns}</strong>
+            <small>${s.accounts_touched || 0} tài khoản đã chạm</small>
+        </div>
+        <div class="schedule-summary-tile success">
+            <span class="summary-label">Tỷ lệ thành công</span>
+            <strong>${successRate}%</strong>
+            <small>${completedRuns} lượt thành công</small>
+        </div>
+        <div class="schedule-summary-tile danger">
+            <span class="summary-label">Cần kiểm tra</span>
+            <strong>${failedRuns}</strong>
+            <small>${sch.cancelled_schedules || 0} lịch đã hủy</small>
+        </div>
     `;
 }
 
@@ -144,10 +166,269 @@ function scheduleStatusLabel(status) {
 function taskTypeLabel(type) {
     return {
         invite: 'Kết bạn',
-        unfollow: 'Hủy theo dõi',
+        unfollow_friends: 'Hủy TD - Bạn Bè',
+        unfollow_following: 'Hủy TD - Đang Theo Dõi',
         warmup: 'Nuôi nick'
     }[type] || type || 'Không rõ';
 }
+
+function taskTypeTone(type) {
+    if (type === 'invite') return 'invite';
+    if (type === 'warmup') return 'warmup';
+    if (type === 'unfollow_friends' || type === 'unfollow_following') return 'unfollow';
+    return 'default';
+}
+
+function scheduleTypeLabel(type, value) {
+    if (type === 'none') return 'Chạy ngay';
+    if (type === 'time') return `Hằng ngày ${value || '--:--'}`;
+    if (type === 'interval') return `Mỗi ${value || '--'} giờ`;
+    return 'Không rõ lịch';
+}
+
+function scheduleStatusMeta(status) {
+    return {
+        active: { label: 'Đang chạy', tone: 'active' },
+        completed: { label: 'Hoàn thành', tone: 'completed' },
+        cancelled: { label: 'Đã hủy', tone: 'cancelled' },
+        failed: { label: 'Thất bại', tone: 'cancelled' }
+    }[status] || { label: status || 'Không rõ', tone: 'cancelled' };
+}
+
+function compactUrl(url) {
+    if (!url) return '';
+    try {
+        const parsed = new URL(url);
+        return `${parsed.hostname}${parsed.pathname}`.replace(/\/$/, '');
+    } catch {
+        return String(url).replace(/^https?:\/\//, '').replace(/\/$/, '');
+    }
+}
+
+let scheduleCache = [];
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function formatDateTime(value, fallback = 'Chưa có') {
+    return value ? new Date(value).toLocaleString('vi-VN') : fallback;
+}
+
+function renderAccountChips(accountIds = []) {
+    if (!accountIds.length) return '<span class="schedule-muted">Chưa chọn tài khoản</span>';
+    const visible = accountIds.slice(0, 3);
+    const hidden = accountIds.length - visible.length;
+    const chips = visible.map(id => `<span class="schedule-chip">${escapeHtml(id)}</span>`).join('');
+    return `${chips}${hidden > 0 ? `<span class="schedule-chip more">+${hidden}</span>` : ''}`;
+}
+
+function scheduleProgress(schedule) {
+    const runCount = Number(schedule.run_count || 0);
+    const maxRuns = schedule.max_runs ? Number(schedule.max_runs) : null;
+    if (!maxRuns) return { label: `${runCount}/không giới hạn`, percent: 0, unlimited: true };
+    return {
+        label: `${runCount}/${maxRuns}`,
+        percent: Math.min(100, Math.round((runCount / maxRuns) * 100)),
+        unlimited: false
+    };
+}
+
+function ensureScheduleEditor() {
+    let modal = document.getElementById('scheduleEditorModal');
+    if (modal) return modal;
+
+    modal = document.createElement('div');
+    modal.id = 'scheduleEditorModal';
+    modal.className = 'schedule-editor-backdrop';
+    modal.innerHTML = `
+        <div class="schedule-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="scheduleEditorTitle">
+            <div class="schedule-editor-header">
+                <h3 id="scheduleEditorTitle">Chỉnh sửa lịch</h3>
+                <button type="button" class="btn btn-outline btn-sm" onclick="closeScheduleEditor()">Đóng</button>
+            </div>
+            <form id="scheduleEditorForm">
+                <input type="hidden" id="scheduleEditId">
+                <div class="form-group">
+                    <label>Tài khoản</label>
+                    <div id="scheduleEditAccounts" class="schedule-edit-accounts"></div>
+                </div>
+                <div class="form-group">
+                    <label>Tác vụ</label>
+                    <select id="scheduleEditTaskType" class="filter-select" style="width:100%;" onchange="toggleScheduleEditorTaskUI()">
+                        <option value="invite">Kết bạn trong nhóm</option>
+                        <option value="unfollow_friends">Hủy theo dõi - Bạn Bè (/friends)</option>
+                        <option value="unfollow_following">Hủy theo dõi - Đang Theo Dõi (/following)</option>
+                        <option value="warmup">Nuôi nick</option>
+                    </select>
+                </div>
+                <div class="form-group" id="scheduleEditGroupWrap">
+                    <label>Link nhóm</label>
+                    <input type="url" id="scheduleEditGroupUrl" placeholder="https://facebook.com/groups/..." inputmode="url">
+                </div>
+                <div class="form-group" id="scheduleEditUnfollowWrap">
+                    <label>Giới hạn hủy theo dõi</label>
+                    <input type="number" id="scheduleEditMaxUnfollow" min="0" max="9999" value="50">
+                </div>
+                <div class="form-group">
+                    <label>Lịch trình</label>
+                    <div class="schedule-edit-row">
+                        <select id="scheduleEditType" class="filter-select" onchange="toggleScheduleEditorUI()">
+                            <option value="none">Chạy ngay</option>
+                            <option value="time">Lúc (Giờ:Phút)</option>
+                            <option value="interval">Lặp lại mỗi X giờ</option>
+                        </select>
+                        <input type="time" id="scheduleEditTime" class="filter-select">
+                        <input type="number" id="scheduleEditInterval" class="filter-select" min="1" max="72" placeholder="Số giờ">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Giới hạn lần chạy</label>
+                    <input type="number" id="scheduleEditMaxRuns" min="1" max="999" placeholder="Để trống nếu không giới hạn">
+                </div>
+                <div class="schedule-editor-actions">
+                    <button type="button" class="btn btn-outline" onclick="closeScheduleEditor()">Hủy</button>
+                    <button type="submit" class="btn btn-primary">Lưu lịch</button>
+                </div>
+            </form>
+        </div>
+    `;
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeScheduleEditor();
+    });
+    document.body.appendChild(modal);
+    document.getElementById('scheduleEditorForm').addEventListener('submit', saveScheduleEdit);
+    return modal;
+}
+
+function renderScheduleAccountChoices(selectedIds) {
+    const box = document.getElementById('scheduleEditAccounts');
+    if (!box) return;
+    const knownIds = new Set((loadedAccounts || []).map(acc => acc.id));
+    const allAccounts = [...(loadedAccounts || [])];
+    (selectedIds || []).forEach(id => {
+        if (!knownIds.has(id)) allAccounts.push({ id, name: '', status: 'unknown' });
+    });
+
+    box.innerHTML = allAccounts.map(acc => {
+        const checked = selectedIds.includes(acc.id) ? 'checked' : '';
+        const display = acc.name ? `${acc.id} - ${acc.name}` : acc.id;
+        return `
+            <label class="custom-checkbox multiselect-option">
+                <input type="checkbox" value="${escapeHtml(acc.id)}" ${checked}>
+                <span class="checkmark"></span>
+                <span class="checkbox-label">${escapeHtml(display)} (${escapeHtml(acc.status || 'active')})</span>
+            </label>
+        `;
+    }).join('');
+}
+
+window.toggleScheduleEditorTaskUI = () => {
+    const type = document.getElementById('scheduleEditTaskType')?.value;
+    const groupWrap = document.getElementById('scheduleEditGroupWrap');
+    const unfollowWrap = document.getElementById('scheduleEditUnfollowWrap');
+    if (!groupWrap || !unfollowWrap) return;
+    groupWrap.style.display = type === 'invite' ? 'block' : 'none';
+    unfollowWrap.style.display = type === 'unfollow_friends' || type === 'unfollow_following' ? 'block' : 'none';
+};
+
+window.toggleScheduleEditorUI = () => {
+    const type = document.getElementById('scheduleEditType')?.value;
+    const time = document.getElementById('scheduleEditTime');
+    const interval = document.getElementById('scheduleEditInterval');
+    if (!time || !interval) return;
+    time.style.display = type === 'time' ? 'block' : 'none';
+    interval.style.display = type === 'interval' ? 'block' : 'none';
+};
+
+window.closeScheduleEditor = () => {
+    const modal = document.getElementById('scheduleEditorModal');
+    if (modal) modal.classList.remove('show');
+};
+
+window.editSchedule = async (id) => {
+    let schedule = scheduleCache.find(item => item.id === id);
+    if (!schedule) {
+        const res = await fetch(`/api/automation/schedules/${id}`);
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+            showToast(json.error || 'Không tải được lịch cần sửa', 'error');
+            return;
+        }
+        schedule = json.data;
+    }
+
+    const modal = ensureScheduleEditor();
+    document.getElementById('scheduleEditId').value = schedule.id;
+    document.getElementById('scheduleEditTaskType').value = schedule.task_type || 'invite';
+    document.getElementById('scheduleEditGroupUrl').value = schedule.group_url || '';
+    document.getElementById('scheduleEditMaxUnfollow').value = schedule.max_unfollow || 0;
+    document.getElementById('scheduleEditType').value = schedule.schedule_type || 'none';
+    document.getElementById('scheduleEditTime').value = schedule.schedule_type === 'time' ? (schedule.schedule_value || '') : '';
+    document.getElementById('scheduleEditInterval').value = schedule.schedule_type === 'interval' ? (schedule.schedule_value || '') : '';
+    document.getElementById('scheduleEditMaxRuns').value = schedule.max_runs || '';
+    renderScheduleAccountChoices(schedule.account_ids || []);
+    toggleScheduleEditorTaskUI();
+    toggleScheduleEditorUI();
+    modal.classList.add('show');
+};
+
+async function saveScheduleEdit(event) {
+    event.preventDefault();
+    const id = document.getElementById('scheduleEditId').value;
+    const accountId = [...document.querySelectorAll('#scheduleEditAccounts input:checked')].map(input => input.value);
+    const taskType = document.getElementById('scheduleEditTaskType').value;
+    const groupUrl = document.getElementById('scheduleEditGroupUrl').value.trim();
+    const scheduleType = document.getElementById('scheduleEditType').value;
+    const scheduleTime = document.getElementById('scheduleEditTime').value;
+    const scheduleInterval = document.getElementById('scheduleEditInterval').value;
+    const maxRuns = document.getElementById('scheduleEditMaxRuns').value;
+    const maxUnfollow = document.getElementById('scheduleEditMaxUnfollow').value || 0;
+
+    if (accountId.length === 0) return showToast('Chọn ít nhất 1 tài khoản.', 'warning');
+    if (taskType === 'invite' && !groupUrl) return showToast('Vui lòng nhập link nhóm.', 'warning');
+    if (scheduleType === 'time' && !scheduleTime) return showToast('Vui lòng chọn giờ chạy.', 'warning');
+    if (scheduleType === 'interval' && (!scheduleInterval || Number(scheduleInterval) < 1)) return showToast('Vui lòng nhập khoảng cách giờ hợp lệ.', 'warning');
+
+    try {
+        const res = await fetch(`/api/automation/schedules/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId, taskType, groupUrl, maxUnfollow, scheduleType, scheduleTime, scheduleInterval, maxRuns })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.error || 'Không thể cập nhật lịch');
+        closeScheduleEditor();
+        showToast('Đã cập nhật lịch thành công.', 'success');
+        loadSchedules();
+    } catch (err) {
+        showToast(err.message || 'Lỗi khi cập nhật lịch', 'error');
+    }
+}
+
+window.duplicateSchedule = async (id) => {
+    const ok = await showConfirm({
+        title: 'Nhân bản lịch',
+        message: 'Tạo một lịch mới với cùng cấu hình và đặt số lần chạy về 0?',
+        confirmText: 'Nhân bản',
+        cancelText: 'Hủy'
+    });
+    if (!ok) return;
+    try {
+        const res = await fetch(`/api/automation/schedules/${id}/duplicate`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.error || 'Không thể nhân bản lịch');
+        showToast('Đã nhân bản lịch thành công.', 'success');
+        loadSchedules();
+    } catch (err) {
+        showToast(err.message || 'Lỗi khi nhân bản lịch', 'error');
+    }
+};
 
 window.loadSchedules = async () => {
     try {
@@ -167,37 +448,87 @@ window.loadSchedules = async () => {
         if (summaryRes.ok && summaryJson?.success) renderScheduleSummary(summaryJson);
 
         const schedules = scheduleJson.data || [];
+        scheduleCache = schedules;
         const tbody = document.getElementById('schedulesTableBody');
         if (!tbody) return;
         tbody.innerHTML = '';
 
         if (schedules.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; opacity:0.6; padding:20px;">Chưa có lịch hẹn nào phù hợp bộ lọc.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; opacity:0.6; padding:20px;">Chưa có lịch hẹn nào phù hợp bộ lọc.</td></tr>';
             return;
         }
 
         schedules.forEach(s => {
             const tr = document.createElement('tr');
-            const lastRun = s.last_run ? new Date(s.last_run).toLocaleString('vi-VN') : 'Chưa chạy';
-            const createdAt = new Date(s.created_at).toLocaleString('vi-VN');
-            const limit = s.max_runs ? `${s.run_count || 0}/${s.max_runs}` : `${s.run_count || 0}/không giới hạn`;
-            const statusColor = s.status === 'active' ? 'var(--success)' : (s.status === 'completed' ? 'var(--primary)' : 'var(--error)');
-            let typeBadge = `<span class="badge" style="background:rgba(99,102,241,0.1);color:#818cf8;border:1px solid rgba(99,102,241,0.2)">${taskTypeLabel(s.task_type)}</span>`;
-            if (s.task_type === 'unfollow') typeBadge = `<span class="badge" style="background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2)">${taskTypeLabel(s.task_type)}</span>`;
-            if (s.task_type === 'warmup') typeBadge = `<span class="badge" style="background:rgba(16,185,129,0.1);color:#34d399;border:1px solid rgba(16,185,129,0.2)">${taskTypeLabel(s.task_type)}</span>`;
-            const scheduleLabel = s.schedule_type === 'none'
-                ? 'Chạy ngay'
-                : (s.schedule_type === 'time' ? `Hằng ngày lúc ${s.schedule_value}` : `Lặp mỗi ${s.schedule_value} giờ`);
+            tr.className = 'schedule-row';
+            const accountIds = s.account_ids || [];
+            const lastRun = formatDateTime(s.last_run, 'Chưa chạy');
+            const createdAt = formatDateTime(s.created_at, 'Không rõ');
+            const updatedAt = formatDateTime(s.updated_at || s.created_at, 'Không rõ');
+            const progress = scheduleProgress(s);
+            const statusMeta = scheduleStatusMeta(s.status);
+            const typeBadge = `<span class="schedule-task-badge ${taskTypeTone(s.task_type)}">${taskTypeLabel(s.task_type)}</span>`;
+            const scheduleLabel = scheduleTypeLabel(s.schedule_type, s.schedule_value);
+            const successCount = Number(s.success_count || 0);
+            const failedCount = Number(s.failed_count || 0);
+            const totalTasks = Number(s.total_tasks || 0);
+            const groupHtml = s.group_url
+                ? `<a href="${escapeHtml(s.group_url)}" target="_blank" title="${escapeHtml(s.group_url)}">${escapeHtml(compactUrl(s.group_url))}</a>`
+                : '<span class="schedule-muted">Không cần link nhóm</span>';
+            const targetDetail = s.task_type === 'invite'
+                ? 'Nguồn nhóm mục tiêu'
+                : s.task_type === 'warmup'
+                    ? 'Warm-up tài khoản'
+                    : `Giới hạn ${s.max_unfollow || 0} lượt`;
 
             tr.innerHTML = `
-                <td><div style="font-size:0.7rem; opacity:0.6;">#${s.id.slice(0,8)}</div>${typeBadge}</td>
-                <td><div style="font-size:0.85rem;">${(s.account_ids || []).length} tài khoản</div><div style="font-size:0.7rem; opacity:0.6;">${(s.account_ids || []).join(', ')}</div></td>
-                <td><div style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.85rem;" title="${s.group_url || 'N/A'}">${s.group_url ? `<a href="${s.group_url}" target="_blank">${s.group_url}</a>` : 'N/A'}</div></td>
-                <td><div style="font-size:0.85rem; font-weight:600;">${scheduleLabel}</div><div style="font-size:0.7rem; opacity:0.6;">Tạo: ${createdAt}</div></td>
-                <td><b>${limit}</b><br><small>${s.success_count || 0} ok / ${s.failed_count || 0} fail</small></td>
-                <td><div style="font-size:0.85rem;">${s.total_tasks || 0} task</div><div style="font-size:0.7rem; opacity:0.6;">Cuối: ${lastRun}</div></td>
-                <td><span class="status-badge" style="background:${statusColor}; color:#fff; font-size:0.7rem; padding:2px 6px;">${scheduleStatusLabel(s.status)}</span></td>
-                <td><div style="display:flex; gap:5px;"><button class="btn btn-outline btn-sm" onclick="viewScheduleHistory('${s.id}')">Lịch sử</button><button class="btn btn-sm" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:var(--error);" onclick="cancelSchedule('${s.id}')">Hủy</button></div></td>
+                <td class="schedule-col-main">
+                    <div class="schedule-row-title">
+                        <span class="schedule-id">#${escapeHtml(s.id.slice(0, 8))}</span>
+                        ${typeBadge}
+                    </div>
+                    <div class="schedule-main-text">${scheduleLabel}</div>
+                    <div class="schedule-detail-line">Tạo ${createdAt}</div>
+                    <div class="schedule-detail-line">Cập nhật ${updatedAt}</div>
+                </td>
+                <td>
+                    <div class="schedule-account-count">${accountIds.length} tài khoản</div>
+                    <div class="schedule-chip-row">${renderAccountChips(accountIds)}</div>
+                </td>
+                <td>
+                    <div class="schedule-link">${groupHtml}</div>
+                    <div class="schedule-detail-line">${targetDetail}</div>
+                </td>
+                <td>
+                    <div class="schedule-progress-head"><b>${progress.label}</b><span>${progress.unlimited ? 'mở' : `${progress.percent}%`}</span></div>
+                    <div class="schedule-progress-track ${progress.unlimited ? 'unlimited' : ''}"><span style="width:${progress.unlimited ? 100 : progress.percent}%"></span></div>
+                    <div class="schedule-detail-line">${progress.unlimited ? 'Không giới hạn số lần chạy' : 'Theo giới hạn đã đặt'}</div>
+                </td>
+                <td>
+                    <div class="schedule-result-grid">
+                        <span><b>${totalTasks}</b><small>Task</small></span>
+                        <span class="ok"><b>${successCount}</b><small>OK</small></span>
+                        <span class="fail"><b>${failedCount}</b><small>Fail</small></span>
+                    </div>
+                    <div class="schedule-detail-line">Gần nhất ${lastRun}</div>
+                </td>
+                <td><span class="schedule-status ${statusMeta.tone}"><span></span>${statusMeta.label}</span></td>
+                <td class="schedule-action-cell">
+                    <div class="schedule-action-grid" aria-label="Thao tác lịch #${escapeHtml(s.id.slice(0, 8))}">
+                        <button class="schedule-action-btn neutral" type="button" onclick="viewScheduleHistory('${s.id}')" title="Xem lịch sử chạy">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"></path><path d="M7 14l3-3 4 4 5-7"></path></svg>
+                        </button>
+                        <button class="schedule-action-btn primary" type="button" onclick="editSchedule('${s.id}')" title="Chỉnh sửa lịch">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                        </button>
+                        <button class="schedule-action-btn secondary" type="button" onclick="duplicateSchedule('${s.id}')" title="Nhân bản lịch">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M4 16V6a2 2 0 0 1 2-2h10"></path></svg>
+                        </button>
+                        <button class="schedule-action-btn danger" type="button" onclick="cancelSchedule('${s.id}')" title="Hủy lịch">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path></svg>
+                        </button>
+                    </div>
+                </td>
             `;
             tbody.appendChild(tr);
         });
@@ -323,7 +654,7 @@ window.toggleTaskTypeUI = () => {
     const groupUrlInput = document.getElementById('groupUrl');
     const unfollowOptionsContainer = document.getElementById('unfollowOptionsContainer');
 
-    if (type === 'unfollow') {
+    if (type === 'unfollow_friends' || type === 'unfollow_following') {
         groupUrlContainer.style.display = 'none';
         groupUrlInput.removeAttribute('required');
         unfollowOptionsContainer.style.display = 'block';

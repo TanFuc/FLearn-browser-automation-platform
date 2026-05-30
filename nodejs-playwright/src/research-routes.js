@@ -18,6 +18,9 @@ const RESEARCH_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho
 const MIN_RESEARCH_RESULTS = 10;
 const MAX_RESEARCH_RESULTS = 15;
 const DEFAULT_RESEARCH_RESULTS = 15;
+const AI_MARKET_MIN_RESULTS = 18;
+const AI_MARKET_MAX_RESULTS = 30;
+const DEFAULT_AI_MARKET_RESULTS = 25;
 
 function localDateSql(column = 'created_at') {
     return `DATE(${column} AT TIME ZONE '${RESEARCH_TIMEZONE}')`;
@@ -60,6 +63,11 @@ function isDateInsideWindow(value, window = 'last_7_days') {
     return diffDays >= 0 && diffDays <= sourceWindowDays(window);
 }
 
+function hasDateInsideWindow(values, window = 'last_7_days') {
+    const list = Array.isArray(values) ? values : [values];
+    return list.some(value => isDateInsideWindow(value, window));
+}
+
 function normalizeWindow(value = 'last_7_days') {
     const map = {
         '3d': 'last_3_days',
@@ -73,10 +81,10 @@ function normalizeWindow(value = 'last_7_days') {
     return map[String(value || 'last_7_days')] || String(value || 'last_7_days');
 }
 
-function clampResearchLimit(value, fallback = DEFAULT_RESEARCH_RESULTS) {
+function clampResearchLimit(value, fallback = DEFAULT_RESEARCH_RESULTS, max = MAX_RESEARCH_RESULTS, min = MIN_RESEARCH_RESULTS) {
     const n = parseInt(value, 10);
     if (!Number.isFinite(n)) return fallback;
-    return Math.max(MIN_RESEARCH_RESULTS, Math.min(MAX_RESEARCH_RESULTS, n));
+    return Math.max(min, Math.min(max, n));
 }
 
 function shouldUseLiteForLegacyPage(page, quota, explicitValue) {
@@ -128,7 +136,8 @@ const LEGACY_PAGE_CONFIG = {
         listKeys: ['items', 'tools', 'ai_tools', 'tool_list', 'tools_list', 'data', 'results'],
         required: ['tool_name', 'tool_type', 'use_case'],
         defaultTopics: ['AI tools', 'GitHub trending', 'coding assistants', 'agent AI', 'automation tools', 'open-source AI', 'AI video', 'AI data tools'],
-        limit: DEFAULT_RESEARCH_RESULTS
+        minResults: AI_MARKET_MIN_RESULTS,
+        limit: DEFAULT_AI_MARKET_RESULTS
     },
     suggestions: {
         promptType: 'suggestions',
@@ -141,19 +150,20 @@ const LEGACY_PAGE_CONFIG = {
 };
 
 function buildAiToolsRetryPrompt({ currentDate, sourceWindow, limit }) {
-    const boundedLimit = clampResearchLimit(limit);
+    const boundedLimit = clampResearchLimit(limit, DEFAULT_AI_MARKET_RESULTS, AI_MARKET_MAX_RESULTS, AI_MARKET_MIN_RESULTS);
     return `Return valid RFC8259 JSON array only. No markdown. No explanation.
 Current date: ${currentDate}.
-Task: find ${MIN_RESEARCH_RESULTS} to ${boundedLimit} AI tools, AI projects, or AI platforms that are popular, fast-rising, newly launched, newly updated, newly discounted, or strategically useful in the current week ending ${currentDate}.
+Task: find ${AI_MARKET_MIN_RESULTS} to ${boundedLimit} AI tools, AI projects, or AI platforms that are popular, fast-rising, newly launched, newly updated, newly discounted, or strategically useful in the current week ending ${currentDate}.
 Freshness: use only source evidence dated inside ${sourceWindow} relative to ${currentDate}. For last_7_days, source_date must be inside the last 7 days. Do not include evergreen old brands unless there is fresh dated evidence and a clear "why now" trigger.
-Required sources: check at least 3 independent source classes when available: GitHub Trending at https://github.com/trending?spoken_language_code= for developer/open-source AI tools, official launch/changelog pages, Product Hunt, Hacker News, Reddit, X/Twitter, creator demos, reputable newsletters, pricing/discount pages, or credible news.
+Required sources: start with GitHub Trending daily at https://github.com/trending?since=daily&spoken_language_code= for developer/open-source AI tools, then cross-check with at least 3 independent source classes when available: Reddit, X/Twitter, Hacker News, Product Hunt, official launch/changelog/forum pages, fast-growing GitHub repos/releases, creator demos, reputable newsletters, pricing/discount pages, or credible tech press.
 Research broadly and return the most important, hot, popular, useful, and high-signal tools. Daily repeats are allowed when the tool is still hot or still has strong fresh evidence.
-Each item must explain WHY NOW in evidence_summary/market_signal. Prefer signals such as launch/update pages, repo momentum, Product Hunt/Hacker News activity, community discussion, creator demos, pricing/deal pages, or credible news.
-Do not invent tools, model names, rankings, dates, prices, stars, or viral claims. Return fewer than ${MIN_RESEARCH_RESULTS} only when fewer are genuinely verifiable.
+Each item must explain WHY NOW in evidence_summary/market_signal and name the source class used. Prefer signals such as launch/update pages, repo momentum, Product Hunt/Hacker News activity, Reddit/X/community discussion, creator demos, pricing/deal pages, or credible news.
+Do not invent tools, model names, rankings, dates, prices, stars, or viral claims. Return fewer than ${AI_MARKET_MIN_RESULTS} only when fewer are genuinely verifiable.
 All user-facing prose must be Vietnamese only. Keep brand/tool names unchanged.
 Scores must be integers from 0 to 100. Use confidence_score >= 70 only when source_url, source_date, and evidence_summary are concrete.
+source_window must equal "${sourceWindow}".
 Each object must include exactly these keys:
-tool_name, tool_type, use_case, value_score, market_signal, market_reason, price_level, discount_or_launch_status, confidence_score, summary, best_value_reason, source_url, source_date, github_trending_url, evidence_summary, popularity_signal, recent_trigger, is_best_value, is_new_noteworthy.
+tool_name, tool_type, use_case, value_score, market_signal, market_reason, price_level, discount_or_launch_status, confidence_score, summary, best_value_reason, source_url, source_date, source_urls, source_dates, source_classes, source_window, github_trending_url, evidence_summary, popularity_signal, recent_trigger, is_best_value, is_new_noteworthy.
 source_date format: YYYY-MM-DD.`;
 }
 
@@ -169,7 +179,7 @@ SERVER-ENFORCED FRESHNESS AND POPULARITY CONTRACT:
 - Daily repeats are allowed only when evidence_summary/freshness_note explains the fresh signal inside ${sourceWindow}.
 - Reject famous but stale evergreen items unless they have a dated fresh trigger: major update, newly viral content, marketplace rank movement, fresh creator/community discussion, current discount, new integration/model support, or renewed search demand.
 - Use multiple source classes when available: TikTok/TikTok Shop, Shopee/Lazada/Amazon, Google Trends/search intent, YouTube Shorts, Reddit, X/Twitter, Facebook Groups, Product Hunt, Hacker News, GitHub Trending, official changelogs/blogs, newsletters, and niche communities.
-- For code/open-source/developer tools, check GitHub Trending exactly at https://github.com/trending?spoken_language_code= when relevant.
+- For code/open-source/developer tools, check GitHub Trending daily exactly at https://github.com/trending?since=daily&spoken_language_code= when relevant.
 - Every research item must include source_url, source_date, evidence_summary, and source_window.
 - source_window must equal "${sourceWindow}".
 - confidence_score must be below 70 when evidence is missing, stale, generic, unverifiable, or only based on old reputation.
@@ -401,6 +411,8 @@ function normalizeAiToolItem(item, index) {
     const toolName = item.tool_name || item.name || item.title || `AI tool ${index + 1}`;
     const valueScore = score(item.value_score || item.score, 70);
     const priceLevel = item.price_level || item.pricing_model || 'freemium';
+    const sourceUrls = normalizeEvidenceList(item.source_urls || item.supporting_sources || item.sources || item.urls || item.source_url || item.url || item.launch_url || item.github_url);
+    const sourceDates = normalizeEvidenceList(item.source_dates || item.published_dates || item.source_date || item.published_at || item.updated_at || item.release_date);
     return {
         id: item.id || slug(toolName, `ai_tool_${index + 1}`),
         tool_name: toolName,
@@ -414,8 +426,12 @@ function normalizeAiToolItem(item, index) {
         confidence_score: confidenceScore(item.confidence_score, 70),
         summary: item.summary || item.description || '',
         best_value_reason: item.best_value_reason || item.market_reason || item.reason || '',
-        source_url: item.source_url || firstValue(item.source_urls) || item.url || item.launch_url || item.github_url || '',
-        source_date: item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || item.release_date || '',
+        source_url: item.source_url || firstValue(sourceUrls) || '',
+        source_date: item.source_date || firstValue(sourceDates) || '',
+        source_urls: sourceUrls,
+        source_dates: sourceDates,
+        source_classes: Array.isArray(item.source_classes) ? item.source_classes.filter(Boolean) : [],
+        source_window: item.source_window || 'last_7_days',
         github_trending_url: item.github_trending_url || '',
         evidence_summary: item.evidence_summary || item.evidence || item.market_signal || item.market_reason || '',
         popularity_signal: item.popularity_signal || item.market_signal || '',
@@ -429,6 +445,7 @@ function normalizeAiToolItem(item, index) {
 function normalizeSuggestionItem(item, index) {
     const title = item.recommendation_title || item.title || `AI suggestion ${index + 1}`;
     const plan = Array.isArray(item.execution_plan) ? item.execution_plan.join('\n') : '';
+    const sourceDates = normalizeEvidenceList(item.source_dates || item.source_date || item.published_dates || item.published_at || item.updated_at || item.release_date);
     return {
         recommendation_title: title,
         recommendation_text: item.recommendation_text || item.hook || item.summary || plan,
@@ -438,6 +455,8 @@ function normalizeSuggestionItem(item, index) {
         reasoning_summary: item.reasoning_summary || item.risk || item.market_reason || '',
         next_action: item.next_action || (Array.isArray(item.execution_plan) ? item.execution_plan[0] : ''),
         supporting_sources: Array.isArray(item.supporting_sources) ? item.supporting_sources : [],
+        source_dates: sourceDates,
+        source_window: item.source_window || 'last_7_days',
         freshness_note: item.freshness_note || '',
         topic: item.topic || item.target_topic || item.category || 'General',
         raw_data: { ...item, generated_at: new Date().toISOString() }
@@ -458,13 +477,112 @@ function firstValue(value) {
     return Array.isArray(value) ? value.find(Boolean) : value;
 }
 
+function normalizeEvidenceList(value) {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (!value) return [];
+    return [value];
+}
+
+const LOW_QUALITY_SOURCE_PATTERNS = [
+    /\/search(\?|\/|$)/i,
+    /\/results\?search_query=/i,
+    /tiktok\.com\/search/i,
+    /instagram\.com\/explore\/tags/i,
+    /facebook\.com\/search/i,
+    /shopee\.[^/]+\/search/i,
+    /lazada\.[^/]+\/search/i,
+    /tiki\.vn\/search/i,
+    /^https?:\/\/(?:www\.)?perplexity\.ai\/?$/i,
+    /^https?:\/\/(?:www\.)?openai\.com\/api\/?$/i,
+    /huggingface\.co\/docs\/transformers\/index/i,
+    /technologyhits\.com/i,
+    /\/top[-_]\d+/i,
+    /\/best[-_].*ai/i,
+    /best-ai/i,
+    /everyone-is-googling/i,
+    /subscription-deals/i,
+    /alternatives/i
+];
+
+const GENERIC_EVIDENCE_PATTERNS = [
+    /thường xuyên cập nhật/i,
+    /liên tục cập nhật/i,
+    /các bản cập nhật gần đây/i,
+    /bản cập nhật mới nhất/i,
+    /giữ vững vị thế/i,
+    /vẫn duy trì/i,
+    /tiếp tục (là|được|có|ghi nhận)/i,
+    /lượng bán ổn định/i,
+    /rất phổ biến/i,
+    /chương trình (khuyến mãi|giảm giá)/i,
+    /đa dạng (mẫu mã|dòng sản phẩm)/i,
+    /các mẫu mới/i
+];
+
+const CONCRETE_SIGNAL_PATTERNS = [
+    /\b20\d{2}-\d{2}-\d{2}\b/,
+    /\b\d+(\.\d+)?\s?(%|k|m|triệu|nghìn|stars?|forks?|views?|lượt|đơn|review|đánh giá)\b/i,
+    /\b(v|version|phiên bản)\s?\d+(\.\d+)?/i,
+    /github trending/i,
+    /product hunt/i,
+    /hacker news/i,
+    /release notes?/i,
+    /changelog/i,
+    /ra mắt ngày/i,
+    /công bố ngày/i,
+    /xếp hạng|top\s?\d+|rank/i,
+    /tăng\s?\d+/i
+];
+
+function evidenceText(item = {}) {
+    return [
+        item.evidence_summary,
+        item.market_signal,
+        item.market_reason,
+        item.popularity_signal,
+        item.recent_trigger,
+        item.freshness_note,
+        item.reasoning_summary,
+        item.recommendation_text
+    ].filter(Boolean).join(' ');
+}
+
+function sourceUrlsOf(item = {}) {
+    return normalizeEvidenceList(item.source_urls || item.supporting_sources || item.sources || item.urls || item.source_url || item.url || item.launch_url || item.github_url);
+}
+
+function isLowQualitySourceUrl(url) {
+    const text = String(url || '').trim();
+    if (!/^https?:\/\//i.test(text)) return true;
+    return LOW_QUALITY_SOURCE_PATTERNS.some(pattern => pattern.test(text));
+}
+
+function hasUsefulSourceUrl(item = {}) {
+    const urls = sourceUrlsOf(item);
+    return urls.length > 0 && urls.some(url => !isLowQualitySourceUrl(url));
+}
+
+function isGenericEvidence(text) {
+    const value = String(text || '').trim();
+    if (!value || value.length < 80) return true;
+    const genericHits = GENERIC_EVIDENCE_PATTERNS.filter(pattern => pattern.test(value)).length;
+    const hasConcreteSignal = CONCRETE_SIGNAL_PATTERNS.some(pattern => pattern.test(value));
+    return genericHits >= 1 && !hasConcreteSignal;
+}
+
+function hasQualityEvidence(item = {}) {
+    const text = evidenceText(item);
+    return hasUsefulSourceUrl(item) && !isGenericEvidence(text);
+}
+
 function hasFreshEvidenceFields(item, window = 'last_7_days') {
     const sourceDate = item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || item.release_date;
     return (hasAnyItemField(item, ['source_url', 'url', 'launch_url', 'github_url']) || hasAnyItemField(item, ['source_urls']))
         && (hasAnyItemField(item, ['source_date', 'published_at', 'updated_at', 'release_date']) || hasAnyItemField(item, ['source_dates']))
         && hasAnyItemField(item, ['evidence_summary', 'evidence', 'market_signal', 'market_reason'])
         && isDateInsideWindow(sourceDate, window)
-        && confidenceScore(item.confidence_score, 0) >= 70;
+        && confidenceScore(item.confidence_score, 0) >= 70
+        && hasQualityEvidence(item);
 }
 
 function validateLegacyItems(page, items, required) {
@@ -477,9 +595,12 @@ function validateLegacyItems(page, items, required) {
         return validateItems(items, required).filter(item => {
             if (!item || typeof item !== 'object') return false;
             const sources = Array.isArray(item.supporting_sources) ? item.supporting_sources.filter(Boolean) : [];
+            const window = item.source_window || 'last_7_days';
             return sources.length > 0
                 && hasAnyItemField(item, ['freshness_note', 'reasoning_summary'])
-                && confidenceScore(item.confidence_score, 0) >= 70;
+                && confidenceScore(item.confidence_score, 0) >= 70
+                && hasDateInsideWindow(item.source_dates || item.source_date, window)
+                && hasQualityEvidence(item);
         });
     }
     if (page !== 'ai_tools') return validateItems(items, required);
@@ -490,6 +611,14 @@ function validateLegacyItems(page, items, required) {
             && hasAnyItemField(item, ['use_case', 'primary_use_case', 'summary', 'description'])
             && hasFreshEvidenceFields(item, itemWindow(item));
     });
+}
+
+function filterReadableLegacyRows(page, rows) {
+    const config = LEGACY_PAGE_CONFIG[page];
+    if (!config) return rows;
+    if (!['mmo', 'ai_tools', 'suggestions'].includes(page)) return rows;
+    const filtered = validateLegacyItems(page, rows, config.required);
+    return filtered.length >= MIN_RESEARCH_RESULTS ? filtered : [];
 }
 
 async function getLegacyAvailableDates(page) {
@@ -512,13 +641,34 @@ async function getLegacyAvailableDates(page) {
     return result.rows;
 }
 
+async function getValidLegacyDateRows(page, dateRows) {
+    const validRows = [];
+    for (const row of dateRows) {
+        const rows = await loadLegacyPageRows(page, row.day);
+        if (rows.length >= MIN_RESEARCH_RESULTS) {
+            validRows.push({ ...row, count: rows.length });
+        }
+    }
+    return validRows;
+}
+
 async function resolveLegacyDate(page, requestedDate = null) {
     const dates = await getLegacyAvailableDates(page);
+    const validDateRows = await getValidLegacyDateRows(page, dates);
+    const availableDates = validDateRows.map(row => row.day);
+    if (requestedDate) {
+        return {
+            requestedDate,
+            resolvedDate: requestedDate,
+            availableDates,
+            countsByDate: validDateRows
+        };
+    }
     return {
-        requestedDate: requestedDate || null,
-        resolvedDate: requestedDate || dates[0]?.day || null,
-        availableDates: dates.map(row => row.day),
-        countsByDate: dates
+        requestedDate: null,
+        resolvedDate: availableDates[0] || null,
+        availableDates,
+        countsByDate: validDateRows
     };
 }
 
@@ -532,12 +682,12 @@ async function loadLegacyPageRows(page, date = null) {
     const dateWhere = where.length ? ` AND ${where.join(' AND ')}` : '';
     if (page === 'suggestions') {
         const result = await db.query(`SELECT * FROM ai_suggestions WHERE 1=1${dateWhere} ORDER BY created_at DESC`, params);
-        return result.rows.map(row => ({ ...row, ...(row.raw_data || {}) }));
+        return filterReadableLegacyRows(page, result.rows.map(row => ({ ...row, ...(row.raw_data || {}) })));
     }
     params.unshift(page);
     const adjustedDateWhere = where.length ? ` AND ${where.map((clause, idx) => clause.replace(`$${idx + 1}`, `$${idx + 2}`)).join(' AND ')}` : '';
     const result = await db.query(`SELECT * FROM research_results WHERE page_type = $1${adjustedDateWhere} ORDER BY created_at DESC`, params);
-    return result.rows.map(r => ({ ...r, ...r.data }));
+    return filterReadableLegacyRows(page, result.rows.map(r => ({ ...r, ...r.data })));
 }
 
 async function getProductTrendAvailableDates({ market = 'vn', categories = ['all'], window = 'today' } = {}) {
@@ -557,13 +707,42 @@ async function getProductTrendAvailableDates({ market = 'vn', categories = ['all
     return result.rows;
 }
 
+async function getValidProductTrendDateRows({ market = 'vn', categories = ['all'], window = 'today', dateRows = [] } = {}) {
+    const normalizedWindow = normalizeWindow(window);
+    const freshDateRows = dateRows.filter(row => isDateInsideWindow(row.day, normalizedWindow));
+    const validRows = [];
+    for (const row of freshDateRows) {
+        const rows = await loadProductTrendRows({
+            market,
+            categories,
+            window: normalizedWindow,
+            limit: DEFAULT_RESEARCH_RESULTS,
+            date: row.day
+        });
+        if (rows.length >= MIN_RESEARCH_RESULTS) {
+            validRows.push({ ...row, count: rows.length });
+        }
+    }
+    return validRows;
+}
+
 async function resolveProductTrendDate({ requestedDate = null, market = 'vn', categories = ['all'], window = 'today' } = {}) {
     const dates = await getProductTrendAvailableDates({ market, categories, window });
+    const validDateRows = await getValidProductTrendDateRows({ market, categories, window, dateRows: dates });
+    const availableDates = validDateRows.map(row => row.day);
+    if (requestedDate) {
+        return {
+            requestedDate,
+            resolvedDate: requestedDate,
+            availableDates,
+            countsByDate: validDateRows
+        };
+    }
     return {
-        requestedDate: requestedDate || null,
-        resolvedDate: requestedDate || dates[0]?.day || null,
-        availableDates: dates.map(row => row.day),
-        countsByDate: dates
+        requestedDate: null,
+        resolvedDate: availableDates[0] || null,
+        availableDates,
+        countsByDate: validDateRows
     };
 }
 
@@ -588,7 +767,13 @@ async function loadProductTrendRows({ market, categories, window, limit, date })
         ORDER BY created_at DESC
         LIMIT $${params.length}
     `, params);
-    return result.rows.map(row => row.raw_data);
+    const filtered = result.rows
+        .map(row => row.raw_data)
+        .filter(item => item
+            && confidenceScore(item.confidence_score, 0) >= 70
+            && hasDateInsideWindow(item.source_dates || item.source_date, normalizedWindow)
+            && hasQualityEvidence(item));
+    return filtered.length >= MIN_RESEARCH_RESULTS ? filtered : [];
 }
 
 async function ensureAffVideoTable() {
@@ -1071,16 +1256,18 @@ async function refreshLegacyResearchPage(page, options = {}) {
     const variables = {
         TOPICS: topics.join(', '),
         PAGE1_DATA: JSON.stringify((await loadLegacyPageRows('mmo', targetDate)).slice(0, DEFAULT_RESEARCH_RESULTS)),
-        PAGE2_DATA: JSON.stringify((await loadLegacyPageRows('ai_tools', targetDate)).slice(0, DEFAULT_RESEARCH_RESULTS)),
+        PAGE2_DATA: JSON.stringify((await loadLegacyPageRows('ai_tools', targetDate)).slice(0, DEFAULT_AI_MARKET_RESULTS)),
         SOURCE_WINDOW: options.source_window || 'last_7_days',
         CURRENT_DATE: currentLocalDate(),
-        LIMIT: config.limit
+        LIMIT: page === 'ai_tools'
+            ? clampResearchLimit(config.limit, DEFAULT_AI_MARKET_RESULTS, AI_MARKET_MAX_RESULTS, AI_MARKET_MIN_RESULTS)
+            : config.limit
     };
     const prompt = page === 'ai_tools'
         ? buildAiToolsRetryPrompt({
             currentDate: variables.CURRENT_DATE,
             sourceWindow: variables.SOURCE_WINDOW,
-            limit: config.limit
+            limit: variables.LIMIT
         })
         : `${await getPromptText(config.promptType, variables)}${buildFreshnessAppendix({
             page,
@@ -1092,7 +1279,10 @@ async function refreshLegacyResearchPage(page, options = {}) {
     const useLite = shouldUseLiteForLegacyPage(page, quota, options.useLite);
     await emitSystemLog('AI Research Gemini call queued', 'info', { page, use_lite: useLite });
     const aiData = await callGemini(prompt, { endpoint: config.promptType, skipCache: true, useLite });
-    let rawItems = extractList(aiData, config.listKeys).slice(0, config.limit);
+    const pageLimit = page === 'ai_tools'
+        ? clampResearchLimit(config.limit, DEFAULT_AI_MARKET_RESULTS, AI_MARKET_MAX_RESULTS, AI_MARKET_MIN_RESULTS)
+        : config.limit;
+    let rawItems = extractList(aiData, config.listKeys).slice(0, pageLimit);
     let validItems = validateLegacyItems(page, rawItems, config.required);
     await emitSystemLog('AI Research Gemini response validated', 'info', {
         page,
@@ -1105,10 +1295,10 @@ async function refreshLegacyResearchPage(page, options = {}) {
         const retryPrompt = buildAiToolsRetryPrompt({
             currentDate: variables.CURRENT_DATE,
             sourceWindow: variables.SOURCE_WINDOW,
-            limit: config.limit
+            limit: pageLimit
         });
         const retryData = await callGemini(retryPrompt, { endpoint: config.promptType, skipCache: true, useLite: false });
-        rawItems = extractList(retryData, config.listKeys).slice(0, config.limit);
+        rawItems = extractList(retryData, config.listKeys).slice(0, pageLimit);
         validItems = validateLegacyItems(page, rawItems, config.required);
         await emitSystemLog('AI Market retry response validated', 'info', {
             raw_items: rawItems.length,
@@ -1118,6 +1308,10 @@ async function refreshLegacyResearchPage(page, options = {}) {
 
     if (validItems.length === 0) {
         throw new Error(`Gemini returned no valid ${page} items. Check active prompt schema.`);
+    }
+    const minResults = config.minResults || MIN_RESEARCH_RESULTS;
+    if (validItems.length < minResults) {
+        throw new Error(`Gemini returned only ${validItems.length} valid fresh ${page} items; refusing to write low-volume/low-confidence output.`);
     }
 
     if (page === 'mmo') {
@@ -1227,7 +1421,7 @@ router.get('/', async (req, res) => {
                 window,
                 categories: generationCategories.length
             });
-            result = await getProductTrends({ market, categories: generationCategories, limit, window, mode, forceFresh });
+            result = await getProductTrends({ market, categories: generationCategories, limit, window, mode, forceFresh: forceFresh || !resolvedDate });
             resolvedDate = today;
             await emitSystemLog('Product Trends force refresh completed', 'success', {
                 target_date: today,
@@ -1532,22 +1726,40 @@ router.get('/date-availability', async (req, res) => {
             if (!day) return;
             pages[page][day] = (pages[page][day] || 0) + Number(count || 0);
         };
-        legacyRes.rows.forEach(row => {
-            addCount(row.page_type === 'mmo' ? 'mmo' : 'ai_market', row.day, row.count);
-        });
-        suggestionsRes.rows.forEach(row => addCount('suggestions', row.day, row.count));
-        trendsRes.rows.forEach(row => addCount('trends_v4', row.day, row.count));
+        const [
+            validMmoDates,
+            validAiDates,
+            validSuggestionDates
+        ] = await Promise.all([
+            getValidLegacyDateRows('mmo', legacyRes.rows.filter(row => row.page_type === 'mmo')),
+            getValidLegacyDateRows('ai_tools', legacyRes.rows.filter(row => row.page_type === 'ai_tools')),
+            getValidLegacyDateRows('suggestions', suggestionsRes.rows)
+        ]);
+        validMmoDates.forEach(row => addCount('mmo', row.day, row.count));
+        validAiDates.forEach(row => addCount('ai_market', row.day, row.count));
+        validSuggestionDates.forEach(row => addCount('suggestions', row.day, row.count));
+
+        const windowsByDate = {};
+        for (const row of trendsRes.rows) {
+            const window = normalizeWindow(row.source_window || 'last_7_days');
+            const rows = await loadProductTrendRows({
+                market: 'vn',
+                categories: ['all'],
+                window,
+                limit: DEFAULT_RESEARCH_RESULTS,
+                date: row.day
+            });
+            if (rows.length < MIN_RESEARCH_RESULTS) continue;
+            addCount('trends_v4', row.day, rows.length);
+            if (!windowsByDate[row.day]) windowsByDate[row.day] = {};
+            windowsByDate[row.day][window] = rows.length;
+        }
         affRes.rows.forEach(row => addCount('aff_vid', row.day, row.count));
         upPostRes.rows.forEach(row => addCount('up_post', row.day, row.count));
 
         const allDays = new Set();
         Object.values(pages).forEach(map => Object.keys(map).forEach(day => allDays.add(day)));
         const availableDates = Array.from(allDays).sort().reverse();
-        const windowsByDate = {};
-        trendsRes.rows.forEach(row => {
-            if (!windowsByDate[row.day]) windowsByDate[row.day] = {};
-            windowsByDate[row.day][row.source_window || 'unknown'] = Number(row.count || 0);
-        });
 
         res.json({
             success: true,

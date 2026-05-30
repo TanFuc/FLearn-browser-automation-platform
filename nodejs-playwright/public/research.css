@@ -191,26 +191,35 @@
 /* Opportunity Cards */
 #research-tab .cards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 12px;
-    margin-bottom: 18px;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+@media (max-width: 600px) {
+    #research-tab .cards-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 #research-tab .opportunity-card {
     background: var(--card-research);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px;
+    border-radius: 12px;
+    padding: 16px;
     position: relative;
     transition: var(--transition);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
 #research-tab .opportunity-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(99, 102, 241, 0.3);
-    background: rgba(15, 23, 42, 0.8);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
+    border-color: rgba(99, 102, 241, 0.4);
+    background: rgba(15, 23, 42, 0.9);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15);
 }
 
 #research-tab .opportunity-card::before {
@@ -218,35 +227,45 @@
     position: absolute;
     top: 0; left: 0; width: 4px; height: 100%;
     background: linear-gradient(to bottom, var(--primary), var(--accent));
-    opacity: 0.7;
+    opacity: 0.8;
 }
 
 #research-tab .opportunity-card h3 {
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.98rem;
-    margin-bottom: 6px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0;
     color: #fff;
-    line-height: 1.3;
+    line-height: 1.4;
 }
 
 #research-tab .opportunity-card p {
-    font-size: 0.8rem;
+    font-size: 0.82rem;
     color: var(--text-muted);
-    margin-bottom: 8px;
+    margin: 0;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    line-height: 1.5;
 }
 
 /* Badges & Scores */
 #research-tab .badge {
-    padding: 3px 7px;
-    border-radius: 6px;
-    font-size: 0.62rem;
+    padding: 4px 8px;
+    border-radius: 8px;
+    font-size: 0.65rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    white-space: nowrap;
+}
+
+#research-tab .badge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 4px;
 }
 
 #research-tab .badge-primary { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
@@ -354,40 +373,65 @@
 }
 
 #research-tab .group-sections {
-    display: grid;
-    gap: 10px;
-    margin-bottom: 14px;
+    column-count: 3;
+    column-gap: 16px;
+    margin-bottom: 24px;
+    width: 100%;
+}
+
+@media (max-width: 1200px) {
+    #research-tab .group-sections { column-count: 2; }
+}
+
+@media (max-width: 768px) {
+    #research-tab .group-sections { column-count: 1; }
 }
 
 #research-tab .group-section {
     background: rgba(2, 6, 23, 0.35);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px;
+    border-radius: 12px;
+    padding: 16px;
+    break-inside: avoid;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+#research-tab .group-section:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2), 0 4px 6px -2px rgba(0, 0, 0, 0.1);
 }
 
 #research-tab .group-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 #research-tab .group-header h3 {
-    font-family: 'Outfit', sans-serif;
-    font-size: 1rem;
-    color: #fff;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--primary);
+    margin: 0;
 }
 
 #research-tab .group-header span {
     font-size: 0.75rem;
     color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 8px;
+    border-radius: 12px;
 }
 
 #research-tab .group-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 #research-tab #rpage-ai .table-wrap {
@@ -417,18 +461,23 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
 }
 
 #research-tab .suggest-title {
-    font-family: 'Outfit', sans-serif;
-    font-size: 1rem;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.15rem;
+    font-weight: 700;
     color: #fff;
+    margin: 0;
 }
 
 #research-tab .suggest-updated {
-    font-size: 0.8rem;
+    font-size: 0.82rem;
     color: var(--text-muted);
+    text-align: right;
 }
 
 #research-tab .suggest-list {
@@ -528,14 +577,15 @@
 /* Daily usage summary */
 #research-tab .daily-summary {
     display: grid;
-    grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(110px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
 }
 
 #research-tab .daily-controls {
-    grid-column: auto;
+    grid-column: 1 / -1;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
 }
@@ -555,6 +605,8 @@
     padding: 6px 10px;
     color: #fff;
     font-size: 0.8rem;
+    max-width: 100%;
+    text-overflow: ellipsis;
 }
 
 #research-tab .daily-row-selected td {
@@ -580,14 +632,15 @@
 
 .daily-summary {
     display: grid;
-    grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(110px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
 }
 
 .daily-controls {
-    grid-column: auto;
+    grid-column: 1 / -1;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
 }
@@ -599,6 +652,8 @@
     padding: 6px 10px;
     color: #fff;
     font-size: 0.8rem;
+    max-width: 100%;
+    text-overflow: ellipsis;
 }
 
 .daily-card {
@@ -738,20 +793,20 @@
     }
 }
 
-#research-tab .daily-label {
+#research-tab .daily-label, .daily-label {
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-muted);
 }
 
-#research-tab .daily-value {
-    font-size: 1rem;
+#research-tab .daily-value, .daily-value {
+    font-size: 1.15rem;
     font-weight: 700;
     color: #fff;
 }
 
-#research-tab .daily-sub {
+#research-tab .daily-sub, .daily-sub {
     font-size: 0.75rem;
     color: var(--text-dim);
 }

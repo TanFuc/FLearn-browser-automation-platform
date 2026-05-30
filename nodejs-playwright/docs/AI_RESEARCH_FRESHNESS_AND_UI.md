@@ -52,7 +52,7 @@ The prompts explicitly ask Gemini/Search to use multiple source classes when ava
 - Facebook Groups.
 - Product Hunt.
 - Hacker News.
-- GitHub Trending, exactly `https://github.com/trending?spoken_language_code=` when relevant.
+- GitHub Trending daily, exactly `https://github.com/trending?since=daily&spoken_language_code=` when relevant.
 - Official changelogs, launch pages, blogs, and pricing pages.
 - Newsletters and niche communities.
 
@@ -63,12 +63,13 @@ The canonical count rule is:
 - Minimum: 10.
 - Maximum: 15.
 - Default: 15.
+- AI Market override: target 18-25 results, with a hard cap of 30 when evidence is available.
 - Return fewer than 10 only if fewer than 10 items are genuinely verifiable.
 - Never pad with weak filler.
 
 Code constants:
 
-- `src/research-service.js`: `MIN_RESEARCH_RESULTS = 10`, `MAX_RESEARCH_RESULTS = 15`, `DEFAULT_RESEARCH_RESULTS = 15`.
+- `src/research-service.js`: `MIN_RESEARCH_RESULTS = 10`, `MAX_RESEARCH_RESULTS = 15`, `DEFAULT_RESEARCH_RESULTS = 15`; AI Market also uses `AI_MARKET_MIN_RESULTS = 18`, `DEFAULT_AI_MARKET_RESULTS = 25`, `AI_MARKET_MAX_RESULTS = 30`.
 - `src/research-routes.js`: same constants for route-level clamping.
 - `public/research.js`: Trend V4 default state `limit = 15`.
 - `public/index.html` and `public/research.html`: `Limit: 15` selected.
@@ -113,7 +114,11 @@ Server-side enforcement was also tightened:
 
 - Product Trends now require `confidence_score >= 70`.
 - Product Trends require `source_dates` to contain a date inside the selected source window for every accepted item.
-- MMO and AI Tools already require fresh evidence fields; Suggestions now require supporting source URLs plus a freshness or reasoning note.
+- MMO and AI Tools already require fresh evidence fields; Suggestions now require supporting source URLs, `source_dates` inside the selected window, `source_window`, and a freshness or reasoning note.
+- Plain homepages, documentation landing pages, marketplace search URLs, TikTok/Instagram search pages, and generic listicle sources are treated as weak evidence.
+- Existing DB rows are filtered again at read time, so stale or low-evidence rows already in the database are not surfaced as valid latest results.
+- If fewer than 10 rows pass validation, the page is treated as having no acceptable current dataset instead of showing a small stale list.
+- During refresh, if the first AI response has fewer than 10 valid rows, the backend performs expansion retries that request additional distinct items, merge/dedupe them, and only write the dataset once at least 10 rows pass validation.
 
 ## Shared Prompt Blocks
 
@@ -160,7 +165,7 @@ Purpose:
 - Require multiple source classes.
 - Require GitHub Trending for developer/open-source tools when relevant.
 - Require `source_url`, `source_date`, `evidence_summary`, `source_window` for product/tool/opportunity items.
-- Require `supporting_sources` and `freshness_note` for Suggestions.
+- Require `supporting_sources`, `source_dates`, `source_window`, and `freshness_note` for Suggestions.
 
 Applied to:
 
@@ -381,6 +386,8 @@ Required fields:
 - `reasoning_summary`
 - `next_action`
 - `supporting_sources`
+- `source_dates`
+- `source_window`
 - `freshness_note`
 - `topic`
 
@@ -389,6 +396,7 @@ Backend grounding change:
 - Before this update, Suggestions loaded all historical MMO and AI Tools rows.
 - Now it loads only rows from `targetDate`.
 - If same-day MMO or AI Tools rows are missing, it refreshes those pages first.
+- Suggestions are rejected at read time unless their copied `source_dates` still fall inside `source_window`.
 
 Storage:
 

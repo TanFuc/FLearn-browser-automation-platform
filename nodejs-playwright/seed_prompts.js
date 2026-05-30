@@ -14,6 +14,7 @@ CRITICAL OUTPUT RULES — MUST FOLLOW EXACTLY:
 const RESEARCH_VOLUME_RULES = `
 RESEARCH VOLUME AND RANKING RULES:
 - Return between 10 and 15 results for every list-style AI Research page.
+- For AI Tools Market specifically, return 18-25 results when evidence is available.
 - Target 15 useful results by default. Return 10-14 only when quality/evidence would drop.
 - Never return more than {{LIMIT}} items.
 - Return fewer than 10 only when fewer than 10 items are genuinely verifiable.
@@ -28,12 +29,13 @@ FRESH SOURCE RULES:
 - Use only evidence whose source date is inside {{SOURCE_WINDOW}} unless the item has a clearly dated fresh trigger inside {{SOURCE_WINDOW}}.
 - A fresh trigger can be: new launch, major update, new integration/model support, new discount/lifetime deal, marketplace rank movement, viral creator/demo content, fresh community discussion, new review cluster, search acceleration, or GitHub/Product Hunt/Hacker News momentum.
 - Use multiple source classes when available: TikTok/TikTok Shop, Shopee/Lazada/Amazon, Google Trends/search intent, YouTube Shorts, Reddit, X/Twitter, Facebook Groups, Product Hunt, Hacker News, GitHub Trending, official changelogs/blogs, newsletters, and niche communities.
-- For code/open-source/developer tools, check GitHub Trending exactly at https://github.com/trending?spoken_language_code= when relevant.
-- Every returned product/tool/opportunity item must include source_url, source_date, evidence_summary, and source_window. Suggestion items must include supporting_sources and freshness_note copied/derived from the supplied source items.
+- For code/open-source/developer tools, check GitHub Trending daily exactly at https://github.com/trending?since=daily&spoken_language_code= when relevant.
+- Every returned product/tool/opportunity item must include source_url, source_date, evidence_summary, and source_window. Suggestion items must include supporting_sources, source_dates, source_window, and freshness_note copied/derived from the supplied source items.
 - source_date must be YYYY-MM-DD.
 - source_window must equal {{SOURCE_WINDOW}}.
 - confidence_score must be below 70 if evidence is missing, stale, generic, unverifiable, or only based on old reputation.
 - Do not include generic legacy examples such as old mainstream tools/products unless the evidence_summary proves why they are hot again inside {{SOURCE_WINDOW}}.
+- Do not use plain homepage URLs, documentation landing pages, marketplace search pages, TikTok search pages, Instagram hashtag pages, or generic search-result URLs as the only evidence. Use specific launch/update/news/review/community/product pages.
 - Before finalizing each item, ask: "Would a market operator see this as popular or newly relevant today?" If no, remove it.`;
 
 const POPULARITY_SIGNAL_RULES = `
@@ -43,6 +45,7 @@ POPULARITY AND "WHY NOW" RULES:
 - Prefer source signals that show actual demand: marketplace ranking/reviews, search interest, creator videos/comments, community threads, launch/update pages, repo momentum, Product Hunt/Hacker News activity, or pricing/deal pages.
 - For Vietnam/commerce pages, prioritize Vietnam-relevant signals first, then regional/global signals only when they are useful for Vietnamese execution.
 - If two items are similar, keep the one with stronger current source evidence and practical execution value.
+- Avoid broad category products such as "sunscreen", "air fryer", "smart TV", "diapers", "cat food", "wireless earbuds", or "OpenAI API" unless the source shows a specific current trigger, SKU, release, deal, rank jump, or viral discussion.
 - Never fabricate popularity, ranking, sales, star counts, discounts, release dates, or source URLs.`;
 
 // ─── STRICT ENUM DEFINITIONS ────────────────────────────────────────────────
@@ -211,7 +214,11 @@ const AI_TOOLS_SCHEMA = `[
     "best_value_reason":"string tiếng Việt",
     "source_url":"https://...",
     "source_date":"YYYY-MM-DD",
-    "github_trending_url":"https://github.com/trending?spoken_language_code=",
+    "source_urls":["https://..."],
+    "source_dates":["YYYY-MM-DD"],
+    "source_classes":["github_trending|reddit|x_twitter|hacker_news|product_hunt|official_changelog|official_forum|tech_press|newsletter|pricing_deal|creator_demo"],
+    "source_window":"today|last_3_days|last_7_days",
+    "github_trending_url":"https://github.com/trending?since=daily&spoken_language_code=",
     "evidence_summary":"string tiếng Việt",
     "popularity_signal":"string tiếng Việt",
     "recent_trigger":"string tiếng Việt",
@@ -230,6 +237,8 @@ const SUGGESTIONS_SCHEMA = `[
     "reasoning_summary":"string tiếng Việt",
     "next_action":"string tiếng Việt",
     "supporting_sources":["https://..."],
+    "source_dates":["YYYY-MM-DD"],
+    "source_window":"{{SOURCE_WINDOW}}",
     "freshness_note":"string tiếng Việt",
     "topic":"string"
   }
@@ -340,8 +349,9 @@ RESEARCH SCOPE - BE VERY WIDE:
 - For last_7_days, rank by fresh weekly launch/update/community/repo momentum, not old brand awareness.
 - Cover new AI launches, major upgrades, model releases, agent tools, coding assistants, automation tools, video/image/audio tools, research tools, data tools, browser agents, no-code AI workflows, local/open-source AI, and practical business tools.
 - User-facing text must be Vietnamese only. Do not add English translations in parentheses.
-- Check GitHub Trending specifically at https://github.com/trending?spoken_language_code= for code/open-source/developer AI tools. Use this exact URL in github_trending_url when GitHub Trending is a source.
-- Look for signals from Reddit, X/Twitter, GitHub Trending, fast-growing GitHub repos, Product Hunt, Hacker News, official changelogs/blogs, launch pages, AppSumo/lifetime deals, community discussions, pricing pages, newsletters, and creator demos when available.
+- Check GitHub Trending daily specifically at https://github.com/trending?since=daily&spoken_language_code= for code/open-source/developer AI tools. Use this exact URL in github_trending_url when GitHub Trending is a source.
+- Look for signals from Reddit, X/Twitter, GitHub Trending daily, fast-growing GitHub repos/releases, Product Hunt, Hacker News, official changelogs/blogs, launch pages, AppSumo/lifetime deals, official/community forums, credible tech press, newsletters, pricing pages, and creator demos when available.
+- Prefer multi-source evidence. Include source_urls, source_dates, and source_classes when more than one relevant source is available.
 - Include older AI tools only if they are currently hot inside {{SOURCE_WINDOW}} due to a major update, discount, acquisition, viral workflow, new model support, or renewed community usage.
 - Prioritize tools useful for real work: coding, marketing, automation, research, content, sales, operations, design, video, data, and productivity.
 
@@ -349,6 +359,7 @@ SELECTION RULES:
 - Mix categories; do not return only chatbots.
 - Include at least some of: new_launch, major_update, on_discount, viral, established best-value.
 - Every item must include source_url, source_date, and evidence_summary.
+- Every item should include source_urls/source_dates/source_classes for supporting evidence beyond the primary source.
 - Every item should include popularity_signal and recent_trigger when possible.
 - source_date must be a real date inside {{SOURCE_WINDOW}} relative to Current date. If the newest evidence is older, do not include the item.
 - market_signal must explain what is new/hot/popular now and mention the dated source signal.
@@ -385,6 +396,8 @@ GROUNDING RULES:
 - Avoid generic advice. Every suggestion needs a concrete next_action.
 - Prefer suggestions that connect a hot opportunity/tool with an executable workflow, test, content angle, affiliate angle, automation, or research task.
 - supporting_sources must copy URLs from PAGE1_DATA/PAGE2_DATA only. Do not invent URLs.
+- source_dates must copy the source_date/source_dates from the PAGE1_DATA/PAGE2_DATA items used for the suggestion.
+- source_window must equal "{{SOURCE_WINDOW}}".
 - freshness_note must explain why this suggestion is current for {{SOURCE_WINDOW}}.
 
 RANKING RULES:

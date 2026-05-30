@@ -513,17 +513,47 @@ function renderGroupSections(containerId, data, groupKey, labelMap) {
         groups[key].push(item);
     });
 
-    const entries = Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
+    // Merge small groups into "other" to avoid cluttering UI with many 1-item sections
+    const MIN_ITEMS_PER_GROUP = 3;
+    const finalGroups = {};
+    let otherItems = [];
+
+    Object.entries(groups).forEach(([key, items]) => {
+        if (items.length < MIN_ITEMS_PER_GROUP && key !== 'other') {
+            // Keep original category in badge, but move card to 'other' section
+            items.forEach(item => {
+                if (!item._originalGroupLabel) {
+                    item._originalGroupLabel = labelMap?.[key] || key;
+                }
+            });
+            otherItems.push(...items);
+        } else {
+            finalGroups[key] = items;
+        }
+    });
+
+    if (otherItems.length > 0) {
+        if (!finalGroups['other']) finalGroups['other'] = [];
+        finalGroups['other'].push(...otherItems);
+    }
+
+    const entries = Object.entries(finalGroups).sort((a, b) => {
+        if (a[0] === 'other') return 1;
+        if (b[0] === 'other') return -1;
+        return b[1].length - a[1].length;
+    });
+
     if (entries.length === 0) {
         container.innerHTML = '';
         return;
     }
 
     container.innerHTML = entries.map(([key, items]) => {
-        const label = labelMap?.[key] || key;
-        const cards = items.slice(0, 6).map(item => `
+        if (items.length === 0) return '';
+        const label = key === 'other' ? 'Khác (Others)' : (labelMap?.[key] || key);
+        const cards = items.slice(0, 8).map(item => `
             <div class="opportunity-card">
-                <div class="badge-row">${badge(label, 'primary')}${item.traffic_source ? badge(item.traffic_source, 'muted') : ''}</div>
+                <div class="badge-row">${badge(item._originalGroupLabel || labelMap?.[item[groupKey]] || item[groupKey] || 'Khác', 'primary')}${item.traffic_source ? badge(item.traffic_source, 'muted') : ''}</div>
                 <h3>${item.title || item.tool_name || item.recommendation_title || '—'}</h3>
                 <p>${shortText(item.summary || item.market_signal || item.recommendation_text || '', 120)}</p>
                 ${sourceMeta(item)}

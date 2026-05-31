@@ -1,4 +1,14 @@
-const { chromium } = require('playwright');
+let launchPersistentContext;
+let humanizeBrowser;
+try {
+    // Th? load d?ng CommonJS tr??c
+    const cloak = require('cloakbrowser');
+    launchPersistentContext = cloak.launchPersistentContext;
+    humanizeBrowser = cloak.humanizeBrowser;
+} catch (e) {
+    // N?u l?i ESM, d?ng dynamic import (h? tr? trong node async function)
+    console.log('[Browser] CloakBrowser require failed, will use dynamic import in createOrLoadContext');
+}
 const fs = require('fs');
 const config = require('./config');
 const db = require('./db');
@@ -65,6 +75,16 @@ async function getAccountProfile(accountId) {
 }
 
 async function createOrLoadContext(accountId, proxyString = null, headless = false) {
+    if (!launchPersistentContext) {
+        try {
+            const m = await import('cloakbrowser');
+            launchPersistentContext = m.launchPersistentContext || m.default?.launchPersistentContext || m.default;
+            humanizeBrowser = m.humanizeBrowser || m.default?.humanizeBrowser;
+        } catch (err) {
+            console.error('[Browser] Failed to dynamically import cloakbrowser:', err.message);
+            throw err;
+        }
+    }
     const path = require('path');
     const userDataDir = path.join(config.PROFILES_DIR, accountId);
     
@@ -112,15 +132,18 @@ async function createOrLoadContext(accountId, proxyString = null, headless = fal
 
     console.log(`[${accountId}] Đang khởi tạo trình duyệt với Profile: ${userDataDir}`);
 
-    const context = await chromium.launchPersistentContext(userDataDir, {
+    const context = await launchPersistentContext({
+        userDataDir,
         headless,
         userAgent:         profile.userAgent,
-        viewport:          null,
+        viewport:          { width: profile.viewport.width, height: profile.viewport.height },
         screen:            { width: profile.screenWidth, height: profile.screenHeight },
-        timezoneId:        profile.timezoneId,
+        timezone:          profile.timezoneId,
         locale:            profile.locale,
         colorScheme:       'light',
         proxy:             proxyConfig,
+        stealthArgs:       true,
+        geoip:             !!proxyConfig,
         args: [
             '--disable-blink-features=AutomationControlled',
             '--no-first-run',
@@ -132,8 +155,14 @@ async function createOrLoadContext(accountId, proxyString = null, headless = fal
             '--disable-dev-shm-usage',
             `--window-size=${profile.viewport.width},${profile.viewport.height}`,
         ],
-        ignoreDefaultArgs: ['--enable-automation'],
     });
+
+    if (typeof humanizeBrowser === 'function') {
+        await humanizeBrowser(context.browser(), {
+            timezone: profile.timezoneId,
+            locale: profile.locale
+        }).catch(err => console.log(`[${accountId}] CloakBrowser humanize skipped: ${err.message}`));
+    }
 
     const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
 

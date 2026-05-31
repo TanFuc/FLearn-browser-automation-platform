@@ -3,6 +3,7 @@
  */
 const db = require('./db');
 const { callGemini, incrementCacheHit, getQuota } = require('./gemini');
+const { fetchMarketSnapshot, formatSnapshotForPrompt } = require('./market-data');
 const { emitSystemLog } = require('./logger');
 const crypto = require('crypto');
 const RESEARCH_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
@@ -558,6 +559,31 @@ function renderPrompt(template, variables = {}) {
     return output;
 }
 
+async function buildMarketSnapshotPromptContext(options = {}) {
+    try {
+        const snapshot = options.marketSnapshot || await fetchMarketSnapshot();
+        const text = formatSnapshotForPrompt(snapshot, {
+            maxItemsPerSource: options.maxItemsPerSource || 8,
+            categories: options.categories || []
+        });
+        const totalItems = snapshot?.sources
+            ? Object.values(snapshot.sources).reduce((total, list) => total + (Array.isArray(list) ? list.length : 0), 0)
+            : 0;
+        await emitSystemLog('AI Research market snapshot injected into Gemini prompt', 'info', {
+            page: options.page || 'unknown',
+            total_items: totalItems,
+            elapsed_ms: snapshot?.elapsed_ms || null
+        });
+        return `\n\n${text}\n`;
+    } catch (err) {
+        await emitSystemLog('AI Research market snapshot fetch failed; continuing without live data', 'warning', {
+            page: options.page || 'unknown',
+            error: err.message
+        });
+        return `\n\n=== REAL-TIME MARKET DATA ===\nLive marketplace snapshot unavailable (${err.message}). Use only verifiable dated evidence.\n=== END MARKET DATA ===\n`;
+    }
+}
+
 async function getPromptText(pageType, variables = {}) {
     const r = await db.query(
         `SELECT prompt_text FROM research_prompts
@@ -768,7 +794,7 @@ async function refreshLegacyResearchPage(page, options = {}) {
             : clampResearchLimit(config.limit)
     };
 
-    const prompt = page === 'ai_tools'
+    let prompt = page === 'ai_tools'
         ? buildAiToolsRetryPrompt({
             currentDate: variables.CURRENT_DATE,
             sourceWindow: variables.SOURCE_WINDOW,
@@ -780,6 +806,13 @@ async function refreshLegacyResearchPage(page, options = {}) {
             sourceWindow: variables.SOURCE_WINDOW,
             limit: config.limit
         })}`;
+    if (page !== 'ai_tools') {
+        prompt += await buildMarketSnapshotPromptContext({
+            page,
+            categories: topics,
+            marketSnapshot: options.marketSnapshot
+        });
+    }
     const quota = await getQuota();
     const useLite = shouldUseLiteForPage(page, quota, options.useLite);
     await emitSystemLog('AI Research service Gemini call queued', 'info', { page, use_lite: useLite });
@@ -931,6 +964,11 @@ SOURCE WINDOW REQUIREMENT:
 - Rank by importance, heat, popularity, practical value, and evidence strength.
 - Daily repeats are allowed when the product is still hot or still has strong fresh evidence inside the selected source window.
 - Do not reuse stale generic evergreen products unless they have a clear signal inside this source window.`;
+        prompt += await buildMarketSnapshotPromptContext({
+            page: 'product_trends',
+            categories,
+            marketSnapshot: options.marketSnapshot
+        });
         
         const quota = await getQuota();
         const useLite = options.useLite ?? false;

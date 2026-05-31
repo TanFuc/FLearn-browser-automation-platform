@@ -14,6 +14,18 @@ if (process.env.REDIS_PASSWORD) {
 
 const connection = new IORedis(redisOptions);
 const inviteQueue = new Queue('invite-queue', { connection });
+const affVidQueue = new Queue('aff-vid-queue', { connection });
+const upPostQueue = new Queue('up-post-queue', { connection });
+
+const DEFAULT_JOB_OPTS = {
+  attempts: 3,
+  backoff: {
+    type: 'exponential',
+    delay: 10000
+  },
+  removeOnComplete: true,
+  removeOnFail: false
+};
 
 async function addInviteJob(accountId, payload, customOpts = {}) {
   const baseOpts = {
@@ -30,6 +42,30 @@ async function addInviteJob(accountId, payload, customOpts = {}) {
     accountId,
     payload
   }, { ...baseOpts, ...customOpts });
+}
+
+async function addAffVidJob(planId, payload = {}, customOpts = {}) {
+  if (!planId) throw new Error('planId is required for AFF VID queue job.');
+  await affVidQueue.add('render-and-post', {
+    planId: String(planId),
+    payload
+  }, {
+    ...DEFAULT_JOB_OPTS,
+    jobId: `aff-vid:${planId}`,
+    ...customOpts
+  });
+}
+
+async function addUpPostJob(postId, payload = {}, customOpts = {}) {
+  if (!postId) throw new Error('postId is required for UP POST queue job.');
+  await upPostQueue.add('publish', {
+    postId: String(postId),
+    payload
+  }, {
+    ...DEFAULT_JOB_OPTS,
+    jobId: `up-post:${postId}`,
+    ...customOpts
+  });
 }
 
 const researchQueue = new Queue('research-queue', { connection });
@@ -61,8 +97,12 @@ async function addResearchJob() {
 module.exports = {
   inviteQueue,
   researchQueue,
+  affVidQueue,
+  upPostQueue,
   addInviteJob,
   addResearchJob,
+  addAffVidJob,
+  addUpPostJob,
   RESEARCH_DAILY_JOB_ID,
   RESEARCH_DAILY_PATTERN
 };

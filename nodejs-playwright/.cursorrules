@@ -5,10 +5,10 @@ You are an expert full-stack developer and automation engineer. Follow these rul
 ## General Rules
 - Use `camelCase` for JavaScript variables and functions.
 - Use `snake_case` for database columns and table names.
-- Always include comments for complex Playwright logic.
+- Always include comments for complex CloakBrowser/Playwright logic.
 - Prefer `async/await` over promises.
 
-## Automation Rules (Playwright)
+## Automation Rules (CloakBrowser)
 - Always use `src/utils.js`'s `randomDelay` instead of `page.waitForTimeout` with static numbers.
 - Use `evaluate()` for clicks if standard `click()` fails due to visibility/overlay issues.
 - Always handle potential `null` or `undefined` when selecting elements.

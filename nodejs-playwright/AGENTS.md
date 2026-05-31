@@ -5,7 +5,7 @@ FAuto is a professional Facebook automation platform designed for invitation man
 
 ## 🛠 Tech Stack
 - **Runtime**: Node.js (CommonJS)
-- **Automation**: Playwright (Anti-detection configuration)
+- **Automation**: CloakBrowser (Playwright-compatible stealth configuration)
 - **Web Server**: Express.js
 - **Database**: PostgreSQL (pg)
 - **Caching & Queue**: Redis + BullMQ
@@ -44,7 +44,7 @@ FAuto is a professional Facebook automation platform designed for invitation man
 - **Strict JSON**: Prompts must enforce JSON output. Use `parseGeminiResponse` to handle extra junk text.
 - **Fallback**: Return `{ is_stale: true, data: [...] }` from DB if AI fails.
 
-## 🎭 Playwright Automation Rules
+## 🎭 CloakBrowser Automation Rules
 - **Context Isolation**: Use one `BrowserContext` per account to maintain cookies/sessions.
 - **Selector Stability**: Use ARIA labels or robust text-based selectors. Avoid fragile CSS classes.
 - **State Check**: Verify element visibility before interaction.

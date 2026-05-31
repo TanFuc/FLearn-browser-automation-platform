@@ -20,6 +20,18 @@ async function run() {
             CREATE INDEX IF NOT EXISTS idx_aff_video_plans_product_created
             ON aff_video_plans(product_id, created_at DESC)
         `);
+        await db.query(`
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'aff_video_plans_status_check'
+                ) THEN
+                    ALTER TABLE aff_video_plans
+                    ADD CONSTRAINT aff_video_plans_status_check
+                    CHECK (status IN ('draft', 'rendering', 'rendered', 'posting', 'posted', 'failed'));
+                END IF;
+            END $$;
+        `);
         console.log('AFF VID migration complete.');
     } catch (err) {
         console.error('AFF VID migration failed:', err.message);

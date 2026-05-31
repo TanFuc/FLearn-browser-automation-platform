@@ -8,7 +8,7 @@ This document reflects the current repository and local database/Redis state aft
 
 FAuto is a Node.js automation dashboard with three main areas:
 
-- Facebook account automation: invite, unfollow, and warmup tasks driven by Playwright.
+- Facebook account automation: invite, unfollow, and warmup tasks driven by CloakBrowser.
 - Schedule management: immediate jobs, daily-time jobs, and interval jobs through BullMQ/Redis.
 - AI Research: Gemini-backed research pages, product trends, Video Script Studio, Social Post Composer, prompt management, quota tracking, and daily refresh.
 
@@ -59,7 +59,7 @@ Important operational note: the code now refreshes MMO, AI Tools, and Suggestion
 | Runtime | Node.js, CommonJS |
 | Web server | Express 5 |
 | Realtime | Socket.io |
-| Browser automation | Playwright Chromium persistent contexts |
+| Browser automation | CloakBrowser persistent contexts (Playwright-compatible) |
 | Queue | BullMQ |
 | Queue broker | Redis through `ioredis` |
 | Database | PostgreSQL through `pg` |
@@ -113,7 +113,7 @@ nodejs-playwright/
     worker.js             BullMQ workers for invite-queue and research-queue
     queue.js              BullMQ queue definitions and repeat job registration
     tasks.js              invite, unfollow, warmup, login/checkpoint logic
-    browser.js            Playwright persistent context and stable fingerprint
+    browser.js            CloakBrowser persistent context and stable fingerprint
     research-service.js   Gemini product trends and daily research refresh
     research-routes.js    AI Research APIs, AFF VID, UP POST, prompt manager
     gemini.js             Gemini client, quota, cache, usage logs
@@ -198,7 +198,7 @@ Worker behavior:
 - Inserts missing account id if needed.
 - Creates a `tasks` row with `status='running'`.
 - Checks schedule status/max runs if `scheduleId` is present.
-- Opens a Playwright persistent context for the account profile.
+- Opens a CloakBrowser persistent context for the account profile.
 - Routes by `taskType`:
   - `invite` -> `autoInviteTask`
   - `unfollow` -> `autoUnfollowTask`
@@ -231,7 +231,7 @@ Startup cleanup:
 
 ### Account browser profile
 
-`src/browser.js` uses Playwright persistent contexts under `profiles/{accountId}`.
+`src/browser.js` uses CloakBrowser persistent contexts under `profiles/{accountId}`.
 
 Fingerprint behavior:
 
@@ -646,9 +646,11 @@ Start app:
 
 ```bash
 cd nodejs-playwright
-npm install
-npx playwright install chromium
-npm run start
+  npm install
+  # CloakBrowser downloads its own Chromium binary on first launch.
+  # On Linux, install Playwright system deps if needed:
+  # npx playwright install-deps chromium
+  npm run start
 ```
 
 Open dashboard:
@@ -717,3 +719,9 @@ Operational risk notes:
 - Stale duplicate research repeat jobs are cleaned up at registration time.
 - Queue tests were updated to expect timezone-aware repeat configuration.
 - This documentation now records current DB/Redis state and the actual current module/API layout.
+
+
+## 21. Market Data & AI Grounding (Updated 2026-05-31)
+- Added `market-data.js` to fetch real-time Google Trends and Shopee data via `shopee-scraper.js` (CloakBrowser).
+- Market snapshots are injected into Gemini prompts in `research-service.js` to fix stale/hallucinated AI results.
+- Added `PATCH /api/research/aff-vid/plans/:id/status` and `PATCH /api/research/up-post/variants/:post_id` for publisher pipeline.

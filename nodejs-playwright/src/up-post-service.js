@@ -1,8 +1,10 @@
 const db = require('./db');
 const { callGemini, getQuota } = require('./gemini');
+const { addUpPostJob } = require('./queue');
+const { emitSystemLog } = require('./logger');
 
 const UP_POST_SCHEMA_VERSION = 'UP_POST_V2';
-const UP_POST_STATUSES = ['draft', 'validated', 'queued', 'published', 'failed'];
+const UP_POST_STATUSES = ['draft', 'validated', 'queued', 'posting', 'published', 'failed'];
 
 const PLATFORM_CONFIG = {
     threads: {
@@ -263,7 +265,21 @@ async function ensureUpPostTables() {
             ) THEN
                 ALTER TABLE up_post_variants
                 ADD CONSTRAINT up_post_variants_status_check
-                CHECK (status IN ('draft', 'validated', 'queued', 'published', 'failed'));
+                CHECK (status IN ('draft', 'validated', 'queued', 'posting', 'published', 'failed'));
+            END IF;
+        END $$;
+    `);
+    await db.query(`
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'up_post_variants_status_check'
+                  AND pg_get_constraintdef(oid) NOT LIKE '%posting%'
+            ) THEN
+                ALTER TABLE up_post_variants DROP CONSTRAINT up_post_variants_status_check;
+                ALTER TABLE up_post_variants
+                ADD CONSTRAINT up_post_variants_status_check
+                CHECK (status IN ('draft', 'validated', 'queued', 'posting', 'published', 'failed'));
             END IF;
         END $$;
     `);
@@ -873,6 +889,32 @@ async function enqueueUpPostVariants(postIds = []) {
           AND status IN ('draft', 'validated', 'failed')
         RETURNING post_id, platform, queue_payload, status, campaign_tag, scheduled_time
     `, [postIds]);
+    for (const row of result.rows) {
+        try {
+            const delay = row.scheduled_time && new Date(row.scheduled_time).getTime() > Date.now()
+                ? Math.max(0, new Date(row.scheduled_time).getTime() - Date.now())
+                : 0;
+            await addUpPostJob(row.post_id, row.queue_payload || {}, delay ? { delay } : {});
+            await emitSystemLog('UP POST publish job queued', 'info', {
+                post_id: row.post_id,
+                platform: row.platform,
+                delay_ms: delay
+            });
+        } catch (err) {
+            await emitSystemLog('UP POST queue handoff failed', 'error', {
+                post_id: row.post_id,
+                error: err.message
+            });
+            await db.query(
+                `UPDATE up_post_variants
+                 SET status = 'failed', failed_reason = $1, updated_at = NOW()
+                 WHERE post_id = $2`,
+                [`Queue handoff failed: ${err.message}`, row.post_id]
+            );
+            row.status = 'failed';
+            row.failed_reason = `Queue handoff failed: ${err.message}`;
+        }
+    }
     return result.rows;
 }
 

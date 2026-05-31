@@ -13,11 +13,14 @@ const {
 } = require('./research-service');
 const { callGemini, getQuota } = require('./gemini');
 const upPostService = require('./up-post-service');
+const { addAffVidJob } = require('./queue');
 const { emitSystemLog } = require('./logger');
 const RESEARCH_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
 const MIN_RESEARCH_RESULTS = 10;
 const MAX_RESEARCH_RESULTS = 15;
 const DEFAULT_RESEARCH_RESULTS = 15;
+const AFF_VID_STATUSES = ['draft', 'rendering', 'rendered', 'posting', 'posted', 'failed'];
+const UP_POST_PATCH_STATUSES = ['draft', 'validated', 'queued', 'posting', 'published', 'failed'];
 const AI_MARKET_MIN_RESULTS = 18;
 const AI_MARKET_MAX_RESULTS = 30;
 const DEFAULT_AI_MARKET_RESULTS = 25;
@@ -793,6 +796,18 @@ async function ensureAffVideoTable() {
     await db.query(`
         CREATE INDEX IF NOT EXISTS idx_aff_video_plans_product_created
         ON aff_video_plans(product_id, created_at DESC)
+    `);
+    await db.query(`
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'aff_video_plans_status_check'
+            ) THEN
+                ALTER TABLE aff_video_plans
+                ADD CONSTRAINT aff_video_plans_status_check
+                CHECK (status IN ('draft', 'rendering', 'rendered', 'posting', 'posted', 'failed'));
+            END IF;
+        END $$;
     `);
 }
 
@@ -2030,12 +2045,19 @@ router.get('/aff-vid/source-products', async (req, res) => {
 router.get('/aff-vid/plans', async (req, res) => {
     try {
         await ensureAffVideoTable();
-        const { product_id } = req.query;
+        const { product_id, status } = req.query;
         const params = [];
         const where = [];
         if (product_id) {
             params.push(product_id);
             where.push(`product_id = $${params.length}`);
+        }
+        if (status) {
+            if (!AFF_VID_STATUSES.includes(status)) {
+                return res.status(400).json({ success: false, error: `Invalid status: ${status}` });
+            }
+            params.push(status);
+            where.push(`status = $${params.length}`);
         }
         params.push(parseInt(req.query.limit || '20', 10));
         const result = await db.query(`
@@ -2161,6 +2183,151 @@ router.post('/up-post/enqueue', async (req, res) => {
         res.json({ success: true, data });
     } catch (err) {
         res.status(err.status || 500).json({ success: false, error: err.message });
+    }
+});
+
+// ─── AFF VID: cập nhật status kế hoạch video ──────────────────────────────
+// PATCH /api/research/aff-vid/plans/:id/status
+// Body: { status, notes? }
+// Statuses: draft | rendering | rendered | posting | posted | failed
+router.post('/aff-vid/plans/:id/enqueue', async (req, res) => {
+    try {
+        await ensureAffVideoTable();
+        const { id } = req.params;
+        const existing = await db.query(`SELECT id, status FROM aff_video_plans WHERE id::TEXT = $1`, [String(id)]);
+        if (!existing.rows.length) {
+            return res.status(404).json({ success: false, error: `Plan id=${id} not found.` });
+        }
+        await addAffVidJob(id, req.body || {});
+        await db.query(
+            `UPDATE aff_video_plans
+             SET status = CASE WHEN status IN ('draft', 'failed', 'posted') THEN 'rendering' ELSE status END,
+                 plan_data = COALESCE(plan_data, '{}'::jsonb) || jsonb_build_object('queued_at', NOW()::text),
+                 updated_at = NOW()
+             WHERE id::TEXT = $1`,
+            [String(id)]
+        );
+        await emitSystemLog('AFF VID render/post job queued', 'info', { plan_id: id });
+        res.json({ success: true, data: { id, status: 'queued' } });
+    } catch (err) {
+        await emitSystemLog('AFF VID enqueue failed', 'error', { plan_id: req.params.id, error: err.message });
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+router.patch('/aff-vid/plans/:id/status', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, notes } = req.body || {};
+        if (!status || !AFF_VID_STATUSES.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid status. Must be one of: ${AFF_VID_STATUSES.join(', ')}`
+            });
+        }
+        const result = await db.query(
+            `UPDATE aff_video_plans
+             SET status = $1,
+                 plan_data = plan_data || jsonb_build_object('status_notes', $2::text, 'status_updated_at', NOW()::text),
+                 updated_at = NOW()
+             WHERE id = $3
+             RETURNING id, product_id, status, updated_at`,
+            [status, notes || null, id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, error: `Plan id=${id} not found.` });
+        }
+        await emitSystemLog(`AFF VID plan ${id} status → ${status}`, 'info', { plan_id: id, status, notes });
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        await emitSystemLog(`AFF VID status update failed`, 'error', { error: err.message });
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// PATCH /api/research/aff-vid/plans/:id
+// Body: { status?, platform_targets?, plan_data? } — generic plan patch
+router.patch('/aff-vid/plans/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, platform_targets, plan_data } = req.body || {};
+        const updates = [];
+        const params = [];
+        if (status) {
+            if (!AFF_VID_STATUSES.includes(status)) {
+                return res.status(400).json({ success: false, error: `Invalid status: ${status}` });
+            }
+            params.push(status);
+            updates.push(`status = $${params.length}`);
+        }
+        if (platform_targets) {
+            params.push(JSON.stringify(platform_targets));
+            updates.push(`platform_targets = $${params.length}`);
+        }
+        if (plan_data) {
+            params.push(JSON.stringify(plan_data));
+            updates.push(`plan_data = $${params.length}`);
+        }
+        if (updates.length === 0) {
+            return res.status(400).json({ success: false, error: 'No fields to update.' });
+        }
+        updates.push(`updated_at = NOW()`);
+        params.push(id);
+        const result = await db.query(
+            `UPDATE aff_video_plans SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`,
+            params
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, error: `Plan id=${id} not found.` });
+        }
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─── UP POST: publisher result update ─────────────────────────────────────
+// PATCH /api/research/up-post/variants/:post_id
+// Body: { status, published_url?, published_at?, failed_reason?, retry_count? }
+router.patch('/up-post/variants/:post_id', async (req, res) => {
+    try {
+        const { post_id } = req.params;
+        const { status, published_url, published_at, failed_reason } = req.body || {};
+        if (!status || !UP_POST_PATCH_STATUSES.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid status. Must be one of: ${UP_POST_PATCH_STATUSES.join(', ')}`
+            });
+        }
+        const updates = ['status = $1', 'updated_at = NOW()'];
+        const params = [status];
+        if (published_url) {
+            params.push(published_url);
+            updates.push(`post_data = jsonb_set(COALESCE(post_data, '{}'), '{published_url}', to_jsonb($${params.length}::text))`);
+        }
+        if (published_at) {
+            params.push(published_at);
+            updates.push(`published_at = $${params.length}`);
+        } else if (status === 'published') {
+            updates.push(`published_at = NOW()`);
+        }
+        if (failed_reason) {
+            params.push(failed_reason);
+            updates.push(`failed_reason = $${params.length}`);
+        }
+        params.push(post_id);
+        const result = await db.query(
+            `UPDATE up_post_variants SET ${updates.join(', ')} WHERE post_id = $${params.length} RETURNING post_id, platform, status, published_at, failed_reason, updated_at`,
+            params
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, error: `Variant post_id=${post_id} not found.` });
+        }
+        await emitSystemLog(`UP POST ${post_id} status → ${status}`, 'info', { post_id, status, published_url });
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        await emitSystemLog(`UP POST variant update failed`, 'error', { error: err.message });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 

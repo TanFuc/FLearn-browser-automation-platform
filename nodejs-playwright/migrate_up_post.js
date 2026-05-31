@@ -43,7 +43,21 @@ async function run() {
                 ) THEN
                     ALTER TABLE up_post_variants
                     ADD CONSTRAINT up_post_variants_status_check
-                    CHECK (status IN ('draft', 'validated', 'queued', 'published', 'failed'));
+                    CHECK (status IN ('draft', 'validated', 'queued', 'posting', 'published', 'failed'));
+                END IF;
+            END $$;
+        `);
+        await db.query(`
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'up_post_variants_status_check'
+                      AND pg_get_constraintdef(oid) NOT LIKE '%posting%'
+                ) THEN
+                    ALTER TABLE up_post_variants DROP CONSTRAINT up_post_variants_status_check;
+                    ALTER TABLE up_post_variants
+                    ADD CONSTRAINT up_post_variants_status_check
+                    CHECK (status IN ('draft', 'validated', 'queued', 'posting', 'published', 'failed'));
                 END IF;
             END $$;
         `);

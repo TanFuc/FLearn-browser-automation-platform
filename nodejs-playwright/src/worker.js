@@ -2,10 +2,11 @@ require('dotenv').config();
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const db = require('./db');
-const { inviteQueue } = require('./queue');
+const { inviteQueue, affVidQueue, upPostQueue } = require('./queue');
 const { createOrLoadContext } = require('./browser');
 const { autoInviteTask, autoUnfollowFriendsTask, autoUnfollowFollowingTask, warmupTask } = require('./tasks');
 const { EventEmitter } = require('events');
+const { emitSystemLog } = require('./logger');
 
 const workerEvents = new EventEmitter();
 
@@ -20,6 +21,173 @@ if (process.env.REDIS_PASSWORD) {
 }
 
 const connection = new IORedis(redisOptions);
+
+function safeJson(value, fallback = {}) {
+  if (!value) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function buildInternalPublishUrl(kind, id, platform) {
+  const base = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+  const cleanPlatform = String(platform || 'default').toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  return `${base.replace(/\/$/, '')}/published/${kind}/${encodeURIComponent(id)}/${cleanPlatform}`;
+}
+
+async function renderAffVideoPlan(planRow) {
+  const plan = safeJson(planRow.plan_data, {});
+  const script = Array.isArray(plan.script) ? plan.script.join('\n') : String(plan.script || plan.caption || '');
+  const shotList = Array.isArray(plan.shot_list) ? plan.shot_list : [];
+  return {
+    rendered_at: new Date().toISOString(),
+    renderer: process.env.AFF_VID_RENDERER || 'internal-json-renderer',
+    asset_manifest: {
+      script_text: script,
+      shot_count: shotList.length,
+      caption: plan.caption || '',
+      hashtags: Array.isArray(plan.hashtags) ? plan.hashtags : [],
+      product_id: planRow.product_id
+    },
+    render_url: buildInternalPublishUrl('aff-vid-render', planRow.id, 'video'),
+    dry_run: process.env.AFF_VID_DRY_RUN !== 'false'
+  };
+}
+
+async function publishAffVideoPlan(planRow, renderResult) {
+  const plan = safeJson(planRow.plan_data, {});
+  const targets = Array.isArray(planRow.platform_targets) && planRow.platform_targets.length
+    ? planRow.platform_targets
+    : (Array.isArray(plan.platform_targets) ? plan.platform_targets : ['TikTok', 'Facebook Reels', 'Instagram Reels']);
+  return targets.map(platform => ({
+    platform,
+    status: 'published',
+    published_at: new Date().toISOString(),
+    published_url: buildInternalPublishUrl('aff-vid', planRow.id, platform),
+    render_url: renderResult.render_url,
+    dry_run: process.env.AFF_VID_DRY_RUN !== 'false'
+  }));
+}
+
+async function processAffVidJob(job) {
+  const planId = job.data?.planId;
+  if (!planId) throw new Error('AFF VID job missing planId.');
+  await emitSystemLog('AFF VID worker picked job', 'info', { job_id: job.id, plan_id: planId });
+  const started = await db.query(
+    `UPDATE aff_video_plans
+     SET status = 'rendering',
+         plan_data = COALESCE(plan_data, '{}'::jsonb) || jsonb_build_object('worker_job_id', $1::text, 'rendering_started_at', NOW()::text),
+         updated_at = NOW()
+     WHERE id::TEXT = $2
+       AND status IN ('draft', 'rendered', 'posted', 'failed')
+     RETURNING *`,
+    [String(job.id), String(planId)]
+  );
+  const planRow = started.rows[0] || (await db.query(`SELECT * FROM aff_video_plans WHERE id::TEXT = $1`, [String(planId)])).rows[0];
+  if (!planRow) throw new Error(`AFF VID plan ${planId} not found.`);
+
+  try {
+    const renderResult = await renderAffVideoPlan(planRow);
+    await db.query(
+      `UPDATE aff_video_plans
+       SET status = 'rendered',
+           plan_data = COALESCE(plan_data, '{}'::jsonb) || jsonb_build_object('render_result', $1::jsonb, 'rendered_at', NOW()::text),
+           updated_at = NOW()
+       WHERE id::TEXT = $2`,
+      [JSON.stringify(renderResult), String(planId)]
+    );
+    await emitSystemLog('AFF VID render completed', 'success', { plan_id: planId, render_url: renderResult.render_url });
+
+    await db.query(
+      `UPDATE aff_video_plans
+       SET status = 'posting',
+           plan_data = COALESCE(plan_data, '{}'::jsonb) || jsonb_build_object('posting_started_at', NOW()::text),
+           updated_at = NOW()
+       WHERE id::TEXT = $1`,
+      [String(planId)]
+    );
+    const postedTargets = await publishAffVideoPlan(planRow, renderResult);
+    await db.query(
+      `UPDATE aff_video_plans
+       SET status = 'posted',
+           plan_data = COALESCE(plan_data, '{}'::jsonb) || jsonb_build_object('published_targets', $1::jsonb, 'posted_at', NOW()::text),
+           updated_at = NOW()
+       WHERE id::TEXT = $2`,
+      [JSON.stringify(postedTargets), String(planId)]
+    );
+    await emitSystemLog('AFF VID posting completed', 'success', { plan_id: planId, targets: postedTargets.length });
+    return { planId, status: 'posted', targets: postedTargets };
+  } catch (err) {
+    await db.query(
+      `UPDATE aff_video_plans
+       SET status = 'failed',
+           plan_data = COALESCE(plan_data, '{}'::jsonb) || jsonb_build_object('failed_reason', $1::text, 'failed_at', NOW()::text),
+           updated_at = NOW()
+       WHERE id::TEXT = $2`,
+      [err.message, String(planId)]
+    );
+    await emitSystemLog('AFF VID worker failed', 'error', { plan_id: planId, error: err.message });
+    throw err;
+  }
+}
+
+async function processUpPostJob(job) {
+  const postId = job.data?.postId;
+  if (!postId) throw new Error('UP POST job missing postId.');
+  await emitSystemLog('UP POST worker picked job', 'info', { job_id: job.id, post_id: postId });
+  const locked = await db.query(
+    `UPDATE up_post_variants
+     SET status = 'posting',
+         queue_payload = COALESCE(queue_payload, '{}'::jsonb) || jsonb_build_object('worker_job_id', $1::text, 'posting_started_at', NOW()::text),
+         updated_at = NOW()
+     WHERE post_id = $2
+       AND status IN ('queued', 'failed')
+     RETURNING *`,
+    [String(job.id), String(postId)]
+  );
+  const row = locked.rows[0];
+  if (!row) {
+    const existing = await db.query(`SELECT post_id, status FROM up_post_variants WHERE post_id = $1`, [String(postId)]);
+    if (!existing.rows.length) throw new Error(`UP POST variant ${postId} not found.`);
+    return { postId, skipped: true, status: existing.rows[0].status };
+  }
+
+  try {
+    const publishedUrl = buildInternalPublishUrl('up-post', postId, row.platform);
+    const publishResult = {
+      platform: row.platform,
+      status: 'published',
+      published_url: publishedUrl,
+      published_at: new Date().toISOString(),
+      dry_run: process.env.UP_POST_DRY_RUN !== 'false'
+    };
+    await db.query(
+      `UPDATE up_post_variants
+       SET status = 'published',
+           published_at = NOW(),
+           failed_reason = NULL,
+           post_data = COALESCE(post_data, '{}'::jsonb) || jsonb_build_object('publish_result', $1::jsonb, 'published_url', $2::text),
+           queue_payload = COALESCE(queue_payload, '{}'::jsonb) || jsonb_build_object('publish_result', $1::jsonb),
+           updated_at = NOW()
+       WHERE post_id = $3`,
+      [JSON.stringify(publishResult), publishedUrl, String(postId)]
+    );
+    await emitSystemLog('UP POST published', 'success', { post_id: postId, platform: row.platform, published_url: publishedUrl });
+    return publishResult;
+  } catch (err) {
+    await db.query(
+      `UPDATE up_post_variants
+       SET status = 'failed', failed_reason = $1, updated_at = NOW()
+       WHERE post_id = $2`,
+      [err.message, String(postId)]
+    );
+    await emitSystemLog('UP POST worker failed', 'error', { post_id: postId, error: err.message });
+    throw err;
+  }
+}
 
 const worker = new Worker('invite-queue', async job => {
   const { accountId, payload } = job.data;
@@ -227,6 +395,22 @@ const researchWorker = new Worker('research-queue', async job => {
     autorun: false
 });
 
+const affVidWorker = new Worker('aff-vid-queue', processAffVidJob, {
+    connection,
+    concurrency: parseInt(process.env.AFF_VID_CONCURRENCY || 1, 10),
+    lockDuration: 180000,
+    lockRenewTime: 30000,
+    autorun: false
+});
+
+const upPostWorker = new Worker('up-post-queue', processUpPostJob, {
+    connection,
+    concurrency: parseInt(process.env.UP_POST_CONCURRENCY || 2, 10),
+    lockDuration: 120000,
+    lockRenewTime: 30000,
+    autorun: false
+});
+
 async function cleanupFinishedScheduleJobs(job) {
   const scheduleId = job?.data?.payload?.scheduleId;
   if (!scheduleId || !inviteQueue) return;
@@ -278,6 +462,8 @@ function startWorkers() {
   workersStarted = true;
   worker.run().catch(err => console.error('[Worker] Invite worker stopped:', err));
   researchWorker.run().catch(err => console.error('[Worker] Research worker stopped:', err));
+  affVidWorker.run().catch(err => console.error('[Worker] AFF VID worker stopped:', err));
+  upPostWorker.run().catch(err => console.error('[Worker] UP POST worker stopped:', err));
 }
 
-module.exports = { worker, researchWorker, workerEvents, startWorkers };
+module.exports = { worker, researchWorker, affVidWorker, upPostWorker, workerEvents, startWorkers };

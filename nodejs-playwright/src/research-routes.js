@@ -2331,6 +2331,93 @@ router.patch('/up-post/variants/:post_id', async (req, res) => {
     }
 });
 
+
+router.get('/prompt-options', async (req, res) => {
+    res.json({
+        success: true,
+        data: {
+            scenarios: [
+                { id: 'studio', label: 'Professional Studio', description: 'Clean background with carefully arranged lighting' },
+                { id: 'lifestyle', label: 'Lifestyle', description: 'Cafe, street, home, or everyday context' },
+                { id: 'nature', label: 'Nature', description: 'Forest, beach, mountain, or outdoor environment' },
+                { id: 'cyberpunk', label: 'Cyberpunk', description: 'Neon, futuristic, tech-forward setting' },
+                { id: 'abstract', label: 'Abstract', description: 'Shapes, colors, and expressive visual composition' }
+            ],
+            characters: [
+                { id: 'none', label: 'No person', description: 'Product-only composition' },
+                { id: 'model_f', label: 'Female model', description: 'Asian commercial model' },
+                { id: 'model_m', label: 'Male model', description: 'Asian commercial model' },
+                { id: 'hand', label: 'Handheld product', description: 'Product held in hand' }
+            ],
+            moods: [
+                { id: 'bright', label: 'Bright' },
+                { id: 'dark_mystery', label: 'Dark / mysterious' },
+                { id: 'warm', label: 'Warm' },
+                { id: 'cool', label: 'Cool' },
+                { id: 'dreamy', label: 'Dreamy' },
+                { id: 'luxury', label: 'Luxury' },
+                { id: 'energetic', label: 'Energetic' },
+                { id: 'minimal', label: 'Minimal' }
+            ],
+            styles: [
+                { id: 'photorealistic', label: 'Photorealistic' },
+                { id: 'cinematic', label: 'Cinematic' },
+                { id: 'anime', label: 'Anime' },
+                { id: '3d_render', label: '3D Render' },
+                { id: 'illustration', label: 'Illustration' },
+                { id: 'oil_painting', label: 'Oil Painting' },
+                { id: 'watercolor', label: 'Watercolor' }
+            ]
+        }
+    });
+});
+
+router.post('/generate-prompt', async (req, res) => {
+    try {
+        const payload = req.body || {};
+        const promptTemplate = [
+            'You are a professional image and video prompt engineer.',
+            'Create a JSON object with exactly two string fields: positive_prompt and negative_prompt.',
+            'Base the prompt on these selections:',
+            JSON.stringify(payload)
+        ].join('\n');
+        const raw = await callGemini(promptTemplate, { endpoint: 'prompt_builder', useLite: false, skipCache: true });
+        if (!raw) return res.status(500).json({ success: false, error: 'Gemini returned empty' });
+        let parsed = raw && typeof raw === 'object' ? extractObject(raw) : null;
+        if (!parsed?.positive_prompt) {
+            const text = typeof raw === 'string' ? raw : String(raw?.raw || '');
+            const match = text.match(/\{[\s\S]*?\}/);
+            parsed = match ? JSON.parse(match[0]) : { positive_prompt: text || JSON.stringify(raw), negative_prompt: 'Low quality, worst quality, text, watermark' };
+        }
+        const prompt = [
+            `Positive prompt:\n${parsed.positive_prompt || ''}`,
+            `Negative prompt:\n${parsed.negative_prompt || 'Low quality, worst quality, text, watermark'}`
+        ].join('\n\n');
+        res.json({ success: true, data: { prompt, raw: parsed } });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+router.post('/generate-media', async (req, res) => {
+    const payload = req.body || {};
+    const mediaType = payload.media_type === 'video' ? 'video' : 'image';
+    const aspectRatio = payload.aspect_ratio || '9:16';
+    const quality = payload.quality || 'premium';
+    res.json({
+        success: true,
+        data: {
+            status: 'mockup',
+            media_type: mediaType,
+            image_url: 'https://placehold.co/600x800/222222/6366f1?text=Media+Generated',
+            title: mediaType === 'video' ? 'Video Storyboard Mockup' : 'Image Mockup',
+            aspect_ratio: aspectRatio,
+            quality,
+            description: 'Mockup response. Replace this endpoint with the production AI media provider.'
+        }
+    });
+});
+
 router.get('/:id', async (req, res) => {
     try {
         const productId = req.params.id;

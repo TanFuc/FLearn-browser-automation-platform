@@ -44,6 +44,14 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H5.17L4 17.17z"/><path d="M8 8h8M8 12h5"/></svg>
         <span>Social Post Composer</span>
     </div>
+    <div class="nav-item" data-page="promptbuilder" onclick="switchPage('promptbuilder',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        <span>Prompt Builder</span>
+    </div>
+    <div class="nav-item" data-page="mediacreator" onclick="switchPage('mediacreator',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 15 5-5 4 4 2-2 7 7"/><path d="M14 9h.01"/></svg>
+        <span>Media Creator</span>
+    </div>
     <div class="nav-section">Hệ Thống</div>
     <div class="nav-item" data-page="quota" onclick="switchPage('quota',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -303,6 +311,93 @@
     </div>
 
     <!-- ═══ PAGE 4: QUOTA ═══ -->
+    <div id="page-promptbuilder" class="page-tabs" style="display:none;">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>Prompt Builder</h1>
+                <p>Chon tinh canh, nhan vat, mood va style de tao prompt hoan chinh cho anh/video.</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="loadPromptBuilderOptions(true)">Reload options</button>
+                <button class="btn btn-primary btn-sm" onclick="generateBuiltPrompt()">Generate prompt</button>
+            </div>
+        </div>
+        <div class="builder-layout">
+            <div class="builder-panel">
+                <div class="builder-section">
+                    <div class="builder-section-title">Tinh canh</div>
+                    <div id="pbScenarios" class="option-grid"></div>
+                </div>
+                <div class="builder-section">
+                    <div class="builder-section-title">Nhan vat</div>
+                    <div id="pbCharacters" class="option-grid"></div>
+                </div>
+                <div class="builder-section">
+                    <div class="builder-section-title">Mood</div>
+                    <div id="pbMoods" class="tag-select"></div>
+                </div>
+                <div class="builder-section">
+                    <div class="builder-section-title">Style</div>
+                    <div id="pbStyles" class="tag-select"></div>
+                </div>
+                <div class="flow-config-grid">
+                    <label>Product / chu de<input type="text" id="pbProduct" placeholder="vd: den ngu thong minh, skincare serum"></label>
+                    <label>Platform<select id="pbPlatform"><option value="TikTok">TikTok</option><option value="Facebook Reels">Facebook Reels</option><option value="Instagram Reels">Instagram Reels</option><option value="YouTube Shorts">YouTube Shorts</option></select></label>
+                    <label>Output<select id="pbOutputType"><option value="image">Image prompt</option><option value="video">Video prompt</option></select></label>
+                    <label>Ngon ngu<select id="pbLanguage"><option value="English">English</option><option value="Vietnamese">Vietnamese</option></select></label>
+                </div>
+                <label class="builder-notes-label">Ghi chu them</label>
+                <textarea id="pbNotes" rows="4" placeholder="Mo ta goc may, mau sac, USP, negative prompt..."></textarea>
+            </div>
+            <div class="builder-panel">
+                <div class="builder-output-head">
+                    <b>Generated prompt</b>
+                    <div class="header-actions">
+                        <button class="btn btn-outline btn-sm" onclick="copyBuiltPrompt()">Copy</button>
+                        <button class="btn btn-primary btn-sm" onclick="sendPromptToMediaCreator()">Send to Media Creator</button>
+                    </div>
+                </div>
+                <pre id="pbResult" class="builder-output">Chon options va bam Generate prompt.</pre>
+            </div>
+        </div>
+    </div>
+
+    <div id="page-mediacreator" class="page-tabs" style="display:none;">
+        <div class="page-header">
+            <div class="page-title">
+                <h1>Image / Video Creator</h1>
+                <p>Bien prompt thanh media mockup, luu prompt va preview de dua vao quy trinh content.</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="usePromptBuilderResult()">Use builder prompt</button>
+                <button class="btn btn-primary btn-sm" onclick="generateMediaAsset()">Generate media</button>
+            </div>
+        </div>
+        <div class="media-layout">
+            <div class="media-panel">
+                <div class="media-editor">
+                    <label>Prompt<textarea id="mcPrompt" rows="8" placeholder="Paste prompt hoac gui tu Prompt Builder..."></textarea></label>
+                    <div class="flow-config-grid">
+                        <label>Loai media<select id="mcType"><option value="image">Image</option><option value="video">Video storyboard</option></select></label>
+                        <label>Aspect ratio<select id="mcAspect"><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="16:9">16:9</option><option value="4:5">4:5</option></select></label>
+                        <label>Quality<select id="mcQuality"><option value="premium">Premium</option><option value="fast">Fast</option></select></label>
+                        <label>Reference image<input type="file" id="mcUpload" accept="image/*" onchange="previewMediaUpload(event)"></label>
+                    </div>
+                    <div id="mcUploadPreview" class="upload-preview"></div>
+                </div>
+            </div>
+            <div class="media-panel">
+                <div class="media-preview-head">
+                    <b>Preview</b>
+                    <span id="mcStatus" class="media-status">Ready</span>
+                </div>
+                <div id="mcResult" class="media-preview">
+                    <div class="media-empty">Generated image/mockup se hien thi tai day.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="page-quota" class="page-tabs">
         <div class="page-header">
             <div class="page-title">

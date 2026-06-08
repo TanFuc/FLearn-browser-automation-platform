@@ -7,6 +7,10 @@ let affVidMeta = null;
 let upPostSources = [];
 let upPostCurrent = null;
 let upPostMeta = null;
+let promptBuilderOptions = null;
+let promptBuilderSelection = { scenario: null, character: null, moods: [], styles: [] };
+let promptBuilderLastPrompt = '';
+let mediaCreatorLastUpload = null;
 let mmoSort = { col: 'trend', dir: -1 };
 let dailyUsageCache = { page: 1, limit: 7, total_days: 0, totals: null, daily: [] };
 let selectedDailyDay = null;
@@ -27,6 +31,8 @@ window.switchPage = function(page, el) {
     if (page === 'suggest') { loadSuggestions(); }
     if (page === 'affvid') { loadAffVidCandidates(); }
     if (page === 'uppost') { loadUpPostSources(); }
+    if (page === 'promptbuilder') { loadPromptBuilderOptions(); }
+    if (page === 'mediacreator') { initMediaCreator(); }
     if (page === 'quota') { loadQuota(); }
     if (page === 'prompts') { loadPrompts(); }
 };
@@ -48,7 +54,7 @@ function switchResearchTab(page) {
         p.style.display = 'none';
     });
 
-    const buttons = ['mmo', 'ai', 'suggest', 'trends', 'affvid', 'uppost', 'quota', 'prompts'];
+    const buttons = ['mmo', 'ai', 'suggest', 'trends', 'affvid', 'uppost', 'promptbuilder', 'mediacreator', 'quota', 'prompts'];
     buttons.forEach(b => {
         const btn = document.getElementById('rtab-' + b);
         if (btn) {
@@ -75,6 +81,8 @@ function switchResearchTab(page) {
     if (page === 'trends') initTrendV4();
     if (page === 'affvid') loadAffVidCandidates();
     if (page === 'uppost') loadUpPostSources();
+    if (page === 'promptbuilder') loadPromptBuilderOptions();
+    if (page === 'mediacreator') initMediaCreator();
     if (page === 'quota') {
         loadQuota();
         loadDailyUsage(dailyUsageCache.page || 1).catch(() => {});
@@ -95,6 +103,15 @@ function scoreColor(v) {
     if (v >= 70) return 'var(--success)';
     if (v >= 40) return 'var(--warning)';
     return 'var(--error)';
+}
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[ch]));
 }
 function scoreBar(v) {
     return `<div class="score-bar"><div class="bar"><div class="fill" style="width:${v}%;background:${scoreColor(v)}"></div></div><span>${v}</span></div>`;
@@ -1248,6 +1265,205 @@ async function testGemini() {
 }
 
 // ─── Prompt manager ─────────────────────────────────────────────────────
+// Prompt Builder and Media Creator
+async function loadPromptBuilderOptions(force = false) {
+    const hasUi = document.getElementById('pbScenarios');
+    if (!hasUi) return;
+    if (promptBuilderOptions && !force) {
+        renderPromptBuilderOptions();
+        return;
+    }
+
+    ['pbScenarios', 'pbCharacters', 'pbMoods', 'pbStyles'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '<div class="empty-state">Loading...</div>';
+    });
+
+    try {
+        const res = await fetch('/api/product-trends/prompt-options');
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || 'Failed to load prompt options');
+        promptBuilderOptions = json.data || {};
+        promptBuilderSelection = {
+            scenario: promptBuilderOptions.scenarios?.[0]?.id || null,
+            character: promptBuilderOptions.characters?.[0]?.id || null,
+            moods: [promptBuilderOptions.moods?.[0]?.id].filter(Boolean),
+            styles: [promptBuilderOptions.styles?.[0]?.id].filter(Boolean)
+        };
+        renderPromptBuilderOptions();
+    } catch (e) {
+        showAlert('Prompt Builder options error: ' + e.message, 'error');
+    }
+}
+
+function renderPromptBuilderOptions() {
+    if (!promptBuilderOptions) return;
+    renderPromptBuilderCards('pbScenarios', promptBuilderOptions.scenarios || [], 'scenario', false);
+    renderPromptBuilderCards('pbCharacters', promptBuilderOptions.characters || [], 'character', false);
+    renderPromptBuilderCards('pbMoods', promptBuilderOptions.moods || [], 'moods', true);
+    renderPromptBuilderCards('pbStyles', promptBuilderOptions.styles || [], 'styles', true);
+}
+
+function renderPromptBuilderCards(containerId, items, key, multiple) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const selected = promptBuilderSelection[key];
+    container.innerHTML = items.map(item => {
+        const active = multiple ? (selected || []).includes(item.id) : selected === item.id;
+        const cls = multiple ? 'option-tag' : 'option-card';
+        return `
+            <button type="button" class="${cls} ${active ? 'active' : ''}" onclick="selectPromptBuilderOption('${key}','${item.id}',${multiple})">
+                <span>${escapeHtml(item.label)}</span>
+                ${item.description ? `<small>${escapeHtml(item.description)}</small>` : ''}
+            </button>
+        `;
+    }).join('');
+}
+
+function selectPromptBuilderOption(key, id, multiple) {
+    if (multiple) {
+        const current = new Set(promptBuilderSelection[key] || []);
+        if (current.has(id)) current.delete(id); else current.add(id);
+        promptBuilderSelection[key] = Array.from(current);
+    } else {
+        promptBuilderSelection[key] = id;
+    }
+    renderPromptBuilderOptions();
+}
+
+function collectPromptBuilderPayload() {
+    return {
+        ...promptBuilderSelection,
+        product: document.getElementById('pbProduct')?.value.trim() || '',
+        platform: document.getElementById('pbPlatform')?.value || 'TikTok',
+        output_type: document.getElementById('pbOutputType')?.value || 'image',
+        language: document.getElementById('pbLanguage')?.value || 'English',
+        notes: document.getElementById('pbNotes')?.value.trim() || ''
+    };
+}
+
+async function generateBuiltPrompt() {
+    const output = document.getElementById('pbResult');
+    if (!output) return;
+    output.textContent = 'Generating premium prompt...';
+
+    try {
+        if (!promptBuilderOptions) await loadPromptBuilderOptions();
+        const res = await fetch('/api/product-trends/generate-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(collectPromptBuilderPayload())
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || 'Failed to generate prompt');
+        promptBuilderLastPrompt = json.data?.prompt || '';
+        output.textContent = promptBuilderLastPrompt || 'No prompt returned.';
+        showAlert('Prompt generated.', 'success');
+    } catch (e) {
+        output.textContent = 'Prompt generation failed: ' + e.message;
+        showAlert('Prompt generation error: ' + e.message, 'error');
+    }
+}
+
+async function copyBuiltPrompt() {
+    const text = promptBuilderLastPrompt || document.getElementById('pbResult')?.textContent || '';
+    if (!text || text.includes('Chon options')) return showAlert('No generated prompt to copy.', 'warning');
+    await navigator.clipboard.writeText(text);
+    showAlert('Prompt copied.', 'success');
+}
+
+function sendPromptToMediaCreator() {
+    const text = promptBuilderLastPrompt || document.getElementById('pbResult')?.textContent || '';
+    if (!text || text.includes('Chon options')) return showAlert('Generate a prompt first.', 'warning');
+    const promptInput = document.getElementById('mcPrompt');
+    if (promptInput) promptInput.value = text;
+    const type = document.getElementById('pbOutputType')?.value;
+    const mediaType = document.getElementById('mcType');
+    if (mediaType && type) mediaType.value = type === 'video' ? 'video' : 'image';
+    switchPage('mediacreator', document.querySelector('.nav-item[data-page="mediacreator"]'));
+}
+
+function initMediaCreator() {
+    const promptInput = document.getElementById('mcPrompt');
+    if (promptInput && !promptInput.value && promptBuilderLastPrompt) {
+        promptInput.value = promptBuilderLastPrompt;
+    }
+}
+
+function usePromptBuilderResult() {
+    if (!promptBuilderLastPrompt) return showAlert('No Prompt Builder result yet.', 'warning');
+    const promptInput = document.getElementById('mcPrompt');
+    if (promptInput) promptInput.value = promptBuilderLastPrompt;
+}
+
+function previewMediaUpload(event) {
+    const file = event.target.files?.[0];
+    const preview = document.getElementById('mcUploadPreview');
+    if (!file || !preview) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        mediaCreatorLastUpload = { name: file.name, dataUrl: reader.result };
+        preview.innerHTML = `
+            <div class="upload-chip">
+                <img src="${reader.result}" alt="${escapeHtml(file.name)}">
+                <span>${escapeHtml(file.name)}</span>
+            </div>
+        `;
+    };
+    reader.readAsDataURL(file);
+}
+
+async function generateMediaAsset() {
+    const prompt = document.getElementById('mcPrompt')?.value.trim();
+    const status = document.getElementById('mcStatus');
+    const result = document.getElementById('mcResult');
+    if (!prompt) return showAlert('Nhap prompt truoc khi generate media.', 'warning');
+    if (status) status.textContent = 'Generating...';
+    if (result) result.innerHTML = '<div class="media-empty">Generating media mockup...</div>';
+
+    try {
+        const res = await fetch('/api/product-trends/generate-media', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt,
+                media_type: document.getElementById('mcType')?.value || 'image',
+                aspect_ratio: document.getElementById('mcAspect')?.value || '9:16',
+                quality: document.getElementById('mcQuality')?.value || 'premium',
+                reference_image_name: mediaCreatorLastUpload?.name || ''
+            })
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || 'Failed to generate media');
+        renderMediaResult(json.data || {});
+        if (status) status.textContent = 'Generated';
+        showAlert('Media mockup generated.', 'success');
+    } catch (e) {
+        if (status) status.textContent = 'Error';
+        if (result) result.innerHTML = `<div class="media-empty">Media generation failed: ${escapeHtml(e.message)}</div>`;
+        showAlert('Media generation error: ' + e.message, 'error');
+    }
+}
+
+function renderMediaResult(data) {
+    const result = document.getElementById('mcResult');
+    if (!result) return;
+    const isVideo = data.media_type === 'video';
+    result.innerHTML = `
+        <div class="media-result-card">
+            <div class="media-art-wrap">
+                <img src="${escapeHtml(data.image_url || '')}" alt="Generated media mockup">
+                ${isVideo ? '<span class="media-pill">Storyboard placeholder</span>' : '<span class="media-pill">Image placeholder</span>'}
+            </div>
+            <div class="media-result-meta">
+                <b>${escapeHtml(data.title || 'Generated Media')}</b>
+                <span>${escapeHtml(data.aspect_ratio || '')} - ${escapeHtml(data.quality || '')}</span>
+                <p>${escapeHtml(data.description || '')}</p>
+            </div>
+        </div>
+    `;
+}
+
 let promptEditingId = null;
 
 async function loadPrompts() {

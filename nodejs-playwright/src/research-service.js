@@ -1160,6 +1160,14 @@ async function getProductDetail(productId, type = 'deep_dive') {
 async function runDailyTrendResearch() {
     console.log('[Research] Starting V4 daily trend research job...');
     await db.query(`UPDATE quota_state SET last_cron_run = NOW() WHERE id = 1`);
+    let marketSnapshot = null;
+    try {
+        marketSnapshot = await fetchMarketSnapshot();
+    } catch (err) {
+        await emitSystemLog('Daily research market snapshot failed; prompts will fall back to source-only evidence', 'warning', {
+            error: err.message
+        });
+    }
     const summary = {
         trends: {},
         legacy: {},
@@ -1173,7 +1181,8 @@ async function runDailyTrendResearch() {
                 categories: DEFAULT_CATEGORIES,
                 window: sourceWindow,
                 limit: DEFAULT_RESEARCH_RESULTS,
-                forceFresh: true
+                forceFresh: true,
+                marketSnapshot
             });
             console.log(`[Research] Fetched ${res.data.length} ${sourceWindow} trends.`);
             summary.trends[sourceWindow] = res.data.length;
@@ -1186,7 +1195,7 @@ async function runDailyTrendResearch() {
     const legacyPages = ['mmo', 'ai_tools', 'suggestions'];
     for (const page of legacyPages) {
         try {
-            const res = await refreshLegacyResearchPage(page, { source_window: 'last_7_days' });
+            const res = await refreshLegacyResearchPage(page, { source_window: 'last_7_days', marketSnapshot });
             console.log(`[Research] Refreshed ${res.count} ${page} legacy items.`);
             summary.legacy[page] = res.count;
         } catch (err) {

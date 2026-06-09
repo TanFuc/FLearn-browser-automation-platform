@@ -23,6 +23,7 @@ const DEFAULTS = {
     hardTokenCap: parseInt(process.env.GEMINI_HARD_TOKEN_CAP || '200000'),
     cacheTTLHours: 24,
 };
+const THINKING_BUDGET = parseInt(process.env.GEMINI_THINKING_BUDGET || '0', 10);
 
 let socketIO = null;
 
@@ -195,7 +196,13 @@ async function callGeminiAPI(prompt, model, { googleSearch = false } = {}) {
     const url = `${BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`;
     const body = {
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 8192 },
+        generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 8192,
+            thinkingConfig: {
+                thinkingBudget: Number.isFinite(THINKING_BUDGET) ? THINKING_BUDGET : 0
+            }
+        },
     };
     if (googleSearch) {
         body.tools = [{ google_search: {} }];

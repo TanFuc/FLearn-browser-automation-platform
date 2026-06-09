@@ -10,12 +10,12 @@ const RESEARCH_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho
 
 const DEFAULT_CATEGORIES = ['Skincare', 'Gia dụng', 'Fitness', 'Thời trang', 'Mẹ & bé', 'Điện tử', 'Sức khỏe', 'Thú cưng', 'Đồ chơi', 'Nhà cửa'];
 const inFlight = new Map();
-const MIN_RESEARCH_RESULTS = 10;
+const MIN_RESEARCH_RESULTS = 4;
 const MAX_RESEARCH_RESULTS = 15;
 const DEFAULT_RESEARCH_RESULTS = 15;
-const AI_MARKET_MIN_RESULTS = 18;
-const AI_MARKET_MAX_RESULTS = 30;
-const DEFAULT_AI_MARKET_RESULTS = 25;
+const AI_MARKET_MIN_RESULTS = 4;
+const AI_MARKET_MAX_RESULTS = 8;
+const DEFAULT_AI_MARKET_RESULTS = 8;
 const TREND_WINDOWS = {
     today: 'trong ngày hôm nay, ưu tiên tín hiệu mới nhất trong 24 giờ qua',
     last_3_days: 'trong 3 ngày gần nhất, ưu tiên tín hiệu tăng tốc ngắn hạn',
@@ -113,6 +113,10 @@ function currentLocalDate() {
 
 function localDateSql(column = 'created_at') {
     return `DATE(${column} AT TIME ZONE '${RESEARCH_TIMEZONE}')`;
+}
+
+function productDateSql(column = 'created_at') {
+    return `DATE(${column})`;
 }
 
 function parseDateKey(value) {
@@ -307,6 +311,106 @@ function hasQualityEvidence(item = {}) {
     return hasUsefulSourceUrl(item) && !isGenericEvidence(text);
 }
 
+const sourceVerificationCache = new Map();
+
+function itemSourceUrls(item = {}) {
+    const sources = Array.isArray(item.supporting_sources) ? item.supporting_sources : [];
+    return normalizeEvidenceList([
+        item.source_url,
+        item.url,
+        item.launch_url,
+        item.github_url,
+        ...(Array.isArray(item.source_urls) ? item.source_urls : []),
+        ...sources.map(source => typeof source === 'string'
+            ? source
+            : source?.url || source?.source_url || source?.href)
+    ]).filter(value => /^https?:\/\//i.test(value));
+}
+
+function snapshotSourceIndex(snapshot) {
+    const urls = new Map();
+    Object.values(snapshot?.sources || {}).forEach(items => {
+        (Array.isArray(items) ? items : []).forEach(item => {
+            if (item?.url) urls.set(String(item.url), item.name || item.keyword || '');
+        });
+    });
+    return urls;
+}
+
+function meaningfulWords(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .match(/[a-z0-9]{4,}/g) || [];
+}
+
+async function verifySourceUrl(url, itemName) {
+    const cacheKey = `${url}|${itemName}`;
+    if (sourceVerificationCache.has(cacheKey)) return sourceVerificationCache.get(cacheKey);
+    const verification = (async () => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+        try {
+            const response = await fetch(url, {
+                redirect: 'follow',
+                signal: controller.signal,
+                headers: { 'user-agent': 'Mozilla/5.0' }
+            });
+            if (response.status < 200 || response.status >= 400) return false;
+            const html = (await response.text()).slice(0, 200000);
+            const title = (html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] || '').replace(/\s+/g, ' ').trim();
+            if (!title || /page not found|404 error|coming soon|không còn tồn tại|not found/i.test(title)) return false;
+
+            const original = new URL(url);
+            const finalUrl = new URL(response.url);
+            if (original.hostname !== finalUrl.hostname) return false;
+            if (original.pathname !== finalUrl.pathname) {
+                const originalIds = original.pathname.match(/\d{5,}/g) || [];
+                const finalIds = finalUrl.pathname.match(/\d{5,}/g) || [];
+                if (!originalIds.some(id => finalIds.includes(id))) return false;
+            }
+
+            const titleWords = new Set(meaningfulWords(title));
+            return meaningfulWords(itemName).some(word => titleWords.has(word));
+        } catch (err) {
+            return false;
+        } finally {
+            clearTimeout(timeout);
+        }
+    })();
+    sourceVerificationCache.set(cacheKey, verification);
+    return verification;
+}
+
+async function verifyResearchItems(items, { page, marketSnapshot } = {}) {
+    const trustedSnapshotUrls = snapshotSourceIndex(marketSnapshot);
+    const verified = [];
+    for (const item of items) {
+        const urls = itemSourceUrls(item);
+        const itemName = resultName(page, item);
+        let accepted = urls.some(url => {
+            const snapshotName = trustedSnapshotUrls.get(url);
+            if (!snapshotName) return false;
+            if (page === 'suggestions') return true;
+            const snapshotWords = new Set(meaningfulWords(snapshotName));
+            return meaningfulWords(itemName).some(word => snapshotWords.has(word));
+        });
+        for (const url of urls) {
+            if (accepted) break;
+            accepted = await verifySourceUrl(url, itemName);
+        }
+        if (accepted) verified.push(item);
+    }
+    await emitSystemLog('AI Research source URLs verified', 'info', {
+        page,
+        input_items: items.length,
+        verified_items: verified.length,
+        rejected_items: items.length - verified.length
+    });
+    return verified;
+}
+
 function normalizeProductTrendItem(item, index, window) {
     const productName = item.product_name || item.name || item.title || item.product || `Product trend ${index + 1}`;
     const sourceUrls = normalizeEvidenceList(item.source_urls || item.sources || item.urls || item.source_url || item.url);
@@ -328,6 +432,141 @@ function normalizeProductTrendItem(item, index, window) {
     };
 }
 
+function snapshotDate(snapshot) {
+    return new Date(snapshot?.fetched_at || Date.now()).toISOString().slice(0, 10);
+}
+
+function flattenSnapshotSourceItems(snapshot) {
+    const items = [];
+    Object.entries(snapshot?.sources || {}).forEach(([sourceName, list]) => {
+        (Array.isArray(list) ? list : []).forEach(item => {
+            const name = item?.name || item?.keyword || item?.title;
+            const url = item?.url;
+            if (!name || !/^https?:\/\//i.test(String(url || ''))) return;
+            items.push({ ...item, name, url, sourceName });
+        });
+    });
+    return items;
+}
+
+function evidenceForSnapshotItem(item, sourceDate) {
+    const signal = [
+        `Nguồn thật ${item.sourceName || item.source || 'market_snapshot'} được fetch ngày ${sourceDate}.`,
+        item.traffic ? `Google Trends ghi nhận khoảng ${item.traffic} lượt quan tâm.` : '',
+        item.sold || item.sold_text || item.sold_count ? `Marketplace có tín hiệu bán/chạy: ${item.sold || item.sold_text || item.sold_count}.` : '',
+        item.rating || item.review_count ? `Có tín hiệu đánh giá/review: ${item.rating || item.review_count}.` : '',
+        item.description ? `Mô tả nguồn: ${item.description}.` : '',
+        item.stars_text ? `GitHub Trending ghi nhận ${item.stars_text}.` : ''
+    ].filter(Boolean).join(' ');
+    return signal.length >= 90 ? signal : `${signal} Đây là candidate source-first, dùng URL chính xác từ snapshot và không suy đoán thêm nguồn ngoài.`;
+}
+
+function productSeedFromSnapshot(snapshot, window, limit) {
+    const sourceDate = snapshotDate(snapshot);
+    return flattenSnapshotSourceItems(snapshot)
+        .filter(item => !/^github_trending_ai$/i.test(item.sourceName || ''))
+        .slice(0, limit)
+        .map((item, index) => ({
+            id: slug(item.name, `source_product_${index + 1}`),
+            category: item.sourceName === 'google_trends' ? 'Search Trend' : 'Marketplace',
+            product_name: item.name,
+            trend_score: score(88 - index, 75),
+            confidence_score: 78,
+            summary: `Xu hướng được lấy trực tiếp từ ${item.sourceName || item.source}, có URL nguồn thật và tín hiệu mới trong ngày.`,
+            source_url: item.url,
+            source_urls: [item.url],
+            source_date: sourceDate,
+            source_dates: [sourceDate],
+            source_window: window,
+            evidence_summary: evidenceForSnapshotItem(item, sourceDate),
+            popularity_signal: item.traffic || item.sold || item.sold_text || item.sold_count || item.sourceName || 'source-first snapshot',
+            recent_trigger: `Nguồn snapshot cập nhật ngày ${sourceDate}.`
+        }));
+}
+
+function mmoSeedFromSnapshot(snapshot, sourceWindow, limit) {
+    const sourceDate = snapshotDate(snapshot);
+    return flattenSnapshotSourceItems(snapshot)
+        .filter(item => item.sourceName !== 'github_trending_ai')
+        .slice(0, limit)
+        .map((item, index) => ({
+            title: `Khai thác ${item.name}`,
+            category: item.sourceName === 'google_trends' ? 'Search intent' : 'Affiliate commerce',
+            trend_score: score(86 - index, 72),
+            monetization_score: score(82 - index, 70),
+            competition_score: score(42 + index, 55),
+            content_angle: `Làm nội dung giải thích/review quanh tín hiệu đang tăng của "${item.name}".`,
+            traffic_source: item.sourceName === 'google_trends' ? 'Google Trends + SEO/news angle' : 'Affiliate marketplace + short video',
+            monetization_model: item.sourceName === 'google_trends' ? 'lead magnet, affiliate liên quan, newsletter' : 'affiliate TikTok/Shopee/Lazada',
+            market_maturity: 'growing',
+            confidence_score: 78,
+            summary: `Cơ hội MMO dựa trên candidate source-first từ ${item.sourceName || item.source}, không dùng URL suy đoán.`,
+            source_url: item.url,
+            source_date: sourceDate,
+            source_urls: [item.url],
+            source_dates: [sourceDate],
+            source_window: sourceWindow,
+            evidence_summary: evidenceForSnapshotItem(item, sourceDate),
+            popularity_signal: item.traffic || item.sold || item.sold_text || item.sold_count || 'source-first snapshot',
+            recent_trigger: `Nguồn snapshot cập nhật ngày ${sourceDate}.`
+        }));
+}
+
+function aiToolSeedFromSnapshot(snapshot, sourceWindow, limit) {
+    const sourceDate = snapshotDate(snapshot);
+    return flattenSnapshotSourceItems(snapshot)
+        .filter(item => item.sourceName === 'github_trending_ai')
+        .slice(0, limit)
+        .map((item, index) => ({
+            tool_name: item.name,
+            tool_type: item.language ? `open-source/${item.language}` : 'open-source AI tool',
+            use_case: item.description || 'Công cụ AI/developer tool đang xuất hiện trong GitHub Trending.',
+            value_score: score(88 - index, 75),
+            market_signal: `GitHub Trending ${item.source || 'daily/weekly'}`,
+            market_reason: `Repo nằm trong snapshot GitHub Trending AI ngày ${sourceDate}.`,
+            price_level: 'open-source/free',
+            discount_or_launch_status: 'open-source trending',
+            confidence_score: 80,
+            summary: item.description || `Repo ${item.name} đang có tín hiệu từ GitHub Trending.`,
+            best_value_reason: 'Có thể kiểm tra trực tiếp mã nguồn, issue, star và README từ URL GitHub thật.',
+            source_url: item.url,
+            source_date: sourceDate,
+            source_urls: [item.url],
+            source_dates: [sourceDate],
+            source_classes: ['github_trending'],
+            source_window: sourceWindow,
+            github_trending_url: item.url,
+            evidence_summary: evidenceForSnapshotItem(item, sourceDate),
+            popularity_signal: item.stars_text || 'GitHub Trending snapshot',
+            recent_trigger: `Repo xuất hiện trong snapshot GitHub Trending ngày ${sourceDate}.`,
+            is_best_value: true,
+            is_new_noteworthy: true
+        }));
+}
+
+function suggestionSeedFromRows(mmoRows, aiRows, sourceWindow, limit) {
+    const sourceRows = [...mmoRows, ...aiRows].filter(Boolean);
+    return sourceRows.slice(0, limit).map((item, index) => {
+        const title = item.title || item.tool_name || item.product_name || item.name || `Nguồn ${index + 1}`;
+        const url = firstValue(item.source_urls || item.supporting_sources || item.source_url || item.url || item.github_trending_url);
+        const date = firstValue(item.source_dates || item.source_date) || currentLocalDate();
+        return {
+            recommendation_title: `Ưu tiên kiểm thử: ${title}`,
+            recommendation_text: `Dùng nguồn đang có tín hiệu mới để tạo nội dung/test affiliate nhỏ trước, đo CTR và phản hồi trong 24-48 giờ.`,
+            confidence_score: 78,
+            urgency_score: score(82 - index, 70),
+            roi_score: score(80 - index, 68),
+            reasoning_summary: `Recommendation được tạo từ dữ liệu source-first đã lưu ngày ${date}, ưu tiên URL thật và tín hiệu mới thay vì phỏng đoán.`,
+            next_action: `Tạo 1 landing/content test cho "${title}" và gắn tracking nguồn.`,
+            supporting_sources: url ? [url] : [],
+            source_dates: [date],
+            source_window: sourceWindow,
+            freshness_note: `Nguồn hỗ trợ nằm trong window ${sourceWindow}, ngày ${date}.`,
+            topic: item.category || item.tool_type || 'source-first research'
+        };
+    }).filter(item => item.supporting_sources.length);
+}
+
 function hasFreshEvidenceFields(item, window = 'last_7_days') {
     const sourceDate = item.source_date || firstValue(item.source_dates) || item.published_at || item.updated_at || item.release_date;
     return (hasAnyField(item, ['source_url', 'url', 'launch_url', 'github_url']) || hasAnyField(item, ['source_urls']))
@@ -346,10 +585,10 @@ function isEmptyAiPayload(data, keys) {
     return extractList(data, keys).length === 0;
 }
 
-async function callGeminiWithFallbacks(prompt, { endpoint, useLite = false, listKeys = [], allowNoSearchRetry = true } = {}) {
+async function callGeminiWithFallbacks(prompt, { endpoint, useLite = false, listKeys = [], allowNoSearchRetry = true, googleSearch = undefined } = {}) {
     const attempts = [
-        { useLite, googleSearch: undefined, label: 'primary' },
-        ...(!useLite ? [{ useLite: true, googleSearch: undefined, label: 'lite_grounded' }] : []),
+        { useLite, googleSearch, label: googleSearch === false ? 'source_snapshot' : 'primary' },
+        ...(!useLite ? [{ useLite: true, googleSearch, label: googleSearch === false ? 'lite_source_snapshot' : 'lite_grounded' }] : []),
         ...(allowNoSearchRetry ? [
             { useLite, googleSearch: false, label: 'no_search' },
             { useLite: true, googleSearch: false, label: 'lite_no_search' }
@@ -424,7 +663,14 @@ function filterReadableLegacyRows(page, rows) {
     if (!config) return rows;
     if (!['mmo', 'ai_tools', 'suggestions'].includes(page)) return rows;
     const filtered = validateLegacyItems(page, rows, config.required);
-    return filtered.length >= MIN_RESEARCH_RESULTS ? filtered : [];
+    if (filtered.length >= MIN_RESEARCH_RESULTS) return filtered;
+
+    // Preserve historical DB results for fallback reads without relaxing the
+    // strict validation used to accept newly generated research.
+    return validateData(rows, config.required).map(item => ({
+        ...item,
+        is_stale: true
+    }));
 }
 
 function itemIdentity(page, item = {}) {
@@ -495,7 +741,8 @@ async function expandProductTrendResults({ basePrompt, endpoint, useLite, window
             endpoint,
             useLite: attempt > 1 ? true : useLite,
             listKeys: ['items', 'products', 'trends', 'data'],
-            allowNoSearchRetry: false
+            allowNoSearchRetry: false,
+            googleSearch: false
         });
         const retryResults = extractList(retryData, ['items', 'products', 'trends', 'data']);
         const retryNormalized = retryResults.map((item, index) => normalizeProductTrendItem(item, index, window));
@@ -534,7 +781,8 @@ async function expandLegacyResults({ page, basePrompt, config, variables, useLit
             endpoint: config.promptType,
             useLite: attempt > 1 ? true : useLite,
             listKeys: config.listKeys,
-            allowNoSearchRetry: page === 'suggestions'
+            allowNoSearchRetry: false,
+            googleSearch: false
         });
         const retryRaw = extractList(retryData, config.listKeys).slice(0, pageLimit);
         const retryValid = validateLegacyItems(page, retryRaw, config.required);
@@ -794,6 +1042,11 @@ async function refreshLegacyResearchPage(page, options = {}) {
             : clampResearchLimit(config.limit)
     };
 
+    let marketSnapshot = options.marketSnapshot || null;
+    if (!marketSnapshot) {
+        marketSnapshot = await fetchMarketSnapshot().catch(() => null);
+    }
+
     let prompt = page === 'ai_tools'
         ? buildAiToolsRetryPrompt({
             currentDate: variables.CURRENT_DATE,
@@ -806,25 +1059,55 @@ async function refreshLegacyResearchPage(page, options = {}) {
             sourceWindow: variables.SOURCE_WINDOW,
             limit: config.limit
         })}`;
-    if (page !== 'ai_tools') {
-        prompt += await buildMarketSnapshotPromptContext({
-            page,
-            categories: topics,
-            marketSnapshot: options.marketSnapshot
-        });
-    }
+    prompt += await buildMarketSnapshotPromptContext({
+        page,
+        categories: topics,
+        marketSnapshot
+    });
+    prompt += `
+SOURCE-FIRST CONTRACT:
+- Use only candidates and Exact URL values from REAL-TIME MARKET DATA, PAGE1_DATA, and PAGE2_DATA above.
+- Do not browse, infer, synthesize, or guess source URLs.
+- If a candidate has no Exact URL or supporting source URL, skip it.
+- For AI tools, prefer GitHub Trending AI repos and exact GitHub URLs from the snapshot.
+- For suggestions, derive supporting_sources only from PAGE1_DATA/PAGE2_DATA source_url/source_urls.`;
     const quota = await getQuota();
     const useLite = shouldUseLiteForPage(page, quota, options.useLite);
     await emitSystemLog('AI Research service Gemini call queued', 'info', { page, use_lite: useLite });
-    const aiData = await callGeminiWithFallbacks(prompt, {
-        endpoint: config.promptType,
-        useLite,
-        listKeys: config.listKeys,
-        allowNoSearchRetry: page === 'suggestions'
-    });
     const pageLimit = page === 'ai_tools'
         ? clampResearchLimit(config.limit, DEFAULT_AI_MARKET_RESULTS, AI_MARKET_MAX_RESULTS, AI_MARKET_MIN_RESULTS)
         : clampResearchLimit(config.limit);
+    let aiData;
+    let usedSourceFallback = false;
+    try {
+        aiData = await callGeminiWithFallbacks(prompt, {
+            endpoint: config.promptType,
+            useLite,
+            listKeys: config.listKeys,
+            allowNoSearchRetry: false,
+            googleSearch: false
+        });
+    } catch (err) {
+        let fallbackItems = [];
+        if (page === 'mmo') fallbackItems = mmoSeedFromSnapshot(marketSnapshot, variables.SOURCE_WINDOW, pageLimit);
+        if (page === 'ai_tools') fallbackItems = aiToolSeedFromSnapshot(marketSnapshot, variables.SOURCE_WINDOW, pageLimit);
+        if (page === 'suggestions') {
+            fallbackItems = suggestionSeedFromRows(
+                JSON.parse(variables.PAGE1_DATA || '[]'),
+                JSON.parse(variables.PAGE2_DATA || '[]'),
+                variables.SOURCE_WINDOW,
+                pageLimit
+            );
+        }
+        if (!fallbackItems.length) throw err;
+        aiData = { items: fallbackItems };
+        usedSourceFallback = true;
+        await emitSystemLog('AI Research using source-first snapshot fallback', 'warning', {
+            page,
+            count: fallbackItems.length,
+            reason: err.message
+        });
+    }
     let rawItems = extractList(aiData, config.listKeys).slice(0, pageLimit);
     let validItems = validateLegacyItems(page, rawItems, config.required);
     await emitSystemLog('AI Research service response validated', 'info', {
@@ -833,24 +1116,30 @@ async function refreshLegacyResearchPage(page, options = {}) {
         valid_items: validItems.length
     });
 
-    if (page === 'ai_tools' && validItems.length === 0 && options.allowRetry !== false) {
-        const retryPrompt = buildAiToolsRetryPrompt({
+    if (!usedSourceFallback && page === 'ai_tools' && validItems.length === 0 && options.allowRetry !== false) {
+        let retryPrompt = buildAiToolsRetryPrompt({
             currentDate: variables.CURRENT_DATE,
             sourceWindow: variables.SOURCE_WINDOW,
             limit: pageLimit
+        });
+        retryPrompt += await buildMarketSnapshotPromptContext({
+            page,
+            categories: topics,
+            marketSnapshot
         });
         const retryData = await callGeminiWithFallbacks(retryPrompt, {
             endpoint: config.promptType,
             useLite: true,
             listKeys: config.listKeys,
-            allowNoSearchRetry: false
+            allowNoSearchRetry: false,
+            googleSearch: false
         });
         rawItems = extractList(retryData, config.listKeys).slice(0, pageLimit);
         validItems = validateLegacyItems(page, rawItems, config.required);
     }
 
     const minResults = minResultsForPage(page);
-    if (validItems.length < minResults && options.allowRetry !== false) {
+    if (!usedSourceFallback && validItems.length < minResults && options.allowRetry !== false) {
         validItems = await expandLegacyResults({
             page,
             basePrompt: prompt,
@@ -861,6 +1150,8 @@ async function refreshLegacyResearchPage(page, options = {}) {
             pageLimit
         });
     }
+
+    validItems = await verifyResearchItems(validItems, { page, marketSnapshot });
 
     if (validItems.length === 0) {
         throw new Error(`Gemini returned no valid ${page} items. Check active prompt schema.`);
@@ -941,6 +1232,10 @@ async function getProductTrends(options = {}) {
     
     const cacheKey = `trends:${market}:${categoriesStr}:${window}`;
     return withInFlight(cacheKey, async () => {
+        let marketSnapshot = options.marketSnapshot || null;
+        if (!marketSnapshot) {
+            marketSnapshot = await fetchMarketSnapshot().catch(() => null);
+        }
         let prompt = await getPromptText('overview', {
             MARKET: market,
             LANGUAGE: 'Vietnamese',
@@ -967,8 +1262,14 @@ SOURCE WINDOW REQUIREMENT:
         prompt += await buildMarketSnapshotPromptContext({
             page: 'product_trends',
             categories,
-            marketSnapshot: options.marketSnapshot
+            marketSnapshot
         });
+        prompt += `
+SOURCE-FIRST CONTRACT:
+- Use only REAL-TIME MARKET DATA candidates and Exact URL values above.
+- Copy source_url/source_urls exactly from Exact URL lines.
+- Do not browse, infer, synthesize, shorten, or guess URLs, product slugs, or item IDs.
+- If a product has no Exact URL or news URL, skip it.`;
         
         const quota = await getQuota();
         const useLite = options.useLite ?? false;
@@ -998,7 +1299,8 @@ SOURCE WINDOW REQUIREMENT:
                 endpoint: 'product_trends',
                 useLite,
                 listKeys: ['items', 'products', 'trends', 'data'],
-                allowNoSearchRetry: false
+                allowNoSearchRetry: false,
+                googleSearch: false
             });
         } catch (err) {
             await emitSystemLog('Product Trends AI refresh failed', 'error', {
@@ -1006,9 +1308,24 @@ SOURCE WINDOW REQUIREMENT:
                 market,
                 error: err ? err.message : 'Unknown error'
             });
-            if (forceFresh) throw err;
+            const sourceFallback = validateProductTrendItems(
+                productSeedFromSnapshot(marketSnapshot, window, limit).map((item, index) => normalizeProductTrendItem(item, index, window)),
+                window
+            ).slice(0, limit);
+            if (sourceFallback.length >= MIN_RESEARCH_RESULTS) {
+                aiData = { items: sourceFallback };
+                await emitSystemLog('Product Trends using source-first snapshot fallback', 'warning', {
+                    window,
+                    market,
+                    count: sourceFallback.length,
+                    reason: err.message
+                });
+            } else if (forceFresh) {
+                throw err;
+            } else {
             const fallback = await getTrendsFromDB(market, categoriesStr, window);
             return { data: fallback, is_stale: true, schema_version: 'V4.0.1', from_fallback: true };
+            }
         }
 
         
@@ -1027,6 +1344,11 @@ SOURCE WINDOW REQUIREMENT:
                 bounded
             });
         }
+
+        bounded = await verifyResearchItems(bounded, {
+            page: 'product_trends',
+            marketSnapshot
+        });
         
         if (bounded.length >= MIN_RESEARCH_RESULTS) {
             // Server-side timestamp and schema injection (Patch #4 & #7)
@@ -1055,6 +1377,19 @@ SOURCE WINDOW REQUIREMENT:
             await emitSystemLog('Product Trends cache updated', 'info', { window, market, count: bounded.length });
             
             // Store to main tables
+            const deleted = await db.query(
+                `DELETE FROM product_trend_results
+                 WHERE market = $1
+                   AND source_window = $2
+                   AND ${productDateSql('created_at')} = $3`,
+                [market, window, currentLocalDate()]
+            );
+            await emitSystemLog('Product Trends old daily rows cleared', 'info', {
+                window,
+                market,
+                target_date: currentLocalDate(),
+                deleted_rows: deleted.rowCount
+            });
             for (const item of bounded) {
                 const summaryData = {
                     trend_score: item.trend_score,
@@ -1195,7 +1530,11 @@ async function runDailyTrendResearch() {
     const legacyPages = ['mmo', 'ai_tools', 'suggestions'];
     for (const page of legacyPages) {
         try {
-            const res = await refreshLegacyResearchPage(page, { source_window: 'last_7_days', marketSnapshot });
+            const res = await refreshLegacyResearchPage(page, {
+                source_window: 'last_7_days',
+                marketSnapshot,
+                refreshDependencies: false
+            });
             console.log(`[Research] Refreshed ${res.count} ${page} legacy items.`);
             summary.legacy[page] = res.count;
         } catch (err) {

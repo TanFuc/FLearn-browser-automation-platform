@@ -35,6 +35,26 @@ function fetchJson(url, options = {}) {
     });
 }
 
+function decodeHtmlEntities(value = '') {
+    return String(value)
+        .replace(/<!\[CDATA\[(.*?)\]\]>/gs, '$1')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&#39;/g, "'")
+        .replace(/&#x27;/g, "'")
+        .replace(/&#x2F;/g, '/')
+        .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+}
+
+function stripTags(value = '') {
+    return decodeHtmlEntities(String(value).replace(/<[^>]+>/g, ' '))
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 function fetchHtml(url, options = {}) {
     return new Promise((resolve, reject) => {
         const mod = url.startsWith('https') ? https : http;
@@ -74,30 +94,27 @@ async function getGoogleTrending(geo = 'VN') {
         const res = await fetchHtml(url);
         if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
 
-        // Parse plain <title> tags (RSS không dùng CDATA)
-        const titles = [];
-        for (const m of res.body.matchAll(/<title>(.*?)<\/title>/g)) {
-            const t = m[1].trim();
-            if (t && !t.toLowerCase().includes('daily search') && !t.toLowerCase().includes('google trends')) {
-                titles.push(t);
-            }
-        }
-        const traffic = [...res.body.matchAll(/<ht:approx_traffic>(.*?)<\/ht:approx_traffic>/g)].map(m => m[1].trim());
-        const newsItems = [...res.body.matchAll(/<ht:news_item_title>(.*?)<\/ht:news_item_title>/g)].map(m => m[1].trim());
-
-        return titles.slice(0, 20).map((title, i) => ({
-            keyword: title,
-            traffic: traffic[i] || null,
-            related_news: newsItems.filter((_, ni) => ni === i) || [],
-            source: 'google_trends',
-            geo,
-        }));
+        const items = [...res.body.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(match => match[1]);
+        return items.slice(0, 20).map(itemXml => {
+            const title = stripTags(itemXml.match(/<title>([\s\S]*?)<\/title>/)?.[1] || '');
+            const traffic = stripTags(itemXml.match(/<ht:approx_traffic>([\s\S]*?)<\/ht:approx_traffic>/)?.[1] || '');
+            const newsTitles = [...itemXml.matchAll(/<ht:news_item_title>([\s\S]*?)<\/ht:news_item_title>/g)].map(m => stripTags(m[1])).filter(Boolean);
+            const newsUrls = [...itemXml.matchAll(/<ht:news_item_url>([\s\S]*?)<\/ht:news_item_url>/g)].map(m => stripTags(m[1])).filter(Boolean);
+            return {
+                keyword: title,
+                traffic: traffic || null,
+                related_news: newsTitles,
+                related_news_urls: newsUrls,
+                url: newsUrls[0] || `https://trends.google.com/trending?geo=${geo}`,
+                source: 'google_trends',
+                geo,
+            };
+        }).filter(item => item.keyword);
     } catch (e) {
         console.error('[MarketData] Google Trends error:', e.message);
         return [];
     }
 }
-
 // ─── Shopee Trending (public API không cần auth) ──────────────────────────────
 
 /**
@@ -133,6 +150,7 @@ async function getShopeeTrending(limit = 20) {
                 sold: data.historical_sold || data.sold || 0,
                 rating: data.item_rating?.rating_star ? Math.round(data.item_rating.rating_star * 10) / 10 : null,
                 shop_location: data.shop_location || null,
+                url: data.shopid && data.itemid ? `https://shopee.vn/product/${data.shopid}/${data.itemid}` : null,
                 source: 'shopee_trending',
             };
         }).filter(p => p.name);
@@ -202,6 +220,7 @@ async function getLazadaTrending(limit = 15) {
             review_count: item.review || 0,
             rating: item.ratingScore || null,
             sold_count: item.itemSoldCntShow || null,
+            url: item.itemUrl ? new URL(item.itemUrl, 'https://www.lazada.vn').href : null,
             source: 'lazada_trending',
         })).filter(p => p.name);
     } catch (e) {
@@ -232,6 +251,53 @@ async function getTikTokTrending() {
     }
 }
 
+const AI_KEYWORD_RE = /\b(ai|llm|agent|rag|transformer|machine learning|deep learning|inference|model|vision|speech|diffusion|generative|vector|embedding|copilot|chatbot|automation|workflow)\b/i;
+
+function parseGitHubTrending(html, since) {
+    const articles = [...String(html || '').matchAll(/<article[\s\S]*?<\/article>/g)].map(m => m[0]);
+    return articles.map(article => {
+        const href = article.match(/<h2[\s\S]*?<a[^>]+href="([^"]+)"/i)?.[1];
+        if (!href) return null;
+        const repo = href.replace(/^\/+/, '').trim();
+        const description = stripTags(article.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1] || '');
+        const language = stripTags(article.match(/itemprop="programmingLanguage"[^>]*>([\s\S]*?)<\/span>/i)?.[1] || '');
+        const starText = stripTags(article.match(/stars?\s+today|stars?\s+this week/i)?.[0] || '');
+        const bodyText = stripTags(article);
+        if (!AI_KEYWORD_RE.test(`${repo} ${description} ${bodyText}`)) return null;
+        return {
+            name: repo,
+            description,
+            language: language || null,
+            stars_text: starText || null,
+            url: `https://github.com/${repo}`,
+            source: `github_trending_${since}`
+        };
+    }).filter(Boolean);
+}
+
+async function getGitHubTrendingAI(limit = 12) {
+    try {
+        const daily = await fetchHtml('https://github.com/trending?since=daily', {
+            headers: { 'Accept-Language': 'en-US,en;q=0.9' },
+            timeout: 15000
+        }).catch(() => ({ status: 0, body: '' }));
+        const weekly = await fetchHtml('https://github.com/trending?since=weekly', {
+            headers: { 'Accept-Language': 'en-US,en;q=0.9' },
+            timeout: 15000
+        }).catch(() => ({ status: 0, body: '' }));
+        const seen = new Set();
+        return [...parseGitHubTrending(daily.body, 'daily'), ...parseGitHubTrending(weekly.body, 'weekly')]
+            .filter(item => {
+                if (seen.has(item.url)) return false;
+                seen.add(item.url);
+                return true;
+            })
+            .slice(0, limit);
+    } catch (e) {
+        console.error('[MarketData] GitHub Trending AI error:', e.message);
+        return [];
+    }
+}
 // ─── Main: fetch all sources ─────────────────────────────────────────────────
 
 /**
@@ -242,13 +308,14 @@ async function fetchMarketSnapshot() {
     const startTime = Date.now();
     console.log('[MarketData] Fetching market snapshot...');
 
-    const [googleTrends, shopeeTop, shopeeFlash, lazadaTop, lazadaApiTop, tiktokTrending] = await Promise.allSettled([
+    const [googleTrends, shopeeTop, shopeeFlash, lazadaTop, lazadaApiTop, tiktokTrending, githubTrendingAI] = await Promise.allSettled([
         getGoogleTrending('VN'),
         scrapeShopeeTrending(15).catch(() => []), // D?ng browser scraper
         getShopeeFlashSale(15),
         scrapeLazadaTrending(15).catch(() => []),
         getLazadaTrending(15),
         getTikTokTrending(),
+        getGitHubTrendingAI(12),
     ]);
 
     const browserLazada = lazadaTop.status === 'fulfilled' ? lazadaTop.value : [];
@@ -263,6 +330,7 @@ async function fetchMarketSnapshot() {
             shopee_flash_sale: shopeeFlash.status === 'fulfilled' ? shopeeFlash.value : [],
             lazada_top: browserLazada.length ? browserLazada : apiLazada,
             tiktok_products: tiktokTrending.status === 'fulfilled' ? tiktokTrending.value : [],
+            github_trending_ai: githubTrendingAI.status === 'fulfilled' ? githubTrendingAI.value : [],
         },
         source_status: {
             google_trends: googleTrends.status,
@@ -270,7 +338,8 @@ async function fetchMarketSnapshot() {
             shopee_flash_sale: shopeeFlash.status,
             lazada_browser: lazadaTop.status,
             lazada_api: lazadaApiTop.status,
-            tiktok_products: tiktokTrending.status
+            tiktok_products: tiktokTrending.status,
+            github_trending_ai: githubTrendingAI.status
         }
     };
 
@@ -296,9 +365,10 @@ function formatSnapshotForPrompt(snapshot, options = {}) {
             ''
         ].join('\n');
     }
+    const sourceDate = new Date(snapshot.fetched_at || Date.now()).toISOString().slice(0, 10);
     const lines = [
         `=== REAL-TIME MARKET DATA (${snapshot.fetched_at}) ===`,
-        `Sources: Google Trends VN, Shopee VN browser/API, Lazada VN browser/API, TikTok Trending`,
+        `Sources: Google Trends VN, Shopee VN browser/API, Lazada VN browser/API, TikTok Trending, GitHub Trending AI`,
         '',
     ];
 
@@ -307,29 +377,36 @@ function formatSnapshotForPrompt(snapshot, options = {}) {
         shopee_top = [],
         shopee_flash_sale = [],
         lazada_top = [],
-        tiktok_products = []
+        tiktok_products = [],
+        github_trending_ai = []
     } = snapshot.sources;
 
     if (google_trends.length) {
-        lines.push('## Google Trends VN (đang trending ngay bây giờ):');
+        lines.push('## Google Trends VN (dang trending):');
         google_trends.slice(0, maxItemsPerSource).forEach((t, i) => {
             lines.push(`  ${i + 1}. ${t.keyword}${t.traffic ? ` (${t.traffic} searches)` : ''}`);
+            if (t.url) lines.push(`     Exact URL: ${t.url}`);
+            if (Array.isArray(t.related_news) && t.related_news.length) {
+                lines.push(`     News: ${t.related_news.slice(0, 2).join(' | ')}`);
+            }
         });
         lines.push('');
     }
 
     if (shopee_top.length) {
-        lines.push('## Shopee Top Sellers (theo doanh số):');
+        lines.push('## Shopee Top Sellers:');
         shopee_top.slice(0, maxItemsPerSource).forEach((p, i) => {
-            lines.push(`  ${i + 1}. ${p.name}${p.price_vnd || p.price ? ` — ${p.price_vnd || p.price}` : ''}${p.sold || p.sold_text ? ` — Đã bán: ${p.sold || p.sold_text}` : ''}`);
+            lines.push(`  ${i + 1}. ${p.name}${p.price_vnd || p.price ? ` - ${p.price_vnd || p.price}` : ''}${p.sold || p.sold_text ? ` - Sold: ${p.sold || p.sold_text}` : ''}`);
+            if (p.url) lines.push(`     Exact URL: ${p.url}`);
         });
         lines.push('');
     }
 
     if (shopee_flash_sale.length) {
-        lines.push('## Shopee Flash Sale (đang hot):');
+        lines.push('## Shopee Flash Sale:');
         shopee_flash_sale.slice(0, maxItemsPerSource).forEach((p, i) => {
-            lines.push(`  ${i + 1}. ${p.name}${p.discount_pct ? ` (-${p.discount_pct}%)` : ''}${p.sold ? ` — Đã bán: ${p.sold}` : ''}`);
+            lines.push(`  ${i + 1}. ${p.name}${p.discount_pct ? ` (-${p.discount_pct}%)` : ''}${p.sold ? ` - Sold: ${p.sold}` : ''}`);
+            if (p.url) lines.push(`     Exact URL: ${p.url}`);
         });
         lines.push('');
     }
@@ -337,7 +414,8 @@ function formatSnapshotForPrompt(snapshot, options = {}) {
     if (lazada_top.length) {
         lines.push('## Lazada Trending:');
         lazada_top.slice(0, maxItemsPerSource).forEach((p, i) => {
-            lines.push(`  ${i + 1}. ${p.name}${p.price_vnd || p.price ? ` — ${p.price_vnd || p.price}` : ''}${p.sold || p.sold_count ? ` — ${p.sold || p.sold_count}` : ''}`);
+            lines.push(`  ${i + 1}. ${p.name}${p.price_vnd || p.price ? ` - ${p.price_vnd || p.price}` : ''}${p.sold || p.sold_count ? ` - ${p.sold || p.sold_count}` : ''}`);
+            if (p.url) lines.push(`     Exact URL: ${p.url}`);
         });
         lines.push('');
     }
@@ -346,17 +424,28 @@ function formatSnapshotForPrompt(snapshot, options = {}) {
         lines.push('## TikTok Trending Products VN:');
         tiktok_products.slice(0, maxItemsPerSource).forEach((p, i) => {
             lines.push(`  ${i + 1}. ${p.name}`);
+            if (p.url) lines.push(`     Exact URL: ${p.url}`);
+        });
+        lines.push('');
+    }
+
+    if (github_trending_ai.length) {
+        lines.push('## GitHub Trending AI repos (daily/weekly):');
+        github_trending_ai.slice(0, maxItemsPerSource).forEach((p, i) => {
+            lines.push(`  ${i + 1}. ${p.name}${p.language ? ` - ${p.language}` : ''}${p.description ? ` - ${p.description}` : ''}`);
+            if (p.url) lines.push(`     Exact URL: ${p.url}`);
         });
         lines.push('');
     }
 
     lines.push('=== END MARKET DATA ===');
-    lines.push('Use the above REAL DATA as grounding. Prioritize items that appear in multiple sources.');
+    lines.push('Use only the REAL DATA candidates above as source material. Prioritize items that appear in multiple sources.');
+    lines.push('Copy source_url/source_urls exactly from an Exact URL shown above. Never synthesize, guess, shorten, or rewrite a URL or product item ID.');
+    lines.push(`Use source_date "${sourceDate}" for marketplace, Google Trends, TikTok, and GitHub Trending candidates in this snapshot.`);
     lines.push('');
 
     return lines.join('\n');
 }
-
 module.exports = {
     fetchMarketSnapshot,
     formatSnapshotForPrompt,
@@ -365,4 +454,5 @@ module.exports = {
     getShopeeFlashSale,
     getLazadaTrending,
     getTikTokTrending,
+    getGitHubTrendingAI,
 };

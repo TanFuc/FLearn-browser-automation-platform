@@ -16,14 +16,14 @@ const upPostService = require('./up-post-service');
 const { addAffVidJob } = require('./queue');
 const { emitSystemLog } = require('./logger');
 const RESEARCH_TIMEZONE = process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Ho_Chi_Minh';
-const MIN_RESEARCH_RESULTS = 10;
+const MIN_RESEARCH_RESULTS = 4;
 const MAX_RESEARCH_RESULTS = 15;
 const DEFAULT_RESEARCH_RESULTS = 15;
 const AFF_VID_STATUSES = ['draft', 'rendering', 'rendered', 'posting', 'posted', 'failed'];
 const UP_POST_PATCH_STATUSES = ['draft', 'validated', 'queued', 'posting', 'published', 'failed'];
-const AI_MARKET_MIN_RESULTS = 18;
-const AI_MARKET_MAX_RESULTS = 30;
-const DEFAULT_AI_MARKET_RESULTS = 25;
+const AI_MARKET_MIN_RESULTS = 4;
+const AI_MARKET_MAX_RESULTS = 8;
+const DEFAULT_AI_MARKET_RESULTS = 8;
 
 function localDateSql(column = 'created_at') {
     return `DATE(${column} AT TIME ZONE '${RESEARCH_TIMEZONE}')`;
@@ -31,6 +31,14 @@ function localDateSql(column = 'created_at') {
 
 function localDateKeySql(column = 'created_at') {
     return `TO_CHAR(${localDateSql(column)}, 'YYYY-MM-DD')`;
+}
+
+function productDateSql(column = 'created_at') {
+    return `DATE(${column})`;
+}
+
+function productDateKeySql(column = 'created_at') {
+    return `TO_CHAR(${productDateSql(column)}, 'YYYY-MM-DD')`;
 }
 
 function currentLocalDate() {
@@ -621,7 +629,14 @@ function filterReadableLegacyRows(page, rows) {
     if (!config) return rows;
     if (!['mmo', 'ai_tools', 'suggestions'].includes(page)) return rows;
     const filtered = validateLegacyItems(page, rows, config.required);
-    return filtered.length >= MIN_RESEARCH_RESULTS ? filtered : [];
+    if (filtered.length >= MIN_RESEARCH_RESULTS) return filtered;
+
+    // Keep historical DB results readable when the current freshness window has
+    // expired. Fresh generation still uses the strict evidence validation above.
+    return validateItems(rows, config.required).map(item => ({
+        ...item,
+        is_stale: true
+    }));
 }
 
 async function getLegacyAvailableDates(page) {
@@ -760,7 +775,7 @@ async function loadProductTrendRows({ market, categories, window, limit, date })
     }
     if (date) {
         params.push(date);
-        where.push(`${localDateSql('created_at')} = $${params.length}`);
+        where.push(`${productDateSql('created_at')} = $${params.length}`);
     }
     params.push(limit);
     const result = await db.query(`
@@ -847,7 +862,7 @@ async function loadAffVideoCandidates({ date, market = 'vn', window = 'last_7_da
     }
     if (date) {
         params.push(date);
-        where.push(`${localDateSql('created_at')} = $${params.length}`);
+        where.push(`${productDateSql('created_at')} = $${params.length}`);
     }
     params.push(limit);
     const limitParam = params.length;
@@ -984,7 +999,7 @@ async function loadUpPostSources({ limit = 20, sourceType = 'aff_vid', date = nu
     const dateWhere = [];
     if (date) {
         dateParams.push(date);
-        dateWhere.push(`${localDateSql('created_at')} = $${dateParams.length}`);
+        dateWhere.push(`${sourceType === 'research' ? productDateSql('created_at') : localDateSql('created_at')} = $${dateParams.length}`);
     }
     if (sourceType === 'research') {
         const params = [...dateParams, limit];
@@ -1619,7 +1634,7 @@ router.get('/usage/daily', async (req, res) => {
             UNION
             SELECT ${localDateKeySql('created_at')} as day FROM ai_suggestions
             UNION
-            SELECT ${localDateKeySql('created_at')} as day FROM product_trend_results
+            SELECT ${productDateKeySql('created_at')} as day FROM product_trend_results
             UNION
             SELECT ${localDateKeySql('created_at')} as day FROM aff_video_plans
             UNION
@@ -1710,7 +1725,7 @@ router.get('/date-availability', async (req, res) => {
                 ORDER BY day DESC
             `),
             db.query(`
-                SELECT ${localDateKeySql('created_at')} as day, source_window, COUNT(*)::INT as count
+                SELECT ${productDateKeySql('created_at')} as day, source_window, COUNT(*)::INT as count
                 FROM product_trend_results
                 GROUP BY day, source_window
                 ORDER BY day DESC
@@ -1837,7 +1852,7 @@ router.get('/overview', async (req, res) => {
         const trendWhere = [];
         if (date) {
             trendParams.push(date);
-            trendWhere.push(`${localDateSql('created_at')} = $${trendParams.length}`);
+            trendWhere.push(`${productDateSql('created_at')} = $${trendParams.length}`);
         }
         const trendWhereSql = trendWhere.length ? `WHERE ${trendWhere.join(' AND ')}` : '';
         const trends = await db.query(`
@@ -2372,9 +2387,53 @@ router.get('/prompt-options', async (req, res) => {
     });
 });
 
+function titleFromId(id) {
+    return String(id || '')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function buildDeterministicPrompt(payload = {}, reason = 'local_fallback') {
+    const product = String(payload.product || '').trim() || 'the selected product';
+    const platform = String(payload.platform || 'TikTok').trim();
+    const outputType = payload.output_type === 'video' ? 'video' : 'image';
+    const language = String(payload.language || 'English').trim();
+    const scenario = titleFromId(payload.scenario || 'studio');
+    const character = titleFromId(payload.character || 'none');
+    const moods = Array.isArray(payload.moods) && payload.moods.length ? payload.moods.map(titleFromId).join(', ') : 'Bright, premium';
+    const styles = Array.isArray(payload.styles) && payload.styles.length ? payload.styles.map(titleFromId).join(', ') : 'Photorealistic, cinematic';
+    const notes = String(payload.notes || '').trim();
+    const camera = outputType === 'video'
+        ? 'vertical 9:16, opening hook shot, smooth push-in, product close-ups, practical use demo, final CTA frame'
+        : 'commercial product hero shot, sharp focus, clean composition, detailed lighting, premium e-commerce finish';
+    const positive = [
+        `${outputType === 'video' ? 'Create a vertical short-form video prompt' : 'Create a premium image prompt'} for ${product}.`,
+        `Platform: ${platform}. Language for on-screen/caption planning: ${language}.`,
+        `Scene: ${scenario}. Character/use context: ${character}. Mood: ${moods}. Visual style: ${styles}.`,
+        `Direction: ${camera}.`,
+        'Emphasize clear product benefit, real-world usability, attractive lighting, high conversion ad creative, authentic Vietnamese ecommerce feel, no fake claims.',
+        notes ? `Extra notes: ${notes}.` : '',
+        outputType === 'video'
+            ? 'Include natural motion, first 2 seconds strong hook, before/after or problem-solution framing, readable text-safe areas.'
+            : 'Use high detail, realistic materials, natural shadows, balanced background, space for headline text.'
+    ].filter(Boolean).join(' ');
+    const negative = [
+        'low quality, blurry, distorted product, wrong proportions, extra fingers, unreadable text, watermark, logo misuse, fake UI, overexposed, underexposed',
+        'misleading medical/financial claims, spammy text, cluttered background, duplicate objects, broken anatomy'
+    ].join(', ');
+    return {
+        positive_prompt: positive,
+        negative_prompt: negative,
+        provider: 'deterministic',
+        fallback_reason: reason
+    };
+}
+
 router.post('/generate-prompt', async (req, res) => {
+    const payload = req.body || {};
+    let parsed;
+    let provider = 'gemini';
     try {
-        const payload = req.body || {};
         const promptTemplate = [
             'You are a professional image and video prompt engineer.',
             'Create a JSON object with exactly two string fields: positive_prompt and negative_prompt.',
@@ -2382,21 +2441,22 @@ router.post('/generate-prompt', async (req, res) => {
             JSON.stringify(payload)
         ].join('\n');
         const raw = await callGemini(promptTemplate, { endpoint: 'prompt_builder', useLite: false, skipCache: true });
-        if (!raw) return res.status(500).json({ success: false, error: 'Gemini returned empty' });
-        let parsed = raw && typeof raw === 'object' ? extractObject(raw) : null;
+        if (!raw) throw new Error('Gemini returned empty');
+        parsed = raw && typeof raw === 'object' ? extractObject(raw) : null;
         if (!parsed?.positive_prompt) {
             const text = typeof raw === 'string' ? raw : String(raw?.raw || '');
             const match = text.match(/\{[\s\S]*?\}/);
             parsed = match ? JSON.parse(match[0]) : { positive_prompt: text || JSON.stringify(raw), negative_prompt: 'Low quality, worst quality, text, watermark' };
         }
-        const prompt = [
-            `Positive prompt:\n${parsed.positive_prompt || ''}`,
-            `Negative prompt:\n${parsed.negative_prompt || 'Low quality, worst quality, text, watermark'}`
-        ].join('\n\n');
-        res.json({ success: true, data: { prompt, raw: parsed } });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        provider = 'deterministic_fallback';
+        parsed = buildDeterministicPrompt(payload, err.message);
     }
+    const prompt = [
+        `Positive prompt:\n${parsed.positive_prompt || ''}`,
+        `Negative prompt:\n${parsed.negative_prompt || 'Low quality, worst quality, text, watermark'}`
+    ].join('\n\n');
+    res.json({ success: true, data: { prompt, raw: parsed, provider } });
 });
 
 router.post('/generate-media', async (req, res) => {

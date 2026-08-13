@@ -318,7 +318,10 @@ async function clickPostSubmitButton(page) {
 async function createPostTask(page, context, account, jobData, emitLog, incrementStats) {
     const accountId = account.id;
     const postText = String(jobData.postText || jobData.commentText || '').trim();
-    const targetUrl = String(jobData.url || '').trim() || 'https://www.facebook.com/';
+    const postTargetMode = String(jobData.postTargetMode || 'profile') === 'target' ? 'target' : 'profile';
+    const targetUrl = postTargetMode === 'profile'
+        ? 'https://www.facebook.com/me'
+        : (String(jobData.url || '').trim() || 'https://www.facebook.com/');
 
     if (!postText) {
         throw new Error('Thiếu nội dung bài viết.');
@@ -327,7 +330,9 @@ async function createPostTask(page, context, account, jobData, emitLog, incremen
         throw new Error('Nội dung bài viết quá dài, tối đa 1000 ký tự cho bản demo.');
     }
 
-    emitLog(accountId, `Mở trang để đăng bài: ${targetUrl}`, 'system');
+    emitLog(accountId, postTargetMode === 'profile'
+        ? 'Mở trang cá nhân để đăng bài...'
+        : `Mở trang đích để đăng bài: ${targetUrl}`, 'system');
     await ensureFacebookSession(page, account, targetUrl, emitLog);
     await page.waitForLoadState('domcontentloaded').catch(() => {});
     await page.waitForTimeout(3000);

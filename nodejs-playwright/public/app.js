@@ -394,6 +394,19 @@ function ensureScheduleEditor() {
                         <option value="comment_post">Bình luận bài viết</option>
                     </select>
                 </div>
+                <div class="form-group" id="scheduleEditPostTargetWrap" style="display:none;">
+                    <label>Đăng bài ở đâu?</label>
+                    <div class="post-target-options">
+                        <label>
+                            <input type="radio" name="scheduleEditPostTargetMode" value="profile" checked onchange="toggleScheduleEditorTaskUI()">
+                            Trang cá nhân
+                        </label>
+                        <label>
+                            <input type="radio" name="scheduleEditPostTargetMode" value="target" onchange="toggleScheduleEditorTaskUI()">
+                            Link đích / group / page
+                        </label>
+                    </div>
+                </div>
                 <div class="form-group" id="scheduleEditGroupWrap">
                     <label>Link nhóm</label>
                     <input type="url" id="scheduleEditGroupUrl" placeholder="https://facebook.com/groups/..." inputmode="url">
@@ -471,8 +484,17 @@ window.toggleScheduleEditorTaskUI = () => {
     const contentLabel = document.getElementById('scheduleEditContentLabel');
     const contentText = document.getElementById('scheduleEditContentText');
     const commentCountWrap = document.getElementById('scheduleEditCommentCountWrap');
+    const postTargetWrap = document.getElementById('scheduleEditPostTargetWrap');
+    const postTargetMode = document.querySelector('input[name="scheduleEditPostTargetMode"]:checked')?.value || 'profile';
+    const groupInput = document.getElementById('scheduleEditGroupUrl');
     if (!groupWrap || !unfollowWrap || !contentWrap) return;
-    groupWrap.style.display = type === 'invite' || type === 'comment_post' || type === 'create_post' ? 'block' : 'none';
+    if (postTargetWrap) postTargetWrap.style.display = type === 'create_post' ? 'block' : 'none';
+    groupWrap.style.display = type === 'invite' || type === 'comment_post' || (type === 'create_post' && postTargetMode === 'target') ? 'block' : 'none';
+    if (groupInput) {
+        groupInput.placeholder = type === 'create_post'
+            ? 'https://facebook.com/groups/... hoặc https://facebook.com/page...'
+            : (type === 'comment_post' ? 'https://facebook.com/.../posts/...' : 'https://facebook.com/groups/...');
+    }
     unfollowWrap.style.display = type === 'unfollow_friends' || type === 'unfollow_following' ? 'block' : 'none';
     contentWrap.style.display = type === 'comment_post' || type === 'create_post' ? 'block' : 'none';
     if (commentCountWrap) commentCountWrap.style.display = type === 'comment_post' ? 'block' : 'none';
@@ -513,6 +535,9 @@ window.editSchedule = async (id) => {
     document.getElementById('scheduleEditContentText').value = schedule.comment_text || '';
     document.getElementById('scheduleEditCommentCount').value = schedule.comment_count || 1;
     document.getElementById('scheduleEditMaxUnfollow').value = schedule.max_unfollow || 0;
+    const postTargetMode = schedule.post_target_mode || (schedule.task_type === 'create_post' && schedule.group_url ? 'target' : 'profile');
+    const postTargetInput = document.querySelector(`input[name="scheduleEditPostTargetMode"][value="${postTargetMode === 'target' ? 'target' : 'profile'}"]`);
+    if (postTargetInput) postTargetInput.checked = true;
     document.getElementById('scheduleEditType').value = schedule.schedule_type || 'none';
     document.getElementById('scheduleEditTime').value = schedule.schedule_type === 'time' ? (schedule.schedule_value || '') : '';
     document.getElementById('scheduleEditInterval').value = schedule.schedule_type === 'interval' ? (schedule.schedule_value || '') : '';
@@ -536,9 +561,11 @@ async function saveScheduleEdit(event) {
     const maxUnfollow = document.getElementById('scheduleEditMaxUnfollow').value || 0;
     const commentText = document.getElementById('scheduleEditContentText')?.value.trim() || '';
     const commentCount = parseInt(document.getElementById('scheduleEditCommentCount')?.value || '1', 10);
+    const postTargetMode = document.querySelector('input[name="scheduleEditPostTargetMode"]:checked')?.value || 'profile';
 
     if (accountId.length === 0) return showToast('Chọn ít nhất 1 tài khoản.', 'warning');
     if (taskType === 'invite' && !groupUrl) return showToast('Vui lòng nhập link nhóm.', 'warning');
+    if (taskType === 'create_post' && postTargetMode === 'target' && !groupUrl) return showToast('Vui lòng nhập link đích.', 'warning');
     if ((taskType === 'comment_post' || taskType === 'create_post') && !commentText) return showToast('Vui lòng nhập nội dung.', 'warning');
     if (taskType === 'comment_post' && (!Number.isInteger(commentCount) || commentCount < 1 || commentCount > 10)) return showToast('Số lần bình luận phải từ 1 đến 10.', 'warning');
     if (scheduleType === 'time' && !scheduleTime) return showToast('Vui lòng chọn giờ chạy.', 'warning');
@@ -548,7 +575,7 @@ async function saveScheduleEdit(event) {
         const res = await fetch(`/api/automation/schedules/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accountId, taskType, groupUrl, maxUnfollow, commentText, commentCount, scheduleType, scheduleTime, scheduleInterval, maxRuns })
+            body: JSON.stringify({ accountId, taskType, groupUrl, maxUnfollow, commentText, commentCount, postTargetMode, scheduleType, scheduleTime, scheduleInterval, maxRuns })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.success) throw new Error(data.error || 'Không thể cập nhật lịch');
@@ -827,6 +854,8 @@ window.toggleTaskTypeUI = () => {
     const groupUrlContainer = document.getElementById('groupUrlContainer');
     const groupUrlInput = document.getElementById('groupUrl');
     const groupUrlLabel = document.getElementById('groupUrlLabel');
+    const postTargetContainer = document.getElementById('postTargetContainer');
+    const postTargetMode = document.querySelector('input[name="postTargetMode"]:checked')?.value || 'profile';
     const unfollowOptionsContainer = document.getElementById('unfollowOptionsContainer');
     const commentOptionsContainer = document.getElementById('commentOptionsContainer');
     const commentTextInput = document.getElementById('commentText');
@@ -838,6 +867,7 @@ window.toggleTaskTypeUI = () => {
     if (type === 'unfollow_friends' || type === 'unfollow_following') {
         groupUrlContainer.style.display = 'none';
         groupUrlInput.removeAttribute('required');
+        if (postTargetContainer) postTargetContainer.style.display = 'none';
         unfollowOptionsContainer.style.display = 'block';
         if (commentOptionsContainer) commentOptionsContainer.style.display = 'none';
         if (commentCountContainer) commentCountContainer.style.display = 'none';
@@ -845,6 +875,7 @@ window.toggleTaskTypeUI = () => {
     } else if (type === 'warmup') {
         groupUrlContainer.style.display = 'none';
         groupUrlInput.removeAttribute('required');
+        if (postTargetContainer) postTargetContainer.style.display = 'none';
         unfollowOptionsContainer.style.display = 'none';
         if (commentOptionsContainer) commentOptionsContainer.style.display = 'none';
         if (commentCountContainer) commentCountContainer.style.display = 'none';
@@ -852,6 +883,7 @@ window.toggleTaskTypeUI = () => {
     } else if (type === 'comment_post') {
         groupUrlContainer.style.display = 'block';
         groupUrlInput.removeAttribute('required');
+        if (postTargetContainer) postTargetContainer.style.display = 'none';
         groupUrlInput.placeholder = 'https://facebook.com/.../posts/... hoặc để trống để quét News Feed';
         if (groupUrlLabel) groupUrlLabel.textContent = 'Link Bài Viết (tùy chọn)';
         unfollowOptionsContainer.style.display = 'none';
@@ -864,10 +896,12 @@ window.toggleTaskTypeUI = () => {
         if (commentTextInput) commentTextInput.setAttribute('maxlength', '500');
         if (commentTextInput) commentTextInput.setAttribute('required', 'required');
     } else if (type === 'create_post') {
-        groupUrlContainer.style.display = 'block';
-        groupUrlInput.removeAttribute('required');
-        groupUrlInput.placeholder = 'Để trống để đăng lên trang cá nhân, hoặc nhập link group/page';
-        if (groupUrlLabel) groupUrlLabel.textContent = 'Link Đích (tùy chọn)';
+        if (postTargetContainer) postTargetContainer.style.display = 'block';
+        groupUrlContainer.style.display = postTargetMode === 'target' ? 'block' : 'none';
+        if (postTargetMode === 'target') groupUrlInput.setAttribute('required', 'required');
+        else groupUrlInput.removeAttribute('required');
+        groupUrlInput.placeholder = 'https://facebook.com/groups/... hoặc https://facebook.com/page...';
+        if (groupUrlLabel) groupUrlLabel.textContent = 'Link Đích';
         unfollowOptionsContainer.style.display = 'none';
         if (commentOptionsContainer) commentOptionsContainer.style.display = 'block';
         if (commentCountContainer) commentCountContainer.style.display = 'none';
@@ -879,6 +913,7 @@ window.toggleTaskTypeUI = () => {
     } else {
         groupUrlContainer.style.display = 'block';
         groupUrlInput.setAttribute('required', 'required');
+        if (postTargetContainer) postTargetContainer.style.display = 'none';
         groupUrlInput.placeholder = 'https://facebook.com/groups/...';
         if (groupUrlLabel) groupUrlLabel.textContent = 'Link Nhóm';
         unfollowOptionsContainer.style.display = 'none';
@@ -919,6 +954,10 @@ if (commentTextEditor) {
         syncCommentEditor();
     });
 }
+
+document.querySelectorAll('input[name="postTargetMode"]').forEach(input => {
+    input.addEventListener('change', toggleTaskTypeUI);
+});
 
 function renderAccountsTable(accounts) {
     const tbody = document.getElementById('accounts-table-body');
@@ -1240,6 +1279,7 @@ runTaskForm.addEventListener('submit', (e) => {
     const maxRuns = document.getElementById('scheduleMaxRuns')?.value || '';
     const commentText = syncCommentEditor() || document.getElementById('commentText')?.value.trim() || '';
     const commentCount = parseInt(document.getElementById('commentCount')?.value || '1', 10);
+    const postTargetMode = document.querySelector('input[name="postTargetMode"]:checked')?.value || 'profile';
 
     if (accountIds.length === 0) {
         showToast('Chọn ít nhất 1 tài khoản!');
@@ -1261,6 +1301,11 @@ runTaskForm.addEventListener('submit', (e) => {
         return;
     }
 
+    if (taskType === 'create_post' && postTargetMode === 'target' && !groupUrl) {
+        showToast('Vui lòng nhập link đích để đăng bài!');
+        return;
+    }
+
     if (taskType === 'comment_post' && (!Number.isInteger(commentCount) || commentCount < 1 || commentCount > 10)) {
         showToast('Số lần bình luận phải từ 1 đến 10!');
         return;
@@ -1279,7 +1324,8 @@ runTaskForm.addEventListener('submit', (e) => {
             scheduleInterval,
             maxRuns,
             commentText,
-            commentCount
+            commentCount,
+            postTargetMode
         })
     }).then(async (res) => {
         const data = await res.json().catch(() => ({}));

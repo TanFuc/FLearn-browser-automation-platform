@@ -21,6 +21,24 @@ if (process.env.REDIS_PASSWORD) {
 }
 
 const connection = new IORedis(redisOptions);
+const accountLocks = new Map();
+
+async function withAccountLock(accountId, fn) {
+  const key = String(accountId || '');
+  const previous = accountLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise(resolve => { release = resolve; });
+  const chained = previous.then(() => current, () => current);
+  accountLocks.set(key, chained);
+
+  await previous.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (accountLocks.get(key) === chained) accountLocks.delete(key);
+  }
+}
 
 function safeJson(value, fallback = {}) {
   if (!value) return fallback;
@@ -192,6 +210,8 @@ async function processUpPostJob(job) {
 const worker = new Worker('invite-queue', async job => {
   const { accountId, payload } = job.data;
   const taskType = payload.taskType || 'invite';
+
+  return withAccountLock(accountId, async () => {
 
   // [TỐI ƯU] Tránh mở trình duyệt đồng loạt gây nghẽn CPU/Lock renewal
   // Tăng delay ngẫu nhiên từ 2-15 giây để dàn trải tải trọng
@@ -374,6 +394,7 @@ const worker = new Worker('invite-queue', async job => {
         emitLog(accountId, `Đã đóng trình duyệt.`);
     }
   }
+  });
 }, {
     connection,
     concurrency: parseInt(process.env.MAX_CONCURRENCY || 3), // Giảm xuống 3 để an toàn cho RAM/CPU

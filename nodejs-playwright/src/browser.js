@@ -10,6 +10,7 @@ try {
     console.log('[Browser] CloakBrowser require failed, will use dynamic import in createOrLoadContext');
 }
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 const config = require('./config');
 const db = require('./db');
 
@@ -43,6 +44,65 @@ function resolveBrowserWindow(profile) {
         height: profile.viewport.height,
         source: 'fingerprint'
     };
+}
+
+function removeProfileLockFiles(accountId, userDataDir) {
+    ['SingletonLock', 'SingletonCookie', 'SingletonSocket'].forEach(fileName => {
+        const lockFile = require('path').join(userDataDir, fileName);
+        if (!fs.existsSync(lockFile)) return;
+        try {
+            fs.unlinkSync(lockFile);
+            console.log(`[${accountId}] Removed stale Chrome profile lock: ${fileName}`);
+        } catch (err) {
+            console.log(`[${accountId}] Could not remove ${fileName}: ${err.message}`);
+        }
+    });
+}
+
+function closeExistingProfileProcesses(accountId, userDataDir) {
+    if (process.platform !== 'win32') return;
+    const settings = config.getSettings();
+    if (settings.closeExistingBrowserSession === false) return;
+
+    const escaped = userDataDir.replace(/'/g, "''");
+    const command = `
+$profile = '${escaped}';
+$escapedProfile = [WildcardPattern]::Escape($profile);
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -and $_.CommandLine -like "*--user-data-dir=$escapedProfile*" } |
+  ForEach-Object {
+    try {
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop;
+      Write-Output $_.ProcessId;
+    } catch {}
+  }
+`;
+
+    try {
+        const killed = execFileSync('powershell.exe', ['-NoProfile', '-Command', command], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore']
+        }).trim();
+        if (killed) {
+            console.log(`[${accountId}] Closed existing Chrome session for profile before launch: ${killed.replace(/\s+/g, ', ')}`);
+        }
+    } catch (err) {
+        console.log(`[${accountId}] Existing Chrome session cleanup skipped: ${err.message}`);
+    }
+}
+
+function makeBrowserLaunchError(accountId, err) {
+    const message = String(err?.message || err);
+    if (
+        message.includes('Target page, context or browser has been closed') ||
+        message.includes('current browser session') ||
+        message.includes('Mở trong phiên')
+    ) {
+        const friendly = new Error(`Không mở được Chrome cho account ${accountId} vì profile này đang được một phiên Chrome khác giữ. Hãy đóng cửa sổ Chrome automation của account này rồi chạy lại.`);
+        friendly.cause = err;
+        return friendly;
+    }
+    return err;
 }
 
 /**
@@ -106,15 +166,8 @@ async function createOrLoadContext(accountId, proxyString = null, headless = fal
     const userDataDir = path.join(config.PROFILES_DIR, accountId);
     
     // Tự động xóa file Lock của Chrome nếu tồn tại (Sửa lỗi "Existing browser session")
-    const lockFile = path.join(userDataDir, 'SingletonLock');
-    if (fs.existsSync(lockFile)) {
-        try {
-            fs.unlinkSync(lockFile);
-            console.log(`[${accountId}] Đã xóa file SingletonLock để giải phóng Profile.`);
-        } catch (e) {
-            // Nếu không xóa được, có thể tiến hành giết process (nâng cao)
-        }
-    }
+    removeProfileLockFiles(accountId, userDataDir);
+    closeExistingProfileProcesses(accountId, userDataDir);
 
     const profile = await getAccountProfile(accountId);
     const browserWindow = resolveBrowserWindow(profile);
@@ -151,30 +204,35 @@ async function createOrLoadContext(accountId, proxyString = null, headless = fal
     console.log(`[${accountId}] Đang khởi tạo trình duyệt với Profile: ${userDataDir}`);
     console.log(`[${accountId}] Browser window: ${browserWindow.width}x${browserWindow.height} (${browserWindow.source})`);
 
-    const context = await launchPersistentContext({
-        userDataDir,
-        headless,
-        userAgent:         profile.userAgent,
-        viewport:          { width: browserWindow.width, height: browserWindow.height },
-        screen:            { width: browserWindow.width, height: browserWindow.height + 40 },
-        timezone:          profile.timezoneId,
-        locale:            profile.locale,
-        colorScheme:       'light',
-        proxy:             proxyConfig,
-        stealthArgs:       true,
-        geoip:             !!proxyConfig,
-        args: [
-            '--disable-blink-features=AutomationControlled',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-infobars',
-            '--disable-notifications',
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            `--window-size=${browserWindow.width},${browserWindow.height}`,
-        ],
-    });
+    let context;
+    try {
+        context = await launchPersistentContext({
+            userDataDir,
+            headless,
+            userAgent:         profile.userAgent,
+            viewport:          { width: browserWindow.width, height: browserWindow.height },
+            screen:            { width: browserWindow.width, height: browserWindow.height + 40 },
+            timezone:          profile.timezoneId,
+            locale:            profile.locale,
+            colorScheme:       'light',
+            proxy:             proxyConfig,
+            stealthArgs:       true,
+            geoip:             !!proxyConfig,
+            args: [
+                '--disable-blink-features=AutomationControlled',
+                '--no-first-run',
+                '--no-default-browser-check',
+                '--disable-infobars',
+                '--disable-notifications',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                `--window-size=${browserWindow.width},${browserWindow.height}`,
+            ],
+        });
+    } catch (err) {
+        throw makeBrowserLaunchError(accountId, err);
+    }
 
     if (typeof humanizeBrowser === 'function') {
         await humanizeBrowser(context.browser(), {

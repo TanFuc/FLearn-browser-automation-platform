@@ -18,7 +18,8 @@ const defaultSettings = {
     keywordsBlacklist: [],
     browserWindowMode: 'fingerprint',
     browserWindowWidth: 1366,
-    browserWindowHeight: 768
+    browserWindowHeight: 768,
+    closeExistingBrowserSession: true
 };
 
 function getSettings() {

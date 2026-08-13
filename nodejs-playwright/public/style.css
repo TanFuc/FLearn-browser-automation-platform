@@ -325,13 +325,26 @@ h1 {
 
 .terminal-toolbar {
     flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
 }
 
 .log-filter-input,
 .log-filter-select {
-    width: 150px;
+    width: 210px;
     min-height: 34px;
     font-size: 0.8rem;
+    background: rgba(15, 23, 42, 0.76);
+    border-color: var(--border-hover);
+}
+
+.log-filter-select {
+    width: 140px;
+}
+
+.terminal-toolbar .terminal-title {
+    margin-right: auto;
+    min-width: 130px;
 }
 
 .context-log-card {

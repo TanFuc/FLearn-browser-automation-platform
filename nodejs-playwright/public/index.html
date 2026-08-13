@@ -612,8 +612,12 @@
                     <div class="card terminal-card" style="height: 70vh;">
                         <div class="terminal-header terminal-toolbar">
                             <div class="terminal-title">full_history.log</div>
-                            <input class="filter-select log-filter-input" id="logAccountFilter" placeholder="account id">
-                            <input class="filter-select log-filter-input" id="logScheduleFilter" placeholder="schedule id">
+                            <select class="filter-select log-filter-input" id="logAccountFilter">
+                                <option value="">Tất cả tài khoản</option>
+                            </select>
+                            <select class="filter-select log-filter-input" id="logScheduleFilter">
+                                <option value="">Tất cả lịch</option>
+                            </select>
                             <select class="filter-select log-filter-select" id="logTypeFilter">
                                 <option value="all">Tất cả</option>
                                 <option value="info">Info</option>

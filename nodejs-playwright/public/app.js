@@ -238,6 +238,38 @@ function formatDateTime(value, fallback = 'Chưa có') {
     return value ? new Date(value).toLocaleString('vi-VN') : fallback;
 }
 
+function accountDisplayName(accountId) {
+    const account = loadedAccounts.find(acc => acc.id === accountId);
+    if (!account) return accountId || 'Không rõ';
+    return account.name ? `${account.name} (${account.id})` : account.id;
+}
+
+function renderLogFilterOptions() {
+    const accountSelect = document.getElementById('logAccountFilter');
+    const scheduleSelect = document.getElementById('logScheduleFilter');
+
+    if (accountSelect) {
+        const current = accountSelect.value;
+        const accounts = (loadedAccounts || []).filter(acc => !acc.deleted_at);
+        accountSelect.innerHTML = '<option value="">Tất cả tài khoản</option>' + accounts.map(acc => {
+            const label = acc.name ? `${acc.name} - ${acc.id}` : acc.id;
+            return `<option value="${escapeHtml(acc.id)}">${escapeHtml(label)}</option>`;
+        }).join('');
+        if ([...accountSelect.options].some(opt => opt.value === current)) accountSelect.value = current;
+    }
+
+    if (scheduleSelect) {
+        const current = scheduleSelect.value;
+        scheduleSelect.innerHTML = '<option value="">Tất cả lịch</option>' + (scheduleCache || []).map(schedule => {
+            const shortId = String(schedule.id || '').slice(0, 8);
+            const task = taskTypeLabel(schedule.task_type);
+            const accountCount = Array.isArray(schedule.account_ids) ? schedule.account_ids.length : 0;
+            return `<option value="${escapeHtml(schedule.id)}">#${escapeHtml(shortId)} - ${escapeHtml(task)} - ${accountCount} acc</option>`;
+        }).join('');
+        if ([...scheduleSelect.options].some(opt => opt.value === current)) scheduleSelect.value = current;
+    }
+}
+
 function paginateItems(items = [], key) {
     const state = paginationState[key] || { page: 1, pageSize: 8 };
     const total = items.length;
@@ -550,6 +582,7 @@ window.loadSchedules = async () => {
 
         const schedules = scheduleJson.data || [];
         scheduleCache = schedules;
+        renderLogFilterOptions();
         const tbody = document.getElementById('schedulesTableBody');
         if (!tbody) return;
         tbody.innerHTML = '';
@@ -944,6 +977,7 @@ function loadAccounts() {
         .then(res => res.json())
         .then(accounts => {
             loadedAccounts = accounts;
+            renderLogFilterOptions();
             const optionsContainer = document.getElementById('multiselect-options');
             if (!optionsContainer) return;
             optionsContainer.innerHTML = '';
@@ -1369,7 +1403,7 @@ function loadContextLogs(kind, id) {
         renderLogsToContainer(container, [], 'Chưa chọn mục để xem log.');
         return;
     }
-    if (title) title.textContent = kind === 'account' ? `Logs tài khoản: ${cleanId}` : `Logs của lịch: #${String(cleanId).slice(0, 8)}`;
+    if (title) title.textContent = kind === 'account' ? `Logs tài khoản: ${accountDisplayName(cleanId)}` : `Logs của lịch: #${String(cleanId).slice(0, 8)}`;
     if (section) section.style.display = 'block';
     const params = new URLSearchParams();
     if (kind === 'account') params.set('accountId', cleanId);

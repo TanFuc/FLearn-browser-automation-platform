@@ -1267,6 +1267,7 @@ function logLineElement(log) {
 function renderLogsToContainer(container, logs = [], emptyText = 'Chưa có log phù hợp.') {
     if (!container) return;
     container.innerHTML = '';
+    container.classList.toggle('is-empty', logs.length === 0);
     if (!logs.length) {
         const empty = document.createElement('div');
         empty.className = 'log-line info';

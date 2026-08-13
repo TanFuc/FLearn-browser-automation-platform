@@ -45,6 +45,7 @@ body {
     color: var(--text-main);
     line-height: 1.6;
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     background-image: 
         radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.1) 0%, transparent 40%),
@@ -55,6 +56,8 @@ body {
 .app-container {
     display: flex;
     height: 100vh;
+    height: 100dvh;
+    min-height: 0;
 }
 
 /* Sidebar */
@@ -150,9 +153,11 @@ nav {
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+    overflow: hidden;
     padding: 32px 48px;
     position: relative;
+    min-width: 0;
+    min-height: 0;
 }
 
 header {
@@ -161,12 +166,13 @@ header {
     align-items: flex-start;
     flex-wrap: wrap;
     gap: 16px;
-    margin-bottom: 32px;
+    margin-bottom: 20px;
+    flex: 0 0 auto;
 }
 
 h1 {
     font-family: var(--font-display);
-    font-size: 2.2rem;
+    font-size: clamp(1.45rem, 2.2vw, 2rem);
     font-weight: 700;
     letter-spacing: -1px;
     color: #fff;
@@ -211,11 +217,17 @@ h1 {
 .content-wrapper {
     position: relative;
     width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .tab-pane {
     display: none;
     animation: fadeIn 0.4s ease-out;
+    height: 100%;
+    overflow: auto;
+    padding-right: 4px;
 }
 
 .tab-pane.active {
@@ -349,8 +361,8 @@ h1 {
 }
 
 .context-log-body {
-    min-height: 220px;
-    max-height: 360px;
+    min-height: 160px;
+    max-height: 280px;
 }
 
 .accounts-context-log {
@@ -358,12 +370,19 @@ h1 {
 }
 
 .page-monitor-card {
-    margin-top: 24px;
+    flex: 0 0 auto;
+    margin-top: 14px;
 }
 
 .page-log-body {
-    max-height: 260px;
-    min-height: 160px;
+    max-height: 118px;
+    min-height: 92px;
+}
+
+.context-log-body.is-empty,
+.page-log-body.is-empty {
+    min-height: 42px;
+    max-height: 64px;
 }
 
 .dashboard-grid {
@@ -376,6 +395,12 @@ h1 {
     display: flex;
     flex-direction: column;
     gap: 20px;
+    min-height: 0;
+}
+
+.live-monitor-card {
+    min-height: 0;
+    height: clamp(220px, 34vh, 360px);
 }
 
 .stats-grid {
@@ -640,8 +665,15 @@ input:focus, select:focus, textarea:focus {
 /* Tables */
 .table-responsive {
     overflow-x: auto;
+    overflow-y: auto;
+    max-height: min(56vh, 520px);
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
+}
+
+.table-container {
+    max-height: min(56vh, 520px);
+    overflow: auto;
 }
 
 table {
@@ -1255,13 +1287,13 @@ tr:hover td {
 @media (max-width: 768px) {
     .app-container { flex-direction: column; }
     body {
-        height: auto;
-        min-height: 100vh;
-        overflow: auto;
+        height: 100dvh;
+        min-height: 100dvh;
+        overflow: hidden;
     }
     .app-container {
-        min-height: 100vh;
-        height: auto;
+        min-height: 0;
+        height: 100dvh;
     }
     .sidebar {
         width: 100%;
@@ -1269,8 +1301,7 @@ tr:hover td {
         flex-direction: row;
         align-items: center;
         padding: 10px 12px;
-        position: sticky;
-        top: 0;
+        flex: 0 0 auto;
     }
     .sidebar .logo {
         padding: 0;
@@ -1279,6 +1310,9 @@ tr:hover td {
     .sidebar nav { flex-direction: row; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
     .nav-item { min-width: 44px; justify-content: center; padding: 8px; flex: 0 0 auto; }
     .main-content { padding: 16px; }
+    .content-wrapper {
+        min-height: 0;
+    }
     header {
         margin-bottom: 18px;
     }

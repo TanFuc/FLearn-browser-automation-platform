@@ -1364,16 +1364,35 @@ function loadContextLogs(kind, id) {
     const title = kind === 'account' ? document.getElementById('accountLogTitle') : document.getElementById('scheduleLogTitle');
     const container = kind === 'account' ? document.getElementById('account-logs-container') : document.getElementById('schedule-logs-container');
     const section = kind === 'schedule' ? document.getElementById('scheduleLogSection') : null;
-    if (title) title.textContent = kind === 'account' ? `Logs tài khoản: ${id || 'Tất cả'}` : `Logs của lịch: #${String(id).slice(0, 8)}`;
+    const cleanId = String(id || '').trim();
+    if (!cleanId) {
+        renderLogsToContainer(container, [], 'Chưa chọn mục để xem log.');
+        return;
+    }
+    if (title) title.textContent = kind === 'account' ? `Logs tài khoản: ${cleanId}` : `Logs của lịch: #${String(cleanId).slice(0, 8)}`;
     if (section) section.style.display = 'block';
-    const query = buildLogQuery(kind === 'account' ? { accountId: id, type: 'all', limit: 160 } : { scheduleId: id, type: 'all', limit: 160 });
+    const params = new URLSearchParams();
+    if (kind === 'account') params.set('accountId', cleanId);
+    if (kind === 'schedule') params.set('scheduleId', cleanId);
+    params.set('limit', '160');
+    const query = params.toString();
     fetch('/api/logs?' + query)
         .then(res => res.json())
-        .then(logs => renderLogsToContainer(container, Array.isArray(logs) ? logs : [], 'Chưa có log cho mục này.'));
+        .then(logs => {
+            const rows = Array.isArray(logs) ? logs : [];
+            const scopedRows = kind === 'account'
+                ? rows.filter(log => String(log.account_id || '') === cleanId || String(log.message || '').startsWith(`[${cleanId}]`))
+                : rows.filter(log => String(log.schedule_id || '') === cleanId);
+            renderLogsToContainer(container, scopedRows, kind === 'account' ? 'Chưa có log riêng cho tài khoản này.' : 'Chưa có log riêng cho lịch này.');
+        });
 }
 
 window.viewAccountLogs = (id) => {
-    selectedAccountLogId = id || '';
+    selectedAccountLogId = String(id || '').trim();
+    const accountFilter = document.getElementById('logAccountFilter');
+    const scheduleFilter = document.getElementById('logScheduleFilter');
+    if (accountFilter) accountFilter.value = selectedAccountLogId;
+    if (scheduleFilter) scheduleFilter.value = '';
     loadContextLogs('account', selectedAccountLogId);
     loadPageLogs();
 };
@@ -1382,9 +1401,9 @@ window.clearAccountLogSelection = () => {
     selectedAccountLogId = '';
     const title = document.getElementById('accountLogTitle');
     if (title) title.textContent = 'Logs tài khoản';
-    fetch('/api/logs?limit=120')
-        .then(res => res.json())
-        .then(logs => renderLogsToContainer(document.getElementById('account-logs-container'), Array.isArray(logs) ? logs : []));
+    const accountFilter = document.getElementById('logAccountFilter');
+    if (accountFilter) accountFilter.value = '';
+    renderLogsToContainer(document.getElementById('account-logs-container'), [], 'Chọn một tài khoản để xem log riêng.');
     loadPageLogs();
 };
 
@@ -1409,6 +1428,14 @@ window.loadPageLogs = () => {
     if (!container) return;
     const meta = pageLogMeta();
     if (title) title.textContent = meta.title;
+    if (activePageLogTab === 'accounts' && !selectedAccountLogId) {
+        renderLogsToContainer(container, [], 'Chọn một tài khoản để xem monitor riêng.');
+        return;
+    }
+    if (activePageLogTab === 'schedules' && !selectedScheduleLogId) {
+        renderLogsToContainer(container, [], 'Chọn một lịch để xem monitor riêng.');
+        return;
+    }
     fetch('/api/logs?' + buildLogQuery(meta.params))
         .then(res => res.json())
         .then(logs => renderLogsToContainer(container, Array.isArray(logs) ? logs : [], 'Chưa có log cho page này.'));

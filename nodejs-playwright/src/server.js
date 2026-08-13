@@ -364,23 +364,28 @@ app.get('/api/logs', async (req, res) => {
     try {
         const dbPool = require('./db');
         const { accountId, scheduleId, taskId, type, limit = 200 } = req.query;
+        const cleanAccountId = String(accountId || '').trim();
+        const cleanScheduleId = String(scheduleId || '').trim();
+        const cleanTaskId = String(taskId || '').trim();
+        const cleanType = String(type || '').trim();
         const params = [];
         const where = [];
-        if (accountId) {
-            where.push(`account_id = $${params.length + 1}`);
-            params.push(accountId);
+        if (cleanAccountId) {
+            where.push(`(account_id = $${params.length + 1} OR message LIKE $${params.length + 2})`);
+            params.push(cleanAccountId);
+            params.push(`[${cleanAccountId}]%`);
         }
-        if (scheduleId) {
+        if (cleanScheduleId) {
             where.push(`schedule_id = $${params.length + 1}`);
-            params.push(scheduleId);
+            params.push(cleanScheduleId);
         }
-        if (taskId) {
+        if (cleanTaskId) {
             where.push(`task_id = $${params.length + 1}`);
-            params.push(parseInt(taskId, 10));
+            params.push(parseInt(cleanTaskId, 10));
         }
-        if (type && type !== 'all') {
+        if (cleanType && cleanType !== 'all') {
             where.push(`type = $${params.length + 1}`);
-            params.push(type);
+            params.push(cleanType);
         }
         const safeLimit = Math.max(1, Math.min(parseInt(limit, 10) || 200, 500));
         const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

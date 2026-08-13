@@ -55,6 +55,7 @@ async function enqueueScheduleAccountJob(schedule, accountId) {
         taskType: schedule.task_type || 'invite',
         maxUnfollow: schedule.max_unfollow ? parseInt(schedule.max_unfollow, 10) : 0,
         commentText: schedule.comment_text || null,
+        postText: schedule.comment_text || null,
         scheduleId: schedule.id
     }, customOpts);
 }
@@ -110,7 +111,7 @@ function normalizeSchedulePayload(body) {
     if (accountIds.length === 0) {
         throw new Error('Chọn ít nhất 1 tài khoản.');
     }
-    if (!['invite', 'unfollow_friends', 'unfollow_following', 'warmup', 'comment_post'].includes(taskType)) {
+    if (!['invite', 'unfollow_friends', 'unfollow_following', 'warmup', 'comment_post', 'create_post'].includes(taskType)) {
         throw new Error('Loại tác vụ không hợp lệ.');
     }
     if (!['none', 'time', 'interval'].includes(scheduleType)) {
@@ -121,6 +122,9 @@ function normalizeSchedulePayload(body) {
     }
     if (taskType === 'comment_post' && !commentText) {
         throw new Error('Missing commentText for comment task');
+    }
+    if (taskType === 'create_post' && !commentText) {
+        throw new Error('Missing post content for create_post task');
     }
     if (!Number.isInteger(maxUnfollow) || maxUnfollow < 0) {
         throw new Error('maxUnfollow must be a non-negative integer.');
@@ -227,8 +231,8 @@ app.post('/api/run', async (req, res) => {
     if (normalizedTaskType === 'invite' && !groupUrl) {
         return res.status(400).json({ error: 'Missing groupUrl for invite task' });
     }
-    if (normalizedTaskType === 'comment_post' && !String(commentText || '').trim()) {
-        return res.status(400).json({ error: 'Missing commentText for comment task' });
+    if ((normalizedTaskType === 'comment_post' || normalizedTaskType === 'create_post') && !String(commentText || '').trim()) {
+        return res.status(400).json({ error: 'Missing content text for interaction task' });
     }
     if (runLimit !== null && (!Number.isInteger(runLimit) || runLimit < 1)) {
         return res.status(400).json({ error: 'maxRuns must be a positive integer.' });
@@ -654,19 +658,21 @@ app.put('/api/automation/schedules/:id', async (req, res) => {
                  task_type = $2,
                  group_url = $3,
                  max_unfollow = $4,
-                 schedule_type = $5,
-                 schedule_value = $6,
-                 max_runs = $7,
-                 status = $8,
-                 completed_at = CASE WHEN $8 = 'completed' THEN NOW() ELSE NULL END,
+                 comment_text = $5,
+                 schedule_type = $6,
+                 schedule_value = $7,
+                 max_runs = $8,
+                 status = $9,
+                 completed_at = CASE WHEN $9 = 'completed' THEN NOW() ELSE NULL END,
                  updated_at = NOW()
-             WHERE id = $9
+             WHERE id = $10
              RETURNING *`,
             [
                 scheduleInput.account_ids,
                 scheduleInput.task_type,
                 scheduleInput.group_url,
                 scheduleInput.max_unfollow,
+                scheduleInput.comment_text,
                 scheduleInput.schedule_type,
                 scheduleInput.schedule_value,
                 scheduleInput.max_runs,

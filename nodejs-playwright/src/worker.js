@@ -4,7 +4,7 @@ const IORedis = require('ioredis');
 const db = require('./db');
 const { inviteQueue, affVidQueue, upPostQueue } = require('./queue');
 const { createOrLoadContext } = require('./browser');
-const { autoInviteTask, autoUnfollowFriendsTask, autoUnfollowFollowingTask, warmupTask, commentPostTask } = require('./tasks');
+const { autoInviteTask, autoUnfollowFriendsTask, autoUnfollowFollowingTask, warmupTask, commentPostTask, createPostTask } = require('./tasks');
 const { EventEmitter } = require('events');
 const { emitSystemLog } = require('./logger');
 
@@ -292,6 +292,9 @@ const worker = new Worker('invite-queue', async job => {
     } else if (taskType === 'comment_post') {
         emitLog(accountId, `Bắt đầu bình luận bài viết theo nội dung từ UI...`);
         result = await commentPostTask(page, context, account, payload, emitLog, incrementStats);
+    } else if (taskType === 'create_post') {
+        emitLog(accountId, `Bắt đầu đăng bài theo nội dung từ UI...`);
+        result = await createPostTask(page, context, account, payload, emitLog, incrementStats);
     } else {
         emitLog(accountId, `Điều hướng tới: ${payload.url}`);
         await page.goto(payload.url, { waitUntil: 'domcontentloaded' });

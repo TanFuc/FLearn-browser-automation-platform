@@ -197,6 +197,155 @@ async function commentPostTask(page, context, account, jobData, emitLog, increme
     return { successCount: 1, scrollsDone };
 }
 
+async function findVisiblePostEditor(page, timeout = 5000) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+        const dialogEditors = page.locator('div[role="dialog"] div[role="textbox"][contenteditable="true"]');
+        const dialogCount = await dialogEditors.count().catch(() => 0);
+        for (let i = 0; i < dialogCount; i++) {
+            const editor = dialogEditors.nth(i);
+            if (await editor.isVisible().catch(() => false)) return editor;
+        }
+
+        const editors = page.locator('div[role="textbox"][contenteditable="true"]');
+        const count = await editors.count().catch(() => 0);
+        for (let i = 0; i < count; i++) {
+            const editor = editors.nth(i);
+            if (!(await editor.isVisible().catch(() => false))) continue;
+            const labelText = await editor.evaluate(node => [
+                node.getAttribute('aria-label'),
+                node.getAttribute('aria-placeholder'),
+                node.getAttribute('placeholder'),
+                node.innerText
+            ].filter(Boolean).join(' ').toLowerCase()).catch(() => '');
+            if (/(what's on your mind|write something|create a post|bạn đang nghĩ gì|viết gì đó|tạo bài viết)/i.test(labelText)) {
+                return editor;
+            }
+        }
+        await page.waitForTimeout(400);
+    }
+    return null;
+}
+
+async function openPostComposer(page, emitLog, accountId) {
+    const directEditor = await findVisiblePostEditor(page, 1200);
+    if (directEditor) return directEditor;
+
+    const composerTriggers = page.locator(
+        'div[role="button"]:has-text("Bạn đang nghĩ gì"), ' +
+        "div[role=\"button\"]:has-text(\"What's on your mind\"), " +
+        'div[role="button"]:has-text("Viết gì đó"), ' +
+        'div[role="button"]:has-text("Write something"), ' +
+        '[aria-label*="Tạo bài viết" i], ' +
+        '[aria-label*="Create a post" i]'
+    );
+
+    const count = await composerTriggers.count().catch(() => 0);
+    for (let i = 0; i < count; i++) {
+        const trigger = composerTriggers.nth(i);
+        if (!(await trigger.isVisible().catch(() => false))) continue;
+
+        await trigger.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
+        await randomDelay(400, 800);
+        await trigger.click({ timeout: 4000 }).catch(async () => {
+            await trigger.evaluate(node => node.click()).catch(() => {});
+        });
+        await page.waitForTimeout(1800);
+
+        const editor = await findVisiblePostEditor(page, 5000);
+        if (editor) return editor;
+    }
+
+    emitLog(accountId, 'Chưa tìm thấy khung tạo bài viết trên trang hiện tại.', 'warning');
+    return null;
+}
+
+async function clickPostSubmitButton(page) {
+    const clickedInDialog = await page.evaluate(() => {
+        const normalize = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const wanted = new Set(['đăng', 'post']);
+        const isVisible = (el) => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.visibility !== 'hidden' &&
+                style.display !== 'none' &&
+                rect.width > 4 &&
+                rect.height > 4 &&
+                rect.bottom > 0 &&
+                rect.right > 0 &&
+                rect.top < window.innerHeight &&
+                rect.left < window.innerWidth;
+        };
+        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]')).reverse();
+        for (const dialog of dialogs) {
+            const candidates = Array.from(dialog.querySelectorAll('[role="button"], button, [aria-label]'));
+            for (const candidate of candidates) {
+                if (!isVisible(candidate)) continue;
+                const text = normalize(candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label'));
+                if (!wanted.has(text)) continue;
+                const disabled = candidate.getAttribute('aria-disabled') === 'true' ||
+                    candidate.getAttribute('disabled') !== null ||
+                    candidate.closest('[aria-disabled="true"]');
+                if (disabled) continue;
+                candidate.click();
+                return true;
+            }
+        }
+        return false;
+    }).catch(() => false);
+
+    if (clickedInDialog) return true;
+    return clickByVisibleText(page, ['Đăng', 'Post'], { timeout: 4000 });
+}
+
+async function createPostTask(page, context, account, jobData, emitLog, incrementStats) {
+    const accountId = account.id;
+    const postText = String(jobData.postText || jobData.commentText || '').trim();
+    const targetUrl = String(jobData.url || '').trim() || 'https://www.facebook.com/';
+
+    if (!postText) {
+        throw new Error('Thiếu nội dung bài viết.');
+    }
+    if (postText.length > 1000) {
+        throw new Error('Nội dung bài viết quá dài, tối đa 1000 ký tự cho bản demo.');
+    }
+
+    emitLog(accountId, `Mở trang để đăng bài: ${targetUrl}`, 'system');
+    await ensureFacebookSession(page, account, targetUrl, emitLog);
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
+    await page.waitForTimeout(3000);
+
+    let editor = await openPostComposer(page, emitLog, accountId);
+    if (!editor) {
+        await page.evaluate(() => window.scrollBy({ top: 500, behavior: 'smooth' })).catch(() => {});
+        await page.waitForTimeout(1500);
+        editor = await openPostComposer(page, emitLog, accountId);
+    }
+
+    if (!editor) {
+        throw new Error('Không tìm thấy khung tạo bài viết. Trang có thể không cho đăng hoặc giao diện Facebook đã thay đổi.');
+    }
+
+    await editor.click({ timeout: 5000 });
+    await randomDelay(400, 800);
+    try {
+        await editor.fill(postText);
+    } catch (err) {
+        await page.keyboard.type(postText, { delay: 25 });
+    }
+
+    await randomDelay(1000, 1800);
+    const submitted = await clickPostSubmitButton(page);
+    if (!submitted) {
+        throw new Error('Không tìm thấy hoặc không bấm được nút Đăng/Post.');
+    }
+
+    await page.waitForTimeout(5000);
+    emitLog(accountId, 'Đã gửi 1 bài viết theo nội dung nhập từ UI.', 'success');
+    incrementStats('post');
+    return { successCount: 1, scrollsDone: 0 };
+}
+
 async function autoInviteTask(page, context, account, targetUrl, emitLog, incrementStats) {
     const accountId = account.id;
     const config = getSettings();
@@ -840,5 +989,6 @@ module.exports = {
     autoUnfollowFriendsTask,
     autoUnfollowFollowingTask,
     warmupTask,
-    commentPostTask
+    commentPostTask,
+    createPostTask
 };

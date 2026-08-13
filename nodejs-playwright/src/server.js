@@ -55,6 +55,7 @@ async function enqueueScheduleAccountJob(schedule, accountId) {
         taskType: schedule.task_type || 'invite',
         maxUnfollow: schedule.max_unfollow ? parseInt(schedule.max_unfollow, 10) : 0,
         commentText: schedule.comment_text || null,
+        commentCount: schedule.comment_count ? parseInt(schedule.comment_count, 10) : 1,
         postText: schedule.comment_text || null,
         scheduleId: schedule.id
     }, customOpts);
@@ -96,6 +97,7 @@ function normalizeSchedulePayload(body) {
     const taskType = body.taskType || body.task_type || 'invite';
     const groupUrl = body.groupUrl !== undefined ? body.groupUrl : body.group_url;
     const commentText = String(body.commentText !== undefined ? body.commentText : (body.comment_text || '')).trim();
+    const commentCountRaw = body.commentCount !== undefined ? body.commentCount : body.comment_count;
     const maxUnfollowRaw = body.maxUnfollow !== undefined ? body.maxUnfollow : body.max_unfollow;
     const scheduleType = body.scheduleType || body.schedule_type || 'none';
     const scheduleTime = body.scheduleTime !== undefined ? body.scheduleTime : body.schedule_time;
@@ -107,6 +109,9 @@ function normalizeSchedulePayload(body) {
     const maxRuns = maxRunsRaw === '' || maxRunsRaw === undefined || maxRunsRaw === null
         ? null
         : parseInt(maxRunsRaw, 10);
+    const commentCount = commentCountRaw === '' || commentCountRaw === undefined || commentCountRaw === null
+        ? 1
+        : parseInt(commentCountRaw, 10);
 
     if (accountIds.length === 0) {
         throw new Error('Chọn ít nhất 1 tài khoản.');
@@ -129,6 +134,9 @@ function normalizeSchedulePayload(body) {
     if (!Number.isInteger(maxUnfollow) || maxUnfollow < 0) {
         throw new Error('maxUnfollow must be a non-negative integer.');
     }
+    if (taskType === 'comment_post' && (!Number.isInteger(commentCount) || commentCount < 1 || commentCount > 10)) {
+        throw new Error('commentCount must be between 1 and 10.');
+    }
     if (maxRuns !== null && (!Number.isInteger(maxRuns) || maxRuns < 1)) {
         throw new Error('maxRuns must be a positive integer.');
     }
@@ -148,6 +156,7 @@ function normalizeSchedulePayload(body) {
         group_url: groupUrl || null,
         max_unfollow: maxUnfollow,
         comment_text: commentText || null,
+        comment_count: taskType === 'comment_post' ? commentCount : 1,
         schedule_type: scheduleType,
         schedule_value: scheduleType === 'time'
             ? scheduleTime
@@ -273,14 +282,15 @@ app.post('/api/run', async (req, res) => {
         const dbPool = require('./db');
         const schedRes = await dbPool.query(
             `INSERT INTO automation_schedules
-             (account_ids, task_type, group_url, max_unfollow, comment_text, schedule_type, schedule_value, max_runs, status, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW()) RETURNING id`,
+             (account_ids, task_type, group_url, max_unfollow, comment_text, comment_count, schedule_type, schedule_value, max_runs, status, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', NOW()) RETURNING id`,
             [
                 scheduleInput.account_ids,
                 scheduleInput.task_type,
                 scheduleInput.group_url,
                 scheduleInput.max_unfollow,
                 scheduleInput.comment_text,
+                scheduleInput.comment_count,
                 scheduleInput.schedule_type,
                 scheduleInput.schedule_value,
                 scheduleInput.max_runs
@@ -296,6 +306,7 @@ app.post('/api/run', async (req, res) => {
             group_url: scheduleInput.group_url,
             max_unfollow: scheduleInput.max_unfollow,
             comment_text: scheduleInput.comment_text,
+            comment_count: scheduleInput.comment_count,
             schedule_type: scheduleInput.schedule_type,
             schedule_value: scheduleInput.schedule_value
         });
@@ -572,6 +583,7 @@ async function ensureAutomationSchema() {
             group_url TEXT,
             max_unfollow INTEGER DEFAULT 0,
             comment_text TEXT,
+            comment_count INTEGER DEFAULT 1,
             schedule_type TEXT NOT NULL DEFAULT 'none',
             schedule_value TEXT,
             bullmq_job_id TEXT,
@@ -588,6 +600,7 @@ async function ensureAutomationSchema() {
     `);
     await dbPool.query(`ALTER TABLE automation_schedules ADD COLUMN IF NOT EXISTS max_runs INTEGER`);
     await dbPool.query(`ALTER TABLE automation_schedules ADD COLUMN IF NOT EXISTS comment_text TEXT`);
+    await dbPool.query(`ALTER TABLE automation_schedules ADD COLUMN IF NOT EXISTS comment_count INTEGER DEFAULT 1`);
     await dbPool.query(`ALTER TABLE automation_schedules ADD COLUMN IF NOT EXISTS run_count INTEGER DEFAULT 0`);
     await dbPool.query(`ALTER TABLE automation_schedules ADD COLUMN IF NOT EXISTS success_count INTEGER DEFAULT 0`);
     await dbPool.query(`ALTER TABLE automation_schedules ADD COLUMN IF NOT EXISTS failed_count INTEGER DEFAULT 0`);
@@ -727,13 +740,14 @@ app.put('/api/automation/schedules/:id', async (req, res) => {
                  group_url = $3,
                  max_unfollow = $4,
                  comment_text = $5,
-                 schedule_type = $6,
-                 schedule_value = $7,
-                 max_runs = $8,
-                 status = $9,
-                 completed_at = CASE WHEN $9 = 'completed' THEN NOW() ELSE NULL END,
+                 comment_count = $6,
+                 schedule_type = $7,
+                 schedule_value = $8,
+                 max_runs = $9,
+                 status = $10,
+                 completed_at = CASE WHEN $10 = 'completed' THEN NOW() ELSE NULL END,
                  updated_at = NOW()
-             WHERE id = $10
+             WHERE id = $11
              RETURNING *`,
             [
                 scheduleInput.account_ids,
@@ -741,6 +755,7 @@ app.put('/api/automation/schedules/:id', async (req, res) => {
                 scheduleInput.group_url,
                 scheduleInput.max_unfollow,
                 scheduleInput.comment_text,
+                scheduleInput.comment_count,
                 scheduleInput.schedule_type,
                 scheduleInput.schedule_value,
                 scheduleInput.max_runs,
@@ -777,9 +792,9 @@ app.post('/api/automation/schedules/:id/duplicate', async (req, res) => {
         const source = sourceRes.rows[0];
         const insertRes = await dbPool.query(
             `INSERT INTO automation_schedules
-             (account_ids, task_type, group_url, max_unfollow, comment_text, schedule_type, schedule_value, max_runs,
+             (account_ids, task_type, group_url, max_unfollow, comment_text, comment_count, schedule_type, schedule_value, max_runs,
               run_count, success_count, failed_count, status, completed_at, last_run_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0, 'active', NULL, NULL, NOW())
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 0, 0, 'active', NULL, NULL, NOW())
              RETURNING *`,
             [
                 source.account_ids,
@@ -787,6 +802,7 @@ app.post('/api/automation/schedules/:id/duplicate', async (req, res) => {
                 source.group_url,
                 source.max_unfollow || 0,
                 source.comment_text || null,
+                source.comment_count || 1,
                 source.schedule_type,
                 source.schedule_value,
                 source.max_runs

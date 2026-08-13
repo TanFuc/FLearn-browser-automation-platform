@@ -140,7 +140,9 @@ async function commentPostTask(page, context, account, jobData, emitLog, increme
     const config = getSettings();
     const { getBotState } = require('./state');
     const commentText = String(jobData.commentText || '').trim();
+    const commentCount = Math.max(1, Math.min(parseInt(jobData.commentCount || 1, 10) || 1, 10));
     const targetUrl = String(jobData.url || '').trim() || 'https://www.facebook.com/';
+    let commentsSent = 0;
     let scrollsDone = 0;
 
     if (!commentText) {
@@ -177,24 +179,39 @@ async function commentPostTask(page, context, account, jobData, emitLog, increme
         throw new Error('Không tìm thấy ô bình luận. Bài viết có thể bị tắt bình luận, chưa load xong, hoặc selector Facebook đã thay đổi.');
     }
 
-    await commentBox.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
-    await randomDelay(500, 1000);
-    await commentBox.click({ timeout: 5000 });
-    await randomDelay(300, 700);
+    for (let i = 0; i < commentCount; i++) {
+        if (getBotState().isStopped) break;
+        while (getBotState().isPaused) {
+            await new Promise(r => setTimeout(r, 1000));
+        }
 
-    try {
-        await commentBox.fill(commentText);
-    } catch (err) {
-        await page.keyboard.type(commentText, { delay: 25 });
+        if (i > 0) {
+            commentBox = await openCommentComposer(page, emitLog, accountId);
+            if (!commentBox) {
+                throw new Error(`Không tìm thấy lại ô bình luận ở lần #${i + 1}.`);
+            }
+        }
+
+        await commentBox.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
+        await randomDelay(500, 1000);
+        await commentBox.click({ timeout: 5000 });
+        await randomDelay(300, 700);
+
+        try {
+            await commentBox.fill(commentText);
+        } catch (err) {
+            await page.keyboard.type(commentText, { delay: 25 });
+        }
+
+        await randomDelay(700, 1400);
+        await page.keyboard.press('Enter');
+        commentsSent++;
+        incrementStats('comment');
+        emitLog(accountId, `Đã gửi bình luận #${commentsSent}/${commentCount}.`, 'success');
+        await randomDelay(2500, 4500);
     }
 
-    await randomDelay(700, 1400);
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(3000);
-
-    emitLog(accountId, 'Đã gửi 1 bình luận theo nội dung nhập từ UI.', 'success');
-    incrementStats('comment');
-    return { successCount: 1, scrollsDone };
+    return { successCount: commentsSent, scrollsDone };
 }
 
 async function findVisiblePostEditor(page, timeout = 5000) {

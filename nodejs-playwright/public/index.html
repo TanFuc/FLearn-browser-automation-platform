@@ -490,7 +490,24 @@
                                 <div class="form-group" id="groupUrlContainer"><label id="groupUrlLabel">Link Nhóm</label><input type="url" id="groupUrl" placeholder="https://facebook.com/groups/..." inputmode="url"></div>
                                 <div class="form-group" id="commentOptionsContainer" style="display:none;">
                                     <label id="commentTextLabel">Nội dung bình luận</label>
-                                    <textarea id="commentText" rows="4" maxlength="1000" placeholder="Nhập nội dung..." style="width:100%; resize:vertical;"></textarea>
+                                    <div class="comment-editor-shell">
+                                        <div class="comment-editor-toolbar" aria-label="Công cụ soạn nội dung">
+                                            <button type="button" data-command="bold" title="Đậm"><b>B</b></button>
+                                            <button type="button" data-command="italic" title="Nghiêng"><i>I</i></button>
+                                            <button type="button" data-command="insertUnorderedList" title="Danh sách">•</button>
+                                            <button type="button" data-command="removeFormat" title="Xóa định dạng">Tx</button>
+                                        </div>
+                                        <div id="commentTextEditor" class="comment-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Nhập nội dung..."></div>
+                                        <textarea id="commentText" maxlength="1000" style="display:none;"></textarea>
+                                        <div class="comment-preview">
+                                            <div class="comment-avatar">F</div>
+                                            <div class="comment-bubble" id="commentPreview">Nội dung sẽ hiển thị giống bình luận Facebook...</div>
+                                        </div>
+                                    </div>
+                                    <div class="form-group comment-count-wrap" id="commentCountContainer" style="display:none;">
+                                        <label>Số lần bình luận</label>
+                                        <input type="number" id="commentCount" min="1" max="10" value="1" class="filter-select">
+                                    </div>
                                     <small id="commentTextHint" style="color:var(--text-muted); font-size:0.8rem;">Mỗi account chỉ gửi 1 bình luận/lần chạy. Nếu bỏ trống link bài viết, bot sẽ mở News Feed và thử tìm ô bình luận đầu tiên.</small>
                                 </div>
                                 <div class="form-group" id="unfollowOptionsContainer" style="display:none;"><label>Giới hạn</label><input type="number" id="maxUnfollow" value="50" placeholder="50"></div>

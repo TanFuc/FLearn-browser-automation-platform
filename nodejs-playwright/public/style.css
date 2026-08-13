@@ -434,6 +434,93 @@ h1 {
     margin-bottom: 16px;
 }
 
+.comment-editor-shell {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.42);
+    overflow: hidden;
+}
+
+.comment-editor-toolbar {
+    display: flex;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(2, 6, 23, 0.46);
+}
+
+.comment-editor-toolbar button {
+    width: 32px;
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-main);
+    cursor: pointer;
+    font-size: 0.82rem;
+}
+
+.comment-editor-toolbar button:hover {
+    border-color: var(--border-hover);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.comment-editor {
+    min-height: 112px;
+    max-height: 220px;
+    overflow: auto;
+    padding: 12px 14px;
+    outline: none;
+    color: var(--text-main);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.comment-editor:empty::before {
+    content: attr(data-placeholder);
+    color: var(--text-dim);
+}
+
+.comment-preview {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--border);
+    background: rgba(2, 6, 23, 0.28);
+}
+
+.comment-avatar {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary), var(--primary-light));
+    color: #fff;
+    font-weight: 800;
+    font-size: 0.82rem;
+}
+
+.comment-bubble {
+    max-width: 100%;
+    min-height: 32px;
+    padding: 8px 11px;
+    border-radius: 16px;
+    background: rgba(148, 163, 184, 0.16);
+    color: var(--text-main);
+    font-size: 0.9rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.comment-count-wrap {
+    margin: 10px 0 0;
+}
+
 /* Forms refined */
 .form-group {
     margin-bottom: 20px;

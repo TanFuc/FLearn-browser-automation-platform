@@ -353,6 +353,10 @@ function ensureScheduleEditor() {
                 <div class="form-group" id="scheduleEditContentWrap">
                     <label id="scheduleEditContentLabel">Nội dung</label>
                     <textarea id="scheduleEditContentText" rows="4" maxlength="1000" style="width:100%; resize:vertical;"></textarea>
+                    <div id="scheduleEditCommentCountWrap" style="display:none; margin-top:10px;">
+                        <label>Số lần bình luận</label>
+                        <input type="number" id="scheduleEditCommentCount" min="1" max="10" value="1">
+                    </div>
                 </div>
                 <div class="form-group" id="scheduleEditUnfollowWrap">
                     <label>Giới hạn hủy theo dõi</label>
@@ -418,10 +422,12 @@ window.toggleScheduleEditorTaskUI = () => {
     const contentWrap = document.getElementById('scheduleEditContentWrap');
     const contentLabel = document.getElementById('scheduleEditContentLabel');
     const contentText = document.getElementById('scheduleEditContentText');
+    const commentCountWrap = document.getElementById('scheduleEditCommentCountWrap');
     if (!groupWrap || !unfollowWrap || !contentWrap) return;
     groupWrap.style.display = type === 'invite' || type === 'comment_post' || type === 'create_post' ? 'block' : 'none';
     unfollowWrap.style.display = type === 'unfollow_friends' || type === 'unfollow_following' ? 'block' : 'none';
     contentWrap.style.display = type === 'comment_post' || type === 'create_post' ? 'block' : 'none';
+    if (commentCountWrap) commentCountWrap.style.display = type === 'comment_post' ? 'block' : 'none';
     if (contentLabel) contentLabel.textContent = type === 'create_post' ? 'Nội dung bài viết' : 'Nội dung bình luận';
     if (contentText) contentText.setAttribute('maxlength', type === 'create_post' ? '1000' : '500');
 };
@@ -457,6 +463,7 @@ window.editSchedule = async (id) => {
     document.getElementById('scheduleEditTaskType').value = schedule.task_type || 'invite';
     document.getElementById('scheduleEditGroupUrl').value = schedule.group_url || '';
     document.getElementById('scheduleEditContentText').value = schedule.comment_text || '';
+    document.getElementById('scheduleEditCommentCount').value = schedule.comment_count || 1;
     document.getElementById('scheduleEditMaxUnfollow').value = schedule.max_unfollow || 0;
     document.getElementById('scheduleEditType').value = schedule.schedule_type || 'none';
     document.getElementById('scheduleEditTime').value = schedule.schedule_type === 'time' ? (schedule.schedule_value || '') : '';
@@ -480,10 +487,12 @@ async function saveScheduleEdit(event) {
     const maxRuns = document.getElementById('scheduleEditMaxRuns').value;
     const maxUnfollow = document.getElementById('scheduleEditMaxUnfollow').value || 0;
     const commentText = document.getElementById('scheduleEditContentText')?.value.trim() || '';
+    const commentCount = parseInt(document.getElementById('scheduleEditCommentCount')?.value || '1', 10);
 
     if (accountId.length === 0) return showToast('Chọn ít nhất 1 tài khoản.', 'warning');
     if (taskType === 'invite' && !groupUrl) return showToast('Vui lòng nhập link nhóm.', 'warning');
     if ((taskType === 'comment_post' || taskType === 'create_post') && !commentText) return showToast('Vui lòng nhập nội dung.', 'warning');
+    if (taskType === 'comment_post' && (!Number.isInteger(commentCount) || commentCount < 1 || commentCount > 10)) return showToast('Số lần bình luận phải từ 1 đến 10.', 'warning');
     if (scheduleType === 'time' && !scheduleTime) return showToast('Vui lòng chọn giờ chạy.', 'warning');
     if (scheduleType === 'interval' && (!scheduleInterval || Number(scheduleInterval) < 1)) return showToast('Vui lòng nhập khoảng cách giờ hợp lệ.', 'warning');
 
@@ -491,7 +500,7 @@ async function saveScheduleEdit(event) {
         const res = await fetch(`/api/automation/schedules/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accountId, taskType, groupUrl, maxUnfollow, commentText, scheduleType, scheduleTime, scheduleInterval, maxRuns })
+            body: JSON.stringify({ accountId, taskType, groupUrl, maxUnfollow, commentText, commentCount, scheduleType, scheduleTime, scheduleInterval, maxRuns })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.success) throw new Error(data.error || 'Không thể cập nhật lịch');
@@ -575,7 +584,11 @@ window.loadSchedules = async () => {
                 ? 'Nguồn nhóm mục tiêu'
                 : s.task_type === 'warmup'
                     ? 'Warm-up tài khoản'
-                    : `Giới hạn ${s.max_unfollow || 0} lượt`;
+                    : s.task_type === 'comment_post'
+                        ? `Bình luận ${s.comment_count || 1} lần/account`
+                        : s.task_type === 'create_post'
+                            ? 'Đăng 1 bài/account'
+                            : `Giới hạn ${s.max_unfollow || 0} lượt`;
 
             tr.innerHTML = `
                 <td class="schedule-col-main">
@@ -768,6 +781,8 @@ window.toggleTaskTypeUI = () => {
     const unfollowOptionsContainer = document.getElementById('unfollowOptionsContainer');
     const commentOptionsContainer = document.getElementById('commentOptionsContainer');
     const commentTextInput = document.getElementById('commentText');
+    const commentCountContainer = document.getElementById('commentCountContainer');
+    const commentCountInput = document.getElementById('commentCount');
     const commentTextLabel = document.getElementById('commentTextLabel');
     const commentTextHint = document.getElementById('commentTextHint');
 
@@ -776,12 +791,14 @@ window.toggleTaskTypeUI = () => {
         groupUrlInput.removeAttribute('required');
         unfollowOptionsContainer.style.display = 'block';
         if (commentOptionsContainer) commentOptionsContainer.style.display = 'none';
+        if (commentCountContainer) commentCountContainer.style.display = 'none';
         if (commentTextInput) commentTextInput.removeAttribute('required');
     } else if (type === 'warmup') {
         groupUrlContainer.style.display = 'none';
         groupUrlInput.removeAttribute('required');
         unfollowOptionsContainer.style.display = 'none';
         if (commentOptionsContainer) commentOptionsContainer.style.display = 'none';
+        if (commentCountContainer) commentCountContainer.style.display = 'none';
         if (commentTextInput) commentTextInput.removeAttribute('required');
     } else if (type === 'comment_post') {
         groupUrlContainer.style.display = 'block';
@@ -790,9 +807,11 @@ window.toggleTaskTypeUI = () => {
         if (groupUrlLabel) groupUrlLabel.textContent = 'Link Bài Viết (tùy chọn)';
         unfollowOptionsContainer.style.display = 'none';
         if (commentOptionsContainer) commentOptionsContainer.style.display = 'block';
+        if (commentCountContainer) commentCountContainer.style.display = 'block';
+        if (commentCountInput && !commentCountInput.value) commentCountInput.value = '1';
         if (commentTextLabel) commentTextLabel.textContent = 'Nội dung bình luận';
         if (commentTextInput) commentTextInput.placeholder = 'Nhập nội dung bình luận để gửi vào bài viết...';
-        if (commentTextHint) commentTextHint.textContent = 'Mỗi account chỉ gửi 1 bình luận/lần chạy. Nếu bỏ trống link bài viết, bot sẽ mở News Feed và thử tìm ô bình luận đầu tiên.';
+        if (commentTextHint) commentTextHint.textContent = 'Bot sẽ gửi theo số lần đã chọn, tối đa 10 lần/account để giữ an toàn khi demo.';
         if (commentTextInput) commentTextInput.setAttribute('maxlength', '500');
         if (commentTextInput) commentTextInput.setAttribute('required', 'required');
     } else if (type === 'create_post') {
@@ -802,6 +821,7 @@ window.toggleTaskTypeUI = () => {
         if (groupUrlLabel) groupUrlLabel.textContent = 'Link Đích (tùy chọn)';
         unfollowOptionsContainer.style.display = 'none';
         if (commentOptionsContainer) commentOptionsContainer.style.display = 'block';
+        if (commentCountContainer) commentCountContainer.style.display = 'none';
         if (commentTextLabel) commentTextLabel.textContent = 'Nội dung bài viết';
         if (commentTextInput) commentTextInput.placeholder = 'Nhập nội dung bài viết để đăng...';
         if (commentTextHint) commentTextHint.textContent = 'Mỗi account chỉ đăng 1 bài/lần chạy. Nếu bỏ trống link đích, bot sẽ đăng trên trang cá nhân/news feed.';
@@ -814,9 +834,42 @@ window.toggleTaskTypeUI = () => {
         if (groupUrlLabel) groupUrlLabel.textContent = 'Link Nhóm';
         unfollowOptionsContainer.style.display = 'none';
         if (commentOptionsContainer) commentOptionsContainer.style.display = 'none';
+        if (commentCountContainer) commentCountContainer.style.display = 'none';
         if (commentTextInput) commentTextInput.removeAttribute('required');
     }
 };
+
+function syncCommentEditor() {
+    const editor = document.getElementById('commentTextEditor');
+    const hidden = document.getElementById('commentText');
+    const preview = document.getElementById('commentPreview');
+    if (!editor || !hidden) return '';
+    const text = editor.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    hidden.value = text;
+    if (preview) preview.textContent = text || 'Nội dung sẽ hiển thị giống bình luận Facebook...';
+    return text;
+}
+
+document.querySelectorAll('.comment-editor-toolbar [data-command]').forEach(button => {
+    button.addEventListener('click', () => {
+        const editor = document.getElementById('commentTextEditor');
+        if (!editor) return;
+        editor.focus();
+        document.execCommand(button.dataset.command, false, null);
+        syncCommentEditor();
+    });
+});
+
+const commentTextEditor = document.getElementById('commentTextEditor');
+if (commentTextEditor) {
+    commentTextEditor.addEventListener('input', syncCommentEditor);
+    commentTextEditor.addEventListener('paste', (event) => {
+        event.preventDefault();
+        const text = event.clipboardData?.getData('text/plain') || '';
+        document.execCommand('insertText', false, text);
+        syncCommentEditor();
+    });
+}
 
 function renderAccountsTable(accounts) {
     const tbody = document.getElementById('accounts-table-body');
@@ -1135,7 +1188,8 @@ runTaskForm.addEventListener('submit', (e) => {
     const scheduleTime = document.getElementById('scheduleTime').value;
     const scheduleInterval = document.getElementById('scheduleInterval').value;
     const maxRuns = document.getElementById('scheduleMaxRuns')?.value || '';
-    const commentText = document.getElementById('commentText')?.value.trim() || '';
+    const commentText = syncCommentEditor() || document.getElementById('commentText')?.value.trim() || '';
+    const commentCount = parseInt(document.getElementById('commentCount')?.value || '1', 10);
 
     if (accountIds.length === 0) {
         showToast('Chọn ít nhất 1 tài khoản!');
@@ -1157,6 +1211,11 @@ runTaskForm.addEventListener('submit', (e) => {
         return;
     }
 
+    if (taskType === 'comment_post' && (!Number.isInteger(commentCount) || commentCount < 1 || commentCount > 10)) {
+        showToast('Số lần bình luận phải từ 1 đến 10!');
+        return;
+    }
+
     fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1169,7 +1228,8 @@ runTaskForm.addEventListener('submit', (e) => {
             scheduleTime,
             scheduleInterval,
             maxRuns,
-            commentText
+            commentText,
+            commentCount
         })
     }).then(async (res) => {
         const data = await res.json().catch(() => ({}));

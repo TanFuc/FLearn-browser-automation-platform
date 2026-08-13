@@ -185,12 +185,32 @@ function systemLog(message, type = 'info') {
     emitSystemLog(message, type).catch(() => {});
 }
 
+function maskSensitiveLogValue(value = '') {
+    return String(value)
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+        .replace(/(password|pass|token|cookie|authorization|secret)\s*[:=]\s*("[^"]+"|'[^']+'|[^\s|]+)/gi, '$1=[hidden]')
+        .replace(/(fb_password|fb_email)\s*[:=]\s*("[^"]+"|'[^']+'|[^\s|]+)/gi, '$1=[hidden]');
+}
+
 // Listen to worker events
 workerEvents.on('log', (data) => {
-    console.log(`[${data.accountId}] ${data.message}`);
+    const cleanMessage = maskSensitiveLogValue(data.message);
+    const payload = {
+        ...data,
+        message: cleanMessage,
+        accountId: data.accountId || data.account_id || 'system',
+        scheduleId: data.scheduleId || data.schedule_id || null,
+        taskId: data.taskId || data.task_id || null,
+        type: data.type || 'info'
+    };
+    console.log(`[${payload.accountId}] ${payload.message}`);
     const dbPool = require('./db');
-    dbPool.query('INSERT INTO logs (account_id, type, message) VALUES ($1, $2, $3)', [data.accountId, data.type || 'info', data.message]).catch(() => {});
-    io.emit('log', data);
+    dbPool.query(
+        `INSERT INTO logs (account_id, schedule_id, task_id, type, message)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [payload.accountId, payload.scheduleId, payload.taskId, payload.type, payload.message]
+    ).catch(() => {});
+    io.emit('log', payload);
 });
 
 let sentCount = 0;
@@ -332,8 +352,40 @@ app.post('/api/admin/reset-cooldown', (req, res) => {
 app.get('/api/logs', async (req, res) => {
     try {
         const dbPool = require('./db');
-        const result = await dbPool.query('SELECT account_id, type, message, created_at FROM logs ORDER BY created_at DESC LIMIT 200');
-        res.json(result.rows.reverse());
+        const { accountId, scheduleId, taskId, type, limit = 200 } = req.query;
+        const params = [];
+        const where = [];
+        if (accountId) {
+            where.push(`account_id = $${params.length + 1}`);
+            params.push(accountId);
+        }
+        if (scheduleId) {
+            where.push(`schedule_id = $${params.length + 1}`);
+            params.push(scheduleId);
+        }
+        if (taskId) {
+            where.push(`task_id = $${params.length + 1}`);
+            params.push(parseInt(taskId, 10));
+        }
+        if (type && type !== 'all') {
+            where.push(`type = $${params.length + 1}`);
+            params.push(type);
+        }
+        const safeLimit = Math.max(1, Math.min(parseInt(limit, 10) || 200, 500));
+        const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+        params.push(safeLimit);
+        const result = await dbPool.query(
+            `SELECT id, account_id, schedule_id, task_id, type, message, created_at
+             FROM logs
+             ${whereSql}
+             ORDER BY created_at DESC
+             LIMIT $${params.length}`,
+            params
+        );
+        res.json(result.rows.reverse().map(row => ({
+            ...row,
+            message: maskSensitiveLogValue(row.message)
+        })));
     } catch(err) {
         res.status(500).json({ error: err.message });
     }
@@ -544,6 +596,22 @@ async function ensureAutomationSchema() {
     await dbPool.query(`ALTER TABLE automation_schedules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
     await dbPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS schedule_id UUID`);
     await dbPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result_summary TEXT`);
+    await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS logs (
+            id SERIAL PRIMARY KEY,
+            account_id TEXT,
+            schedule_id UUID,
+            task_id INTEGER,
+            type TEXT DEFAULT 'info',
+            message TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await dbPool.query(`ALTER TABLE logs ADD COLUMN IF NOT EXISTS schedule_id UUID`);
+    await dbPool.query(`ALTER TABLE logs ADD COLUMN IF NOT EXISTS task_id INTEGER`);
+    await dbPool.query(`ALTER TABLE logs ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'info'`);
+    await dbPool.query(`ALTER TABLE logs ADD COLUMN IF NOT EXISTS message TEXT`);
+    await dbPool.query(`ALTER TABLE logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
     await dbPool.query(`
         UPDATE automation_schedules s
         SET run_count = stats.run_count,

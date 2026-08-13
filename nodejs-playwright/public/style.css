@@ -295,12 +295,75 @@ h1 {
 
 .log-line.info { color: #e2e8f0; }
 .log-line.warn { color: #fbbf24; }
+.log-line.warning { color: #fbbf24; }
 .log-line.error { color: #f87171; }
 .log-line.success { color: #34d399; }
+.log-line.system { color: #93c5fd; }
 
 .log-time {
     color: var(--text-dim);
     margin-right: 6px;
+}
+
+.log-meta {
+    color: var(--primary-light);
+    margin-right: 6px;
+    opacity: 0.9;
+}
+
+.terminal-toolbar {
+    flex-wrap: wrap;
+}
+
+.log-filter-input,
+.log-filter-select {
+    width: 150px;
+    min-height: 34px;
+    font-size: 0.8rem;
+}
+
+.context-log-card {
+    margin-top: 16px;
+    padding: 0;
+    overflow: hidden;
+}
+
+.context-log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.context-log-header h3,
+.context-log-header .card-title {
+    margin: 0;
+}
+
+.context-log-subtitle {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    margin-top: 4px;
+}
+
+.context-log-body {
+    min-height: 220px;
+    max-height: 360px;
+}
+
+.accounts-context-log {
+    grid-column: 1 / -1;
+}
+
+.page-monitor-card {
+    margin-top: 24px;
+}
+
+.page-log-body {
+    max-height: 260px;
+    min-height: 160px;
 }
 
 .dashboard-grid {
@@ -1168,14 +1231,61 @@ tr:hover td {
     .dashboard-grid { grid-template-columns: 1fr; }
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
     .schedule-summary-grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+    .accounts-grid,
+    .settings-grid {
+        grid-template-columns: 1fr;
+    }
+    .card {
+        padding: 18px;
+    }
+    .table-responsive,
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .data-table,
+    table {
+        min-width: 760px;
+    }
+    .schedule-management-card .data-table {
+        min-width: 980px;
+    }
 }
 
 @media (max-width: 768px) {
     .app-container { flex-direction: column; }
-    .sidebar { width: 100%; height: auto; flex-direction: row; padding: 12px; }
-    .sidebar nav { flex-direction: row; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
-    .nav-item { min-width: 44px; justify-content: center; padding: 8px; }
+    body {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+    }
+    .app-container {
+        min-height: 100vh;
+        height: auto;
+    }
+    .sidebar {
+        width: 100%;
+        height: auto;
+        flex-direction: row;
+        align-items: center;
+        padding: 10px 12px;
+        position: sticky;
+        top: 0;
+    }
+    .sidebar .logo {
+        padding: 0;
+        flex: 0 0 auto;
+    }
+    .sidebar nav { flex-direction: row; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+    .nav-item { min-width: 44px; justify-content: center; padding: 8px; flex: 0 0 auto; }
     .main-content { padding: 16px; }
+    header {
+        margin-bottom: 18px;
+    }
+    .status-badge {
+        width: 100%;
+        justify-content: center;
+    }
     h1 { font-size: 1.5rem; }
     .accounts-grid { grid-template-columns: 1fr; }
     .settings-grid { grid-template-columns: 1fr; }
@@ -1186,6 +1296,34 @@ tr:hover td {
     .schedule-filter-group .filter-select {
         width: 100%;
         min-width: 0;
+    }
+    .schedule-toolbar,
+    .table-toolbar,
+    .terminal-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .terminal-toolbar .terminal-title,
+    .log-filter-input,
+    .log-filter-select,
+    .terminal-toolbar .btn {
+        width: 100%;
+    }
+    .schedule-edit-row,
+    #scheduleOptionsContainer > div,
+    .settings-grid .form-group > div {
+        flex-direction: column;
+    }
+    .context-log-header {
+        flex-direction: column;
+    }
+    .context-log-header .btn {
+        width: 100%;
+        justify-content: center;
+    }
+    .terminal-card[style],
+    #logs-tab .terminal-card {
+        height: 62vh !important;
     }
     .table-pagination {
         align-items: stretch;
@@ -1203,4 +1341,18 @@ tr:hover td {
     .schedule-action-grid { grid-template-columns: repeat(4, 34px); }
     .schedule-editor-actions { flex-direction: column-reverse; }
     .schedule-editor-actions .btn { width: 100%; justify-content: center; }
+    .main-content { padding: 12px; }
+    .card { padding: 14px; }
+    .logo-icon { width: 34px; height: 34px; }
+    .header-subtitle { font-size: 0.86rem; }
+    .table-responsive,
+    .table-container {
+        margin-left: -8px;
+        margin-right: -8px;
+        padding: 0 8px;
+    }
+    .context-log-body {
+        max-height: 280px;
+        min-height: 180px;
+    }
 }

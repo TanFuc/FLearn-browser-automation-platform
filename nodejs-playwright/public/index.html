@@ -83,6 +83,8 @@
                                 <option value="unfollow_friends">Hủy theo dõi - Bạn Bè</option>
                                 <option value="unfollow_following">Hủy theo dõi - Đang Theo Dõi</option>
                                 <option value="warmup">Nuôi nick</option>
+                                <option value="create_post">Đăng bài</option>
+                                <option value="comment_post">Bình luận bài viết</option>
                             </select>
                             <select id="scheduleStatusFilter" class="filter-select" onchange="loadSchedules()">
                                 <option value="all">Tất cả trạng thái</option>
@@ -133,6 +135,16 @@
                                 </table>
                             </div>
                         </div>
+                    </div>
+                    <div id="scheduleLogSection" class="card context-log-card" style="display:none; margin-top:24px;">
+                        <div class="context-log-header">
+                            <div>
+                                <h2 class="card-title" id="scheduleLogTitle">Logs của lịch</h2>
+                                <p class="context-log-subtitle">Theo dõi realtime và lịch sử log theo schedule.</p>
+                            </div>
+                            <button class="btn btn-outline btn-sm" onclick="closeScheduleLogs()">Đóng</button>
+                        </div>
+                        <div class="terminal-body context-log-body" id="schedule-logs-container"></div>
                     </div>
                 </div>
 
@@ -545,6 +557,16 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="card context-log-card accounts-context-log">
+                            <div class="context-log-header">
+                                <div>
+                                    <h3 id="accountLogTitle">Logs tài khoản</h3>
+                                    <p class="context-log-subtitle">Chọn tài khoản trong bảng để xem log riêng.</p>
+                                </div>
+                                <button class="btn btn-outline btn-sm" onclick="clearAccountLogSelection()">Tất cả</button>
+                            </div>
+                            <div class="terminal-body context-log-body" id="account-logs-container"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -571,11 +593,35 @@
                 <!-- ═══ LOGS TAB ═══ -->
                 <div id="logs-tab" class="tab-pane">
                     <div class="card terminal-card" style="height: 70vh;">
-                        <div class="terminal-header"><div class="terminal-title">full_history.log</div><button class="btn btn-outline btn-sm" id="btnClearLogs" style="margin-left:auto;">Xóa</button></div>
+                        <div class="terminal-header terminal-toolbar">
+                            <div class="terminal-title">full_history.log</div>
+                            <input class="filter-select log-filter-input" id="logAccountFilter" placeholder="account id">
+                            <input class="filter-select log-filter-input" id="logScheduleFilter" placeholder="schedule id">
+                            <select class="filter-select log-filter-select" id="logTypeFilter">
+                                <option value="all">Tất cả</option>
+                                <option value="info">Info</option>
+                                <option value="system">System</option>
+                                <option value="success">Success</option>
+                                <option value="warning">Warning</option>
+                                <option value="error">Error</option>
+                            </select>
+                            <button class="btn btn-outline btn-sm" onclick="loadLogs()">Lọc</button>
+                            <button class="btn btn-outline btn-sm" id="btnClearLogs">Xóa</button>
+                        </div>
                         <div class="terminal-body" id="logs-container"></div>
                     </div>
                 </div>
             </div>
+            <section class="card context-log-card page-monitor-card">
+                <div class="context-log-header">
+                    <div>
+                        <h3 id="pageLogTitle">Page monitor</h3>
+                        <p class="context-log-subtitle">Log theo page hiện tại, dùng để monitoring nhanh khi demo.</p>
+                    </div>
+                    <button class="btn btn-outline btn-sm" onclick="loadPageLogs()">Làm mới</button>
+                </div>
+                <div class="terminal-body context-log-body page-log-body" id="page-logs-container"></div>
+            </section>
         </main>
     </div>
 

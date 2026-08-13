@@ -18,6 +18,7 @@ const statUnfollows = document.getElementById('stat-unfollows');
 
 let autoScrollLogs = true;
 let autoScrollLive = true;
+let activePageLogTab = 'dashboard';
 
 function updateAutoScrollState(container, setState) {
     if (!container) return;
@@ -43,6 +44,7 @@ navItems.forEach(item => {
     item.addEventListener('click', (e) => {
         e.preventDefault();
         const targetId = item.getAttribute('data-tab');
+        activePageLogTab = targetId;
         console.log('[App] Tab clicked:', targetId);
 
         navItems.forEach(n => n.classList.remove('active'));
@@ -97,6 +99,7 @@ navItems.forEach(item => {
         // Handle Research Tab visibility specifically
         const rTab = document.getElementById('research-tab');
         if (rTab && targetId !== 'research') rTab.style.display = 'none';
+        loadPageLogs();
     });
 });
 
@@ -213,6 +216,8 @@ let scheduleCache = [];
 let deletedAccountsCache = [];
 let historyCache = [];
 let historyScheduleId = null;
+let selectedAccountLogId = '';
+let selectedScheduleLogId = '';
 const paginationState = {
     accounts: { page: 1, pageSize: 8 },
     schedules: { page: 1, pageSize: 8 },
@@ -635,7 +640,10 @@ window.viewScheduleHistory = async (id) => {
     if (!section || !tbody) return;
 
     historyScheduleId = id;
+    selectedScheduleLogId = id;
     section.style.display = 'block';
+    loadContextLogs('schedule', id);
+    loadPageLogs();
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Đang tải...</td></tr>';
     title.textContent = `Lịch Sử Chạy (#${id.slice(0,8)})`;
     section.scrollIntoView({ behavior: 'smooth' });
@@ -681,6 +689,13 @@ window.viewScheduleHistory = async (id) => {
 
 window.closeHistory = () => {
     document.getElementById('scheduleHistorySection').style.display = 'none';
+};
+
+window.closeScheduleLogs = () => {
+    selectedScheduleLogId = '';
+    const section = document.getElementById('scheduleLogSection');
+    if (section) section.style.display = 'none';
+    loadPageLogs();
 };
 
 window.cancelSchedule = async (id) => {
@@ -843,6 +858,7 @@ function renderAccountsTable(accounts) {
                 <div style="display: flex; gap: 5px; flex-wrap: wrap;">
                     <button type="button" class="btn btn-secondary" onclick="editAccount('${acc.id}')" style="padding: 4px 10px; font-size: 0.8rem;">Sửa</button>
                     <button type="button" class="btn" onclick="openBrowser('${acc.id}')" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); color: var(--primary);">Mở</button>
+                    <button type="button" class="btn" onclick="viewAccountLogs('${acc.id}')" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); color: var(--success);">Logs</button>
                     <button type="button" class="btn" onclick="softDeleteAccount('${acc.id}')" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); color: #fbbf24;" title="Xóa mềm">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path></svg>
                     </button>
@@ -1214,7 +1230,7 @@ function addLog(message, type = 'info', timestamp = null, options = {}) {
 
     const el = document.createElement('div');
     el.className = `log-line ${type}`;
-    el.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="log-msg">${message}</span>`;
+    el.innerHTML = `<span class="log-time">[${escapeHtml(timeStr)}]</span> <span class="log-msg">${escapeHtml(message)}</span>`;
 
     if (toFull) {
         logsContainer.appendChild(el);
@@ -1233,25 +1249,112 @@ function addLog(message, type = 'info', timestamp = null, options = {}) {
     }
 }
 
+function logLineElement(log) {
+    const timeStr = log.created_at
+        ? new Date(log.created_at).toLocaleString('vi-VN', { hour12: false })
+        : new Date().toLocaleString('vi-VN', { hour12: false });
+    const meta = [
+        log.account_id ? `acc=${log.account_id}` : '',
+        log.schedule_id ? `schedule=${String(log.schedule_id).slice(0, 8)}` : '',
+        log.task_id ? `task=${log.task_id}` : ''
+    ].filter(Boolean).join(' ');
+    const el = document.createElement('div');
+    el.className = `log-line ${log.type || 'info'}`;
+    el.innerHTML = `<span class="log-time">[${escapeHtml(timeStr)}]</span> ${meta ? `<span class="log-meta">${escapeHtml(meta)}</span> ` : ''}<span class="log-msg">${escapeHtml(log.message || '')}</span>`;
+    return el;
+}
+
+function renderLogsToContainer(container, logs = [], emptyText = 'Chưa có log phù hợp.') {
+    if (!container) return;
+    container.innerHTML = '';
+    if (!logs.length) {
+        const empty = document.createElement('div');
+        empty.className = 'log-line info';
+        empty.textContent = emptyText;
+        container.appendChild(empty);
+        return;
+    }
+    logs.forEach(log => container.appendChild(logLineElement(log)));
+    container.scrollTop = container.scrollHeight;
+}
+
+function buildLogQuery(extra = {}) {
+    const params = new URLSearchParams();
+    const accountId = extra.accountId ?? document.getElementById('logAccountFilter')?.value.trim();
+    const scheduleId = extra.scheduleId ?? document.getElementById('logScheduleFilter')?.value.trim();
+    const type = extra.type ?? document.getElementById('logTypeFilter')?.value;
+    const limit = extra.limit || 200;
+    if (accountId) params.set('accountId', accountId);
+    if (scheduleId) params.set('scheduleId', scheduleId);
+    if (type && type !== 'all') params.set('type', type);
+    params.set('limit', limit);
+    return params.toString();
+}
+
 function loadLogs() {
-    fetch('/api/logs')
+    fetch('/api/logs?' + buildLogQuery())
         .then(res => res.json())
         .then(logs => {
-            if (logs && logs.length > 0) {
-                logsContainer.innerHTML = '';
-                logs.forEach(log => {
-                    addLog(`[${log.account_id}] ${log.message}`, log.type || 'info', log.created_at, { toLive: false, toFull: true });
-                });
-                // Cuộn xuống cuối sau khi tải xong
-                if (logsContainer) {
-                    autoScrollLogs = true;
-                    logsContainer.scrollTop = logsContainer.scrollHeight;
-                }
-            }
+            renderLogsToContainer(logsContainer, Array.isArray(logs) ? logs : []);
         });
 }
 
+function loadContextLogs(kind, id) {
+    const title = kind === 'account' ? document.getElementById('accountLogTitle') : document.getElementById('scheduleLogTitle');
+    const container = kind === 'account' ? document.getElementById('account-logs-container') : document.getElementById('schedule-logs-container');
+    const section = kind === 'schedule' ? document.getElementById('scheduleLogSection') : null;
+    if (title) title.textContent = kind === 'account' ? `Logs tài khoản: ${id || 'Tất cả'}` : `Logs của lịch: #${String(id).slice(0, 8)}`;
+    if (section) section.style.display = 'block';
+    const query = buildLogQuery(kind === 'account' ? { accountId: id, type: 'all', limit: 160 } : { scheduleId: id, type: 'all', limit: 160 });
+    fetch('/api/logs?' + query)
+        .then(res => res.json())
+        .then(logs => renderLogsToContainer(container, Array.isArray(logs) ? logs : [], 'Chưa có log cho mục này.'));
+}
+
+window.viewAccountLogs = (id) => {
+    selectedAccountLogId = id || '';
+    loadContextLogs('account', selectedAccountLogId);
+    loadPageLogs();
+};
+
+window.clearAccountLogSelection = () => {
+    selectedAccountLogId = '';
+    const title = document.getElementById('accountLogTitle');
+    if (title) title.textContent = 'Logs tài khoản';
+    fetch('/api/logs?limit=120')
+        .then(res => res.json())
+        .then(logs => renderLogsToContainer(document.getElementById('account-logs-container'), Array.isArray(logs) ? logs : []));
+    loadPageLogs();
+};
+
+function pageLogMeta() {
+    const labels = {
+        dashboard: 'Dashboard monitor',
+        accounts: selectedAccountLogId ? `Accounts monitor: ${selectedAccountLogId}` : 'Accounts monitor',
+        settings: 'Settings monitor',
+        logs: 'Global logs monitor',
+        schedules: selectedScheduleLogId ? `Schedules monitor: #${String(selectedScheduleLogId).slice(0, 8)}` : 'Schedules monitor',
+        research: 'Research monitor'
+    };
+    const params = { type: 'all', limit: 120 };
+    if (activePageLogTab === 'accounts' && selectedAccountLogId) params.accountId = selectedAccountLogId;
+    if (activePageLogTab === 'schedules' && selectedScheduleLogId) params.scheduleId = selectedScheduleLogId;
+    return { title: labels[activePageLogTab] || 'Page monitor', params };
+}
+
+window.loadPageLogs = () => {
+    const title = document.getElementById('pageLogTitle');
+    const container = document.getElementById('page-logs-container');
+    if (!container) return;
+    const meta = pageLogMeta();
+    if (title) title.textContent = meta.title;
+    fetch('/api/logs?' + buildLogQuery(meta.params))
+        .then(res => res.json())
+        .then(logs => renderLogsToContainer(container, Array.isArray(logs) ? logs : [], 'Chưa có log cho page này.'));
+};
+
 loadLogs();
+loadPageLogs();
 
 socket.on('connect', () => {
     const badge = document.querySelector('.status-badge');
@@ -1259,7 +1362,47 @@ socket.on('connect', () => {
 });
 
 socket.on('log', (data) => {
-    addLog(`[${data.accountId}] ${data.message}`, data.type || 'info');
+    const log = {
+        account_id: data.accountId || data.account_id,
+        schedule_id: data.scheduleId || data.schedule_id,
+        task_id: data.taskId || data.task_id,
+        type: data.type || 'info',
+        message: data.message,
+        created_at: new Date().toISOString()
+    };
+    addLog(`[${log.account_id || 'system'}] ${log.message}`, log.type);
+
+    if (selectedAccountLogId && selectedAccountLogId === log.account_id) {
+        const container = document.getElementById('account-logs-container');
+        if (container) {
+            container.appendChild(logLineElement(log));
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+
+    if (selectedScheduleLogId && selectedScheduleLogId === log.schedule_id) {
+        const container = document.getElementById('schedule-logs-container');
+        if (container) {
+            container.appendChild(logLineElement(log));
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+
+    const pageContainer = document.getElementById('page-logs-container');
+    if (pageContainer) {
+        const shouldAppend =
+            activePageLogTab === 'dashboard' ||
+            activePageLogTab === 'logs' ||
+            activePageLogTab === 'settings' ||
+            activePageLogTab === 'research' ||
+            (activePageLogTab === 'accounts' && (!selectedAccountLogId || selectedAccountLogId === log.account_id)) ||
+            (activePageLogTab === 'schedules' && (!selectedScheduleLogId || selectedScheduleLogId === log.schedule_id));
+        if (shouldAppend) {
+            pageContainer.appendChild(logLineElement(log));
+            pageContainer.scrollTop = pageContainer.scrollHeight;
+            while (pageContainer.children.length > 120) pageContainer.removeChild(pageContainer.firstChild);
+        }
+    }
 });
 
 socket.on('stats', (data) => {

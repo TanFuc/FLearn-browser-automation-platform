@@ -256,7 +256,7 @@ const worker = new Worker('invite-queue', async job => {
   }
 
   const emitLog = (accId, msg, type = 'info') => {
-    workerEvents.emit('log', { accountId: accId, message: msg, type });
+    workerEvents.emit('log', { accountId: accId, scheduleId, taskId, message: msg, type });
   };
   const incrementStats = (type = 'invite') => {
     workerEvents.emit('stats_inc', { type });

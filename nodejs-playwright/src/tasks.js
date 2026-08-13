@@ -135,6 +135,77 @@ async function openCommentComposer(page, emitLog, accountId) {
     return null;
 }
 
+async function focusEditableBox(page, editable, emitLog, accountId, label = 'ô nhập') {
+    await editable.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
+    await randomDelay(300, 700);
+
+    const attempts = [
+        async () => editable.click({ timeout: 2500 }),
+        async () => editable.click({ timeout: 2500, force: true }),
+        async () => editable.evaluate(node => {
+            node.focus();
+            node.click();
+        }),
+        async () => {
+            const box = await editable.boundingBox();
+            if (!box) throw new Error('missing bounding box');
+            await page.mouse.click(box.x + Math.min(box.width - 4, Math.max(4, box.width / 2)), box.y + Math.min(box.height - 4, Math.max(4, box.height / 2)));
+        }
+    ];
+
+    for (const attempt of attempts) {
+        try {
+            await attempt();
+            await page.waitForTimeout(250);
+            const focused = await editable.evaluate(node => document.activeElement === node || node.contains(document.activeElement)).catch(() => false);
+            if (focused) return true;
+        } catch (err) {
+            // Facebook often puts an overlay over the comment box; try the next focus strategy.
+        }
+    }
+
+    emitLog(accountId, `Không focus được ${label} bằng click thường, chuyển sang nhập bằng DOM fallback.`, 'warning');
+    return false;
+}
+
+async function writeEditableText(page, editable, text, emitLog, accountId, label = 'nội dung') {
+    await focusEditableBox(page, editable, emitLog, accountId, label);
+
+    try {
+        await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(text, { delay: 25 });
+        await page.waitForTimeout(300);
+        const currentText = await editable.evaluate(node => node.innerText || node.textContent || '').catch(() => '');
+        if (currentText.includes(text.slice(0, Math.min(12, text.length)))) return true;
+    } catch (err) {
+        // Fall through to DOM insertion.
+    }
+
+    return editable.evaluate((node, value) => {
+        node.focus();
+        const selection = window.getSelection();
+        const range = document.createRange();
+        node.innerHTML = '';
+        range.selectNodeContents(node);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        const ok = document.execCommand && document.execCommand('insertText', false, value);
+        if (!ok) node.textContent = value;
+
+        node.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: value
+        }));
+        node.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+    }, text).catch(() => false);
+}
+
 async function commentPostTask(page, context, account, jobData, emitLog, incrementStats) {
     const accountId = account.id;
     const config = getSettings();
@@ -192,15 +263,9 @@ async function commentPostTask(page, context, account, jobData, emitLog, increme
             }
         }
 
-        await commentBox.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
-        await randomDelay(500, 1000);
-        await commentBox.click({ timeout: 5000 });
-        await randomDelay(300, 700);
-
-        try {
-            await commentBox.fill(commentText);
-        } catch (err) {
-            await page.keyboard.type(commentText, { delay: 25 });
+        const wroteComment = await writeEditableText(page, commentBox, commentText, emitLog, accountId, 'ô bình luận');
+        if (!wroteComment) {
+            throw new Error('Không nhập được nội dung vào ô bình luận.');
         }
 
         await randomDelay(700, 1400);
@@ -348,12 +413,9 @@ async function createPostTask(page, context, account, jobData, emitLog, incremen
         throw new Error('Không tìm thấy khung tạo bài viết. Trang có thể không cho đăng hoặc giao diện Facebook đã thay đổi.');
     }
 
-    await editor.click({ timeout: 5000 });
-    await randomDelay(400, 800);
-    try {
-        await editor.fill(postText);
-    } catch (err) {
-        await page.keyboard.type(postText, { delay: 25 });
+    const wrotePost = await writeEditableText(page, editor, postText, emitLog, accountId, 'khung đăng bài');
+    if (!wrotePost) {
+        throw new Error('Không nhập được nội dung vào khung đăng bài.');
     }
 
     await randomDelay(1000, 1800);

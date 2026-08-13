@@ -1,4 +1,4 @@
-const db = require('./src/db');
+const db = require('../../src/db');
 
 async function run() {
     console.log('Creating research_prompts table...');

@@ -164,6 +164,7 @@ function scheduleStatusLabel(status) {
 }
 
 function taskTypeLabel(type) {
+    if (type === 'comment_post') return 'Bình luận bài viết';
     return {
         invite: 'Kết bạn',
         unfollow_friends: 'Hủy TD - Bạn Bè',
@@ -175,6 +176,7 @@ function taskTypeLabel(type) {
 function taskTypeTone(type) {
     if (type === 'invite') return 'invite';
     if (type === 'warmup') return 'warmup';
+    if (type === 'comment_post') return 'invite';
     if (type === 'unfollow_friends' || type === 'unfollow_following') return 'unfollow';
     return 'default';
 }
@@ -206,6 +208,15 @@ function compactUrl(url) {
 }
 
 let scheduleCache = [];
+let deletedAccountsCache = [];
+let historyCache = [];
+let historyScheduleId = null;
+const paginationState = {
+    accounts: { page: 1, pageSize: 8 },
+    schedules: { page: 1, pageSize: 8 },
+    deletedAccounts: { page: 1, pageSize: 8 },
+    history: { page: 1, pageSize: 8 }
+};
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -218,6 +229,65 @@ function escapeHtml(value) {
 
 function formatDateTime(value, fallback = 'Chưa có') {
     return value ? new Date(value).toLocaleString('vi-VN') : fallback;
+}
+
+function paginateItems(items = [], key) {
+    const state = paginationState[key] || { page: 1, pageSize: 8 };
+    const total = items.length;
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+    state.page = Math.min(Math.max(1, state.page), totalPages);
+    const start = (state.page - 1) * state.pageSize;
+    return {
+        items: items.slice(start, start + state.pageSize),
+        total,
+        totalPages,
+        start,
+        end: Math.min(start + state.pageSize, total)
+    };
+}
+
+function ensurePaginationContainer(anchorId, containerId) {
+    let container = document.getElementById(containerId);
+    if (container) return container;
+    const anchor = document.getElementById(anchorId);
+    if (!anchor) return null;
+    const table = anchor.closest('table');
+    const wrapper = table?.parentElement || anchor.parentElement;
+    if (!wrapper) return null;
+    container = document.createElement('div');
+    container.id = containerId;
+    container.className = 'table-pagination';
+    wrapper.insertAdjacentElement('afterend', container);
+    return container;
+}
+
+function renderPagination(anchorId, key, total, renderFn) {
+    const container = ensurePaginationContainer(anchorId, `${key}-pagination`);
+    if (!container) return;
+    const state = paginationState[key];
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+    if (total <= state.pageSize) {
+        container.innerHTML = total > 0 ? `<span>Hiển thị ${total}/${total} mục</span>` : '';
+        return;
+    }
+    const start = (state.page - 1) * state.pageSize + 1;
+    const end = Math.min(state.page * state.pageSize, total);
+    container.innerHTML = `
+        <div class="pagination-info">Hiển thị ${start}-${end}/${total} mục</div>
+        <div class="pagination-controls">
+            <button type="button" class="btn btn-outline btn-sm" ${state.page <= 1 ? 'disabled' : ''} data-page-action="prev">Trước</button>
+            <span>Trang ${state.page}/${totalPages}</span>
+            <button type="button" class="btn btn-outline btn-sm" ${state.page >= totalPages ? 'disabled' : ''} data-page-action="next">Sau</button>
+        </div>
+    `;
+    container.querySelector('[data-page-action="prev"]')?.addEventListener('click', () => {
+        state.page -= 1;
+        renderFn();
+    });
+    container.querySelector('[data-page-action="next"]')?.addEventListener('click', () => {
+        state.page += 1;
+        renderFn();
+    });
 }
 
 function renderAccountChips(accountIds = []) {
@@ -455,10 +525,14 @@ window.loadSchedules = async () => {
 
         if (schedules.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; opacity:0.6; padding:20px;">Chưa có lịch hẹn nào phù hợp bộ lọc.</td></tr>';
+            renderPagination('schedulesTableBody', 'schedules', 0, () => loadSchedules());
             return;
         }
 
-        schedules.forEach(s => {
+        const pageData = paginateItems(schedules, 'schedules');
+        renderPagination('schedulesTableBody', 'schedules', schedules.length, () => loadSchedules());
+
+        pageData.items.forEach(s => {
             const tr = document.createElement('tr');
             tr.className = 'schedule-row';
             const accountIds = s.account_ids || [];
@@ -543,6 +617,7 @@ window.viewScheduleHistory = async (id) => {
     const title = document.getElementById('historyTitle');
     if (!section || !tbody) return;
 
+    historyScheduleId = id;
     section.style.display = 'block';
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Đang tải...</td></tr>';
     title.textContent = `Lịch Sử Chạy (#${id.slice(0,8)})`;
@@ -552,14 +627,19 @@ window.viewScheduleHistory = async (id) => {
         const res = await fetch(`/api/automation/history?scheduleId=${id}`);
         const historyJson = await res.json();
         const history = historyJson.data || historyJson;
+        historyCache = history;
         tbody.innerHTML = '';
 
         if (history.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; opacity:0.6; padding:20px;">Lịch hẹn này chưa phát sinh lượt chạy nào.</td></tr>';
+            renderPagination('historyTableBody', 'history', 0, () => historyScheduleId && viewScheduleHistory(historyScheduleId));
             return;
         }
 
-        history.forEach(h => {
+        const pageData = paginateItems(history, 'history');
+        renderPagination('historyTableBody', 'history', history.length, () => historyScheduleId && viewScheduleHistory(historyScheduleId));
+
+        pageData.items.forEach(h => {
             const tr = document.createElement('tr');
             const start = new Date(h.started_at).toLocaleString('vi-VN');
             const duration = h.finished_at ? Math.round((new Date(h.finished_at) - new Date(h.started_at)) / 1000) + 's' : 'Đang chạy...';
@@ -652,20 +732,39 @@ window.toggleTaskTypeUI = () => {
     const type = document.getElementById('taskType').value;
     const groupUrlContainer = document.getElementById('groupUrlContainer');
     const groupUrlInput = document.getElementById('groupUrl');
+    const groupUrlLabel = document.getElementById('groupUrlLabel');
     const unfollowOptionsContainer = document.getElementById('unfollowOptionsContainer');
+    const commentOptionsContainer = document.getElementById('commentOptionsContainer');
+    const commentTextInput = document.getElementById('commentText');
 
     if (type === 'unfollow_friends' || type === 'unfollow_following') {
         groupUrlContainer.style.display = 'none';
         groupUrlInput.removeAttribute('required');
         unfollowOptionsContainer.style.display = 'block';
+        if (commentOptionsContainer) commentOptionsContainer.style.display = 'none';
+        if (commentTextInput) commentTextInput.removeAttribute('required');
     } else if (type === 'warmup') {
         groupUrlContainer.style.display = 'none';
         groupUrlInput.removeAttribute('required');
         unfollowOptionsContainer.style.display = 'none';
+        if (commentOptionsContainer) commentOptionsContainer.style.display = 'none';
+        if (commentTextInput) commentTextInput.removeAttribute('required');
+    } else if (type === 'comment_post') {
+        groupUrlContainer.style.display = 'block';
+        groupUrlInput.removeAttribute('required');
+        groupUrlInput.placeholder = 'https://facebook.com/.../posts/... hoặc để trống để quét News Feed';
+        if (groupUrlLabel) groupUrlLabel.textContent = 'Link Bài Viết (tùy chọn)';
+        unfollowOptionsContainer.style.display = 'none';
+        if (commentOptionsContainer) commentOptionsContainer.style.display = 'block';
+        if (commentTextInput) commentTextInput.setAttribute('required', 'required');
     } else {
         groupUrlContainer.style.display = 'block';
         groupUrlInput.setAttribute('required', 'required');
+        groupUrlInput.placeholder = 'https://facebook.com/groups/...';
+        if (groupUrlLabel) groupUrlLabel.textContent = 'Link Nhóm';
         unfollowOptionsContainer.style.display = 'none';
+        if (commentOptionsContainer) commentOptionsContainer.style.display = 'none';
+        if (commentTextInput) commentTextInput.removeAttribute('required');
     }
 };
 
@@ -678,10 +777,14 @@ function renderAccountsTable(accounts) {
 
     if (!activeAccounts || activeAccounts.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #94a3b8;">Chưa có tài khoản nào. Vui lòng thêm mới.</td></tr>';
+        renderPagination('accounts-table-body', 'accounts', 0, () => renderAccountsTable(loadedAccounts));
         return;
     }
 
-    activeAccounts.forEach(acc => {
+    const pageData = paginateItems(activeAccounts, 'accounts');
+    renderPagination('accounts-table-body', 'accounts', activeAccounts.length, () => renderAccountsTable(loadedAccounts));
+
+    pageData.items.forEach(acc => {
         const tr = document.createElement('tr');
         let statusColor = 'var(--text-main)';
         if (acc.status === 'active') statusColor = 'var(--success)';
@@ -878,39 +981,47 @@ function loadDeletedAccounts() {
     fetch('/api/accounts/deleted')
         .then(res => res.json())
         .then(accounts => {
+            deletedAccountsCache = accounts || [];
             const badge = document.getElementById('deleted-count-badge');
-            if (badge) badge.textContent = accounts.length;
-
-            const tbody = document.getElementById('deleted-accounts-table-body');
-            if (!tbody) return;
-            tbody.innerHTML = '';
-
-            if (accounts.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; opacity:0.5;">Không có tài khoản nào.</td></tr>';
-                return;
-            }
-
-            accounts.forEach(acc => {
-                const tr = document.createElement('tr');
-                const deletedAt = acc.deleted_at ? new Date(acc.deleted_at).toLocaleString('vi-VN') : '-';
-                const displayName = acc.name
-                    ? `<span style="font-weight:600;">${acc.name}</span><br><span style="font-size:0.78rem;color:var(--text-muted);">${acc.id}</span>`
-                    : `<span style="font-weight:600;">${acc.id}</span>`;
-
-                tr.innerHTML = `
-                    <td>${displayName}</td>
-                    <td>${acc.fb_email || '-'}</td>
-                    <td style="color: #fbbf24;">${deletedAt}</td>
-                    <td>
-                        <div style="display:flex; gap:5px;">
-                            <button type="button" class="btn" onclick="restoreAccount('${acc.id}')" style="padding:4px 10px; font-size:0.8rem; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); color:#34d399;">Khôi Phục</button>
-                            <button type="button" class="btn" onclick="hardDeleteAccount('${acc.id}')" style="padding:4px 10px; font-size:0.8rem; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#f87171;">Xóa Cứng</button>
-                        </div>
-                    </td>
-                `;
-                tbody.appendChild(tr);
-            });
+            if (badge) badge.textContent = deletedAccountsCache.length;
+            renderDeletedAccountsTable();
         });
+}
+
+function renderDeletedAccountsTable() {
+    const tbody = document.getElementById('deleted-accounts-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (deletedAccountsCache.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; opacity:0.5;">Không có tài khoản nào.</td></tr>';
+        renderPagination('deleted-accounts-table-body', 'deletedAccounts', 0, renderDeletedAccountsTable);
+        return;
+    }
+
+    const pageData = paginateItems(deletedAccountsCache, 'deletedAccounts');
+    renderPagination('deleted-accounts-table-body', 'deletedAccounts', deletedAccountsCache.length, renderDeletedAccountsTable);
+
+    pageData.items.forEach(acc => {
+        const tr = document.createElement('tr');
+        const deletedAt = acc.deleted_at ? new Date(acc.deleted_at).toLocaleString('vi-VN') : '-';
+        const displayName = acc.name
+            ? `<span style="font-weight:600;">${acc.name}</span><br><span style="font-size:0.78rem;color:var(--text-muted);">${acc.id}</span>`
+            : `<span style="font-weight:600;">${acc.id}</span>`;
+
+        tr.innerHTML = `
+            <td>${displayName}</td>
+            <td>${acc.fb_email || '-'}</td>
+            <td style="color: #fbbf24;">${deletedAt}</td>
+            <td>
+                <div style="display:flex; gap:5px;">
+                    <button type="button" class="btn" onclick="restoreAccount('${acc.id}')" style="padding:4px 10px; font-size:0.8rem; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); color:#34d399;">Khôi Phục</button>
+                    <button type="button" class="btn" onclick="hardDeleteAccount('${acc.id}')" style="padding:4px 10px; font-size:0.8rem; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#f87171;">Xóa Cứng</button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
 }
 
 loadAccounts();
@@ -973,6 +1084,7 @@ runTaskForm.addEventListener('submit', (e) => {
     const scheduleTime = document.getElementById('scheduleTime').value;
     const scheduleInterval = document.getElementById('scheduleInterval').value;
     const maxRuns = document.getElementById('scheduleMaxRuns')?.value || '';
+    const commentText = document.getElementById('commentText')?.value.trim() || '';
 
     if (accountIds.length === 0) {
         showToast('Chọn ít nhất 1 tài khoản!');
@@ -989,6 +1101,11 @@ runTaskForm.addEventListener('submit', (e) => {
         return;
     }
 
+    if (taskType === 'comment_post' && !commentText) {
+        showToast('Vui lòng nhập nội dung bình luận!');
+        return;
+    }
+
     fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1000,7 +1117,8 @@ runTaskForm.addEventListener('submit', (e) => {
             scheduleType,
             scheduleTime,
             scheduleInterval,
-            maxRuns
+            maxRuns,
+            commentText
         })
     }).then(async (res) => {
         const data = await res.json().catch(() => ({}));

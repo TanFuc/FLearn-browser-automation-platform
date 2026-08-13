@@ -1,4 +1,4 @@
-const db = require('./src/db');
+const db = require('../../src/db');
 
 async function seed() {
     console.log('🌱 Seeding dummy research data for AI Research tab...');

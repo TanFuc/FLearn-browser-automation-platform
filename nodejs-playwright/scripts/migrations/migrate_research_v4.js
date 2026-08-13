@@ -1,4 +1,4 @@
-const db = require('./src/db');
+const db = require('../../src/db');
 
 async function run() {
     console.log('🔄 Running Product Trend Intelligence V4.0.1 Migration...');

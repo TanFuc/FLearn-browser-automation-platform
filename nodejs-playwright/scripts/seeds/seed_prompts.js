@@ -1,4 +1,4 @@
-const db = require('./src/db');
+const db = require('../../src/db');
 
 // ─── CRITICAL OUTPUT RULES (injected into every prompt) ────────────────────
 const CRITICAL_OUTPUT_RULES = `

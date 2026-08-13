@@ -1,4 +1,4 @@
-const db = require('./src/db');
+const db = require('../../src/db');
 async function run() {
     // Add name column
     await db.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS name VARCHAR(255)`);

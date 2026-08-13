@@ -4,7 +4,7 @@ const IORedis = require('ioredis');
 const db = require('./db');
 const { inviteQueue, affVidQueue, upPostQueue } = require('./queue');
 const { createOrLoadContext } = require('./browser');
-const { autoInviteTask, autoUnfollowFriendsTask, autoUnfollowFollowingTask, warmupTask } = require('./tasks');
+const { autoInviteTask, autoUnfollowFriendsTask, autoUnfollowFollowingTask, warmupTask, commentPostTask } = require('./tasks');
 const { EventEmitter } = require('events');
 const { emitSystemLog } = require('./logger');
 
@@ -262,7 +262,7 @@ const worker = new Worker('invite-queue', async job => {
     workerEvents.emit('stats_inc', { type });
     if (type === 'unfollow') {
         db.query(`UPDATE accounts SET unfollows_today = COALESCE(unfollows_today, 0) + 1 WHERE id = $1`, [accountId]).catch(err => console.log('Error updating stats', err));
-    } else {
+    } else if (type === 'invite') {
         db.query(`UPDATE accounts SET invites_sent_today = COALESCE(invites_sent_today, 0) + 1 WHERE id = $1`, [accountId]).catch(err => console.log('Error updating stats', err));
     }
   };
@@ -289,6 +289,9 @@ const worker = new Worker('invite-queue', async job => {
     } else if (taskType === 'warmup') {
         emitLog(accountId, `🚀 Bắt đầu quy trình Warm-up (Tăng độ tin cậy)`);
         result = await warmupTask(page, context, account, emitLog, incrementStats);
+    } else if (taskType === 'comment_post') {
+        emitLog(accountId, `Bắt đầu bình luận bài viết theo nội dung từ UI...`);
+        result = await commentPostTask(page, context, account, payload, emitLog, incrementStats);
     } else {
         emitLog(accountId, `Điều hướng tới: ${payload.url}`);
         await page.goto(payload.url, { waitUntil: 'domcontentloaded' });

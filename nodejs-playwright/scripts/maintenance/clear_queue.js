@@ -1,4 +1,4 @@
-const db = require('./src/db');
+const db = require('../../src/db');
 const { Queue } = require('bullmq');
 const Redis = require('ioredis');
 require('dotenv').config();

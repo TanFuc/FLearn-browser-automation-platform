@@ -471,9 +471,15 @@
                                         <option value="unfollow_friends">Hủy theo dõi - Bạn Bè (/friends)</option>
                                         <option value="unfollow_following">Hủy theo dõi - Đang Theo Dõi (/following)</option>
                                         <option value="warmup">Nuôi nick (Tăng trust)</option>
+                                        <option value="comment_post">Bình luận bài viết</option>
                                     </select>
                                 </div>
-                                <div class="form-group" id="groupUrlContainer"><label>Link Nhóm</label><input type="url" id="groupUrl" placeholder="https://facebook.com/groups/..." inputmode="url"></div>
+                                <div class="form-group" id="groupUrlContainer"><label id="groupUrlLabel">Link Nhóm</label><input type="url" id="groupUrl" placeholder="https://facebook.com/groups/..." inputmode="url"></div>
+                                <div class="form-group" id="commentOptionsContainer" style="display:none;">
+                                    <label>Nội dung bình luận</label>
+                                    <textarea id="commentText" rows="4" maxlength="500" placeholder="Nhập nội dung bình luận để gửi vào bài viết..." style="width:100%; resize:vertical;"></textarea>
+                                    <small style="color:var(--text-muted); font-size:0.8rem;">Mỗi account chỉ gửi 1 bình luận/lần chạy. Nếu bỏ trống link bài viết, bot sẽ mở News Feed và thử tìm ô bình luận đầu tiên.</small>
+                                </div>
                                 <div class="form-group" id="unfollowOptionsContainer" style="display:none;"><label>Giới hạn</label><input type="number" id="maxUnfollow" value="50" placeholder="50"></div>
                                 <div class="form-group" id="scheduleOptionsContainer">
                                     <label>Hẹn Giờ (Tùy chọn)</label>

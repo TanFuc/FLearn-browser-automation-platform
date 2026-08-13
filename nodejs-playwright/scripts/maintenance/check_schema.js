@@ -1,4 +1,4 @@
-const db = require('./src/db');
+const db = require('../../src/db');
 async function run() {
     const r1 = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name='accounts' ORDER BY ordinal_position");
     console.log('accounts:', r1.rows.map(x => x.column_name).join(', '));

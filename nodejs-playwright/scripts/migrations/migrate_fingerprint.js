@@ -1,4 +1,4 @@
-const db = require('./src/db');
+const db = require('../../src/db');
 
 async function run() {
     // 1. Create ua_pool table

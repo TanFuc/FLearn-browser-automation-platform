@@ -1,4 +1,4 @@
-const pool = require('./src/db');
+const pool = require('../../src/db');
 pool.query(`
     CREATE TABLE IF NOT EXISTS logs (
         id SERIAL PRIMARY KEY,

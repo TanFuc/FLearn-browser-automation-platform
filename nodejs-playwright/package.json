@@ -1,12 +1,17 @@
 {
   "name": "nodejs-playwright",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Facebook automation dashboard using Node.js, Express, BullMQ and Playwright-compatible browser contexts.",
+  "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
     "init-db": "node src/init-db.js",
+    "demo:crawl": "node tools/demo/demo_crawl_analysis.js",
+    "db:check": "node scripts/maintenance/check_schema.js",
+    "queue:clear": "node scripts/maintenance/clear_queue.js",
+    "seed:research": "node scripts/seeds/seed_dummy_research.js",
+    "seed:prompts": "node scripts/seeds/seed_prompts.js",
     "test": "jest"
   },
   "keywords": [],

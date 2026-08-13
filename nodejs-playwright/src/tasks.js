@@ -38,6 +38,165 @@ async function autoLogin(page, account, emitLog) {
     emitLog(account.id, `Đăng nhập thành công!`, 'success');
 }
 
+async function isFacebookLoggedOut(page) {
+    const pageText = await page.evaluate(() => document.body.innerText).catch(() => '');
+    const emailInputCount = await page.locator('input[name="email"], input[id="email"]').count().catch(() => 0);
+    const passInputCount = await page.locator('input[name="pass"], input[id="pass"]').count().catch(() => 0);
+    return page.url().includes('/login') ||
+        page.url().includes('/r.php') ||
+        emailInputCount > 0 ||
+        passInputCount > 0 ||
+        pageText.includes('Log in') ||
+        pageText.includes('Đăng nhập') ||
+        pageText.includes('Tham gia hoặc đăng nhập Facebook');
+}
+
+async function ensureFacebookSession(page, account, targetUrl, emitLog) {
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await page.waitForTimeout(2500);
+
+    if (page.url().includes('/checkpoint/')) {
+        throw new Error('Tài khoản đang bị checkpoint, cần xử lý thủ công trước khi chạy.');
+    }
+
+    if (await isFacebookLoggedOut(page)) {
+        emitLog(account.id, 'Tài khoản chưa đăng nhập, đang tự động điền email/mật khẩu...', 'warning');
+        await autoLogin(page, account, emitLog);
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+        await page.waitForTimeout(3000);
+    }
+}
+
+async function findVisibleCommentBox(page, timeout = 3000) {
+    const selectors = [
+        'div[aria-label*="bình luận" i][contenteditable="true"]',
+        'div[aria-label*="comment" i][contenteditable="true"]',
+        'div[aria-placeholder*="bình luận" i][contenteditable="true"]',
+        'div[aria-placeholder*="comment" i][contenteditable="true"]',
+        'div[role="textbox"][contenteditable="true"]'
+    ];
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+        for (const selector of selectors) {
+            const boxes = page.locator(selector);
+            const count = await boxes.count().catch(() => 0);
+            for (let i = 0; i < count; i++) {
+                const box = boxes.nth(i);
+                if (await box.isVisible().catch(() => false)) {
+                    const labelText = await box.evaluate(node => [
+                        node.getAttribute('aria-label'),
+                        node.getAttribute('aria-placeholder'),
+                        node.getAttribute('placeholder'),
+                        node.innerText
+                    ].filter(Boolean).join(' ').toLowerCase()).catch(() => '');
+
+                    if (selector.includes('textbox') && !/(comment|bình luận)/i.test(labelText)) {
+                        continue;
+                    }
+                    return box;
+                }
+            }
+        }
+        await page.waitForTimeout(400);
+    }
+
+    return null;
+}
+
+async function openCommentComposer(page, emitLog, accountId) {
+    const directBox = await findVisibleCommentBox(page, 1200);
+    if (directBox) return directBox;
+
+    const commentButtons = page.locator(
+        'div[role="button"]:has-text("Bình luận"), ' +
+        'div[role="button"]:has-text("Comment"), ' +
+        '[aria-label*="bình luận" i], ' +
+        '[aria-label*="comment" i]'
+    );
+
+    const buttonCount = await commentButtons.count().catch(() => 0);
+    for (let i = 0; i < buttonCount; i++) {
+        const button = commentButtons.nth(i);
+        if (!(await button.isVisible().catch(() => false))) continue;
+
+        await button.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
+        await randomDelay(300, 700);
+        await button.click({ timeout: 3000 }).catch(async () => {
+            await button.evaluate(node => node.click()).catch(() => {});
+        });
+        await page.waitForTimeout(1200);
+
+        const box = await findVisibleCommentBox(page, 2500);
+        if (box) return box;
+    }
+
+    emitLog(accountId, 'Chưa tìm thấy nút/ô bình luận trên màn hình hiện tại.', 'warning');
+    return null;
+}
+
+async function commentPostTask(page, context, account, jobData, emitLog, incrementStats) {
+    const accountId = account.id;
+    const config = getSettings();
+    const { getBotState } = require('./state');
+    const commentText = String(jobData.commentText || '').trim();
+    const targetUrl = String(jobData.url || '').trim() || 'https://www.facebook.com/';
+    let scrollsDone = 0;
+
+    if (!commentText) {
+        throw new Error('Thiếu nội dung bình luận.');
+    }
+    if (commentText.length > 500) {
+        throw new Error('Nội dung bình luận quá dài, tối đa 500 ký tự.');
+    }
+
+    emitLog(accountId, `Mở trang để bình luận: ${targetUrl}`, 'system');
+    await ensureFacebookSession(page, account, targetUrl, emitLog);
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
+    await page.waitForTimeout(2500);
+
+    let commentBox = await openCommentComposer(page, emitLog, accountId);
+    const maxScrolls = Math.max(1, Math.min(Number(config.maxScrolls || 5), 8));
+
+    while (!commentBox && scrollsDone < maxScrolls) {
+        if (getBotState().isStopped) {
+            emitLog(accountId, 'Tác vụ đã bị dừng trước khi bình luận.', 'warning');
+            return { successCount: 0, scrollsDone };
+        }
+        while (getBotState().isPaused) {
+            await new Promise(r => setTimeout(r, 1000));
+        }
+
+        await page.evaluate(() => window.scrollBy({ top: 650, behavior: 'smooth' })).catch(() => {});
+        scrollsDone++;
+        await randomDelay(1200, 2200);
+        commentBox = await openCommentComposer(page, emitLog, accountId);
+    }
+
+    if (!commentBox) {
+        throw new Error('Không tìm thấy ô bình luận. Bài viết có thể bị tắt bình luận, chưa load xong, hoặc selector Facebook đã thay đổi.');
+    }
+
+    await commentBox.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' })).catch(() => {});
+    await randomDelay(500, 1000);
+    await commentBox.click({ timeout: 5000 });
+    await randomDelay(300, 700);
+
+    try {
+        await commentBox.fill(commentText);
+    } catch (err) {
+        await page.keyboard.type(commentText, { delay: 25 });
+    }
+
+    await randomDelay(700, 1400);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(3000);
+
+    emitLog(accountId, 'Đã gửi 1 bình luận theo nội dung nhập từ UI.', 'success');
+    incrementStats('comment');
+    return { successCount: 1, scrollsDone };
+}
+
 async function autoInviteTask(page, context, account, targetUrl, emitLog, incrementStats) {
     const accountId = account.id;
     const config = getSettings();
@@ -680,5 +839,6 @@ module.exports = {
     autoInviteTask,
     autoUnfollowFriendsTask,
     autoUnfollowFollowingTask,
-    warmupTask
+    warmupTask,
+    commentPostTask
 };

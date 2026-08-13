@@ -609,6 +609,39 @@
                                 <label><input type="checkbox" id="skipAdmins"> Bỏ qua Admin nhóm</label>
                                 <label><input type="checkbox" id="skipVerified"> Bỏ qua tài khoản tích xanh</label>
                             </div>
+                            <div class="browser-settings-panel">
+                                <div>
+                                    <h3>Cửa sổ Chrome</h3>
+                                    <p class="form-hint">Dùng chế độ tuỳ chỉnh khi demo để Chrome mở vừa màn hình. Chế độ fingerprint sẽ dùng viewport riêng đã lưu cho từng account.</p>
+                                </div>
+                                <div class="settings-grid">
+                                    <div class="form-group">
+                                        <label>Chế độ kích thước</label>
+                                        <select id="browserWindowMode" class="filter-select" onchange="toggleBrowserWindowSettings()">
+                                            <option value="fingerprint">Theo fingerprint account</option>
+                                            <option value="custom">Tuỳ chỉnh khi demo</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group browser-window-custom">
+                                        <label>Chiều rộng</label>
+                                        <input type="number" id="browserWindowWidth" min="800" max="2560" step="10" placeholder="1366">
+                                    </div>
+                                    <div class="form-group browser-window-custom">
+                                        <label>Chiều cao</label>
+                                        <input type="number" id="browserWindowHeight" min="500" max="1600" step="10" placeholder="768">
+                                    </div>
+                                    <div class="form-group browser-window-custom">
+                                        <label>Preset nhanh</label>
+                                        <select id="browserWindowPreset" class="filter-select" onchange="applyBrowserWindowPreset()">
+                                            <option value="">Chọn preset</option>
+                                            <option value="1280x720">1280 x 720</option>
+                                            <option value="1366x768">1366 x 768</option>
+                                            <option value="1440x900">1440 x 900</option>
+                                            <option value="1536x864">1536 x 864</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
                             <button type="submit" class="btn btn-primary mt-4">Lưu</button>
                         </form>
                     </div>

@@ -28,6 +28,23 @@ function stableHash(str) {
     return hash;
 }
 
+function resolveBrowserWindow(profile) {
+    const settings = config.getSettings();
+    const useCustom = settings.browserWindowMode === 'custom';
+    const width = parseInt(settings.browserWindowWidth, 10);
+    const height = parseInt(settings.browserWindowHeight, 10);
+
+    if (useCustom && Number.isInteger(width) && Number.isInteger(height) && width >= 800 && height >= 500) {
+        return { width, height, source: 'settings' };
+    }
+
+    return {
+        width: profile.viewport.width,
+        height: profile.viewport.height,
+        source: 'fingerprint'
+    };
+}
+
 /**
  * Load UA and Viewport pools from DB, assign one deterministically to the account
  * and persist the fingerprint in accounts.fingerprint (JSONB).
@@ -100,6 +117,7 @@ async function createOrLoadContext(accountId, proxyString = null, headless = fal
     }
 
     const profile = await getAccountProfile(accountId);
+    const browserWindow = resolveBrowserWindow(profile);
 
     // Parse proxy string - Hỗ trợ các định dạng phổ biến
     let proxyConfig = undefined;
@@ -131,13 +149,14 @@ async function createOrLoadContext(accountId, proxyString = null, headless = fal
     }
 
     console.log(`[${accountId}] Đang khởi tạo trình duyệt với Profile: ${userDataDir}`);
+    console.log(`[${accountId}] Browser window: ${browserWindow.width}x${browserWindow.height} (${browserWindow.source})`);
 
     const context = await launchPersistentContext({
         userDataDir,
         headless,
         userAgent:         profile.userAgent,
-        viewport:          { width: profile.viewport.width, height: profile.viewport.height },
-        screen:            { width: profile.screenWidth, height: profile.screenHeight },
+        viewport:          { width: browserWindow.width, height: browserWindow.height },
+        screen:            { width: browserWindow.width, height: browserWindow.height + 40 },
         timezone:          profile.timezoneId,
         locale:            profile.locale,
         colorScheme:       'light',
@@ -153,7 +172,7 @@ async function createOrLoadContext(accountId, proxyString = null, headless = fal
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            `--window-size=${profile.viewport.width},${profile.viewport.height}`,
+            `--window-size=${browserWindow.width},${browserWindow.height}`,
         ],
     });
 

@@ -15,7 +15,10 @@ const defaultSettings = {
     maxClicks: 50,
     skipAdmins: true,
     skipVerified: true,
-    keywordsBlacklist: []
+    keywordsBlacklist: [],
+    browserWindowMode: 'fingerprint',
+    browserWindowWidth: 1366,
+    browserWindowHeight: 768
 };
 
 function getSettings() {

@@ -810,6 +810,24 @@ window.cancelSchedule = async (id) => {
 };
 
 
+window.toggleBrowserWindowSettings = () => {
+    const mode = document.getElementById('browserWindowMode')?.value || 'fingerprint';
+    document.querySelectorAll('.browser-window-custom').forEach(el => {
+        el.classList.toggle('is-disabled', mode !== 'custom');
+    });
+};
+
+window.applyBrowserWindowPreset = () => {
+    const preset = document.getElementById('browserWindowPreset')?.value;
+    if (!preset) return;
+    const [width, height] = preset.split('x').map(Number);
+    if (!Number.isInteger(width) || !Number.isInteger(height)) return;
+    document.getElementById('browserWindowWidth').value = width;
+    document.getElementById('browserWindowHeight').value = height;
+    document.getElementById('browserWindowMode').value = 'custom';
+    toggleBrowserWindowSettings();
+};
+
 // Load configuration on mount
 fetch('/api/config')
     .then(res => res.json())
@@ -822,6 +840,10 @@ fetch('/api/config')
         document.getElementById('scrollPauseMax').value = data.scrollPauseMax;
         document.getElementById('skipAdmins').checked = data.skipAdmins;
         document.getElementById('skipVerified').checked = data.skipVerified;
+        document.getElementById('browserWindowMode').value = data.browserWindowMode || 'fingerprint';
+        document.getElementById('browserWindowWidth').value = data.browserWindowWidth || 1366;
+        document.getElementById('browserWindowHeight').value = data.browserWindowHeight || 768;
+        toggleBrowserWindowSettings();
     });
 
 let loadedAccounts = []; // To store global account state
@@ -1222,6 +1244,20 @@ loadDeletedAccounts();
 
 settingsForm.addEventListener('submit', (e) => {
     e.preventDefault();
+    const browserWindowMode = document.getElementById('browserWindowMode').value;
+    const browserWindowWidth = parseInt(document.getElementById('browserWindowWidth').value, 10);
+    const browserWindowHeight = parseInt(document.getElementById('browserWindowHeight').value, 10);
+
+    if (browserWindowMode === 'custom' && (
+        !Number.isInteger(browserWindowWidth) ||
+        !Number.isInteger(browserWindowHeight) ||
+        browserWindowWidth < 800 ||
+        browserWindowHeight < 500
+    )) {
+        showToast('Kích thước Chrome tối thiểu là 800 x 500.', 'warning');
+        return;
+    }
+
     const config = {
         maxScrolls: parseInt(document.getElementById('maxScrolls').value),
         maxClicks: parseInt(document.getElementById('maxClicks').value),
@@ -1231,6 +1267,9 @@ settingsForm.addEventListener('submit', (e) => {
         scrollPauseMax: parseInt(document.getElementById('scrollPauseMax').value),
         skipAdmins: document.getElementById('skipAdmins').checked,
         skipVerified: document.getElementById('skipVerified').checked,
+        browserWindowMode,
+        browserWindowWidth,
+        browserWindowHeight,
     };
 
     fetch('/api/config', {

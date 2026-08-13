@@ -79,6 +79,7 @@ navItems.forEach(item => {
                 headerTitle.textContent = 'Nhật Ký Hệ Thống';
                 headerSub.textContent = 'Xem toàn bộ lịch sử hoạt động của các tiến trình.';
                 const container = document.getElementById('logs-container');
+                ensureLogFilterData();
                 if (container) {
                     autoScrollLogs = true;
                     setTimeout(() => { container.scrollTop = container.scrollHeight; }, 100);
@@ -267,6 +268,21 @@ function renderLogFilterOptions() {
             return `<option value="${escapeHtml(schedule.id)}">#${escapeHtml(shortId)} - ${escapeHtml(task)} - ${accountCount} acc</option>`;
         }).join('');
         if ([...scheduleSelect.options].some(opt => opt.value === current)) scheduleSelect.value = current;
+    }
+}
+
+async function ensureLogFilterData() {
+    renderLogFilterOptions();
+    if (scheduleCache.length > 0) return;
+    try {
+        const res = await fetch('/api/automation/schedules?status=all');
+        const json = await res.json();
+        if (res.ok && json.success && Array.isArray(json.data)) {
+            scheduleCache = json.data;
+            renderLogFilterOptions();
+        }
+    } catch (err) {
+        // Keep the log page usable even if schedules cannot be loaded.
     }
 }
 

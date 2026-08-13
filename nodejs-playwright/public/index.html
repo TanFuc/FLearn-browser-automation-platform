@@ -611,21 +611,30 @@
                 <div id="logs-tab" class="tab-pane">
                     <div class="card terminal-card" style="height: 70vh;">
                         <div class="terminal-header terminal-toolbar">
-                            <div class="terminal-title">full_history.log</div>
-                            <select class="filter-select log-filter-input" id="logAccountFilter">
-                                <option value="">Tất cả tài khoản</option>
-                            </select>
-                            <select class="filter-select log-filter-input" id="logScheduleFilter">
-                                <option value="">Tất cả lịch</option>
-                            </select>
-                            <select class="filter-select log-filter-select" id="logTypeFilter">
-                                <option value="all">Tất cả</option>
-                                <option value="info">Info</option>
-                                <option value="system">System</option>
-                                <option value="success">Success</option>
-                                <option value="warning">Warning</option>
-                                <option value="error">Error</option>
-                            </select>
+                            <div class="terminal-title">Bộ lọc nhật ký</div>
+                            <label class="log-filter-field">
+                                <span>Tài khoản</span>
+                                <select class="filter-select log-filter-input" id="logAccountFilter">
+                                    <option value="">Tất cả tài khoản</option>
+                                </select>
+                            </label>
+                            <label class="log-filter-field">
+                                <span>Lịch</span>
+                                <select class="filter-select log-filter-input" id="logScheduleFilter">
+                                    <option value="">Tất cả lịch</option>
+                                </select>
+                            </label>
+                            <label class="log-filter-field compact">
+                                <span>Loại log</span>
+                                <select class="filter-select log-filter-select" id="logTypeFilter">
+                                    <option value="all">Tất cả</option>
+                                    <option value="info">Info</option>
+                                    <option value="system">System</option>
+                                    <option value="success">Success</option>
+                                    <option value="warning">Warning</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </label>
                             <button class="btn btn-outline btn-sm" onclick="loadLogs()">Lọc</button>
                             <button class="btn btn-outline btn-sm" id="btnClearLogs">Xóa</button>
                         </div>

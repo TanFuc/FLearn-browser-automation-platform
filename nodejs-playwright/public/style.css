@@ -327,24 +327,47 @@ h1 {
     flex-wrap: wrap;
     gap: 10px;
     align-items: center;
+    padding: 12px;
 }
 
 .log-filter-input,
 .log-filter-select {
-    width: 210px;
+    width: 100%;
     min-height: 34px;
     font-size: 0.8rem;
     background: rgba(15, 23, 42, 0.76);
     border-color: var(--border-hover);
 }
 
-.log-filter-select {
-    width: 140px;
+.log-filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 210px;
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.34);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.log-filter-field.compact {
+    min-width: 150px;
+}
+
+.log-filter-field span {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
 }
 
 .terminal-toolbar .terminal-title {
     margin-right: auto;
-    min-width: 130px;
+    min-width: 150px;
+    color: var(--text-main);
 }
 
 .context-log-card {
